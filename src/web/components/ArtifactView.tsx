@@ -14,10 +14,14 @@ import type {
   ArtifactRepresentation,
   HtmlArtifactRepresentation,
   ImageArtifactRepresentation,
+  PlotlyArtifactRepresentation,
   TextArtifactRepresentation,
+  VegaLiteArtifactRepresentation,
 } from "../../shared/artifact.js";
 import { pickRepresentation } from "../../shared/artifact.js";
 import { HtmlArtifactFrame } from "./HtmlArtifactFrame.js";
+import { PlotlyArtifact } from "./PlotlyArtifact.js";
+import { VegaLiteArtifact } from "./VegaLiteArtifact.js";
 import "./artifact-view.css";
 
 export interface ArtifactViewProps {
@@ -25,8 +29,11 @@ export interface ArtifactViewProps {
   readonly apiBaseUrl?: string | undefined;
 }
 
+// Order matters: the first MIME the renderer recognizes wins. Charts are
+// preferred over HTML/image because they re-theme automatically.
 const SUPPORTED_MIMES: readonly string[] = [
-  // Phase C will add "application/vnd.vega-lite.v5+json", "application/vnd.plotly.v1+json"
+  "application/vnd.vega-lite.v5+json",
+  "application/vnd.plotly.v1+json",
   "text/html",
   "image/png",
   "image/jpeg",
@@ -39,7 +46,10 @@ export function ArtifactView({ artifact, apiBaseUrl }: ArtifactViewProps) {
   const pick = pickRepresentation(artifact.artifacts, SUPPORTED_MIMES);
   return (
     <figure className="artifact-message" aria-label={artifact.caption ?? "Artifact"}>
-      {artifact.caption ? <figcaption className="artifact-caption">{artifact.caption}</figcaption> : null}
+      <div className="artifact-header">
+        {artifact.caption ? <figcaption className="artifact-caption">{artifact.caption}</figcaption> : <span />}
+        <ArtifactActions artifact={artifact} pick={pick} apiBaseUrl={apiBaseUrl} />
+      </div>
       <ArtifactRepresentationView
         artifactGroupId={artifact.artifactGroupId}
         representation={pick}
@@ -48,6 +58,72 @@ export function ArtifactView({ artifact, apiBaseUrl }: ArtifactViewProps) {
       />
     </figure>
   );
+}
+
+function ArtifactActions({
+  artifact,
+  pick,
+  apiBaseUrl,
+}: {
+  readonly artifact: ArtifactMessageDetails;
+  readonly pick: ArtifactRepresentation | undefined;
+  readonly apiBaseUrl: string | undefined;
+}) {
+  // Find any url-backed representation so we can offer download.
+  const downloadable = artifact.artifacts.find((r) => {
+    if (r.mime === "text/plain") return false;
+    if ("src" in r && r.src && (r.src as { kind?: string }).kind === "url") return true;
+    return false;
+  });
+  let downloadHref: string | undefined;
+  if (downloadable && "src" in downloadable && downloadable.src && (downloadable.src as { kind?: string }).kind === "url") {
+    const url = (downloadable.src as { kind: "url"; url: string }).url;
+    downloadHref = resolveUrl(url, apiBaseUrl);
+  }
+  async function copyText() {
+    const fallback = artifact.artifacts.find((r): r is TextArtifactRepresentation => r.mime === "text/plain");
+    if (!fallback) return;
+    try {
+      await navigator.clipboard?.writeText(fallback.text);
+    } catch {
+      // best-effort
+    }
+  }
+  const showCopy = pick?.mime !== "text/plain" && artifact.artifacts.some((r) => r.mime === "text/plain");
+  if (!downloadHref && !showCopy) return null;
+  return (
+    <div className="artifact-actions" role="group" aria-label="Artifact actions">
+      {downloadHref ? (
+        <a
+          className="artifact-action artifact-action-download"
+          href={downloadHref}
+          download
+          aria-label="Download artifact"
+          title="Download"
+        >
+          Download
+        </a>
+      ) : null}
+      {showCopy ? (
+        <button
+          type="button"
+          className="artifact-action artifact-action-copy"
+          onClick={() => void copyText()}
+          aria-label="Copy fallback text"
+          title="Copy fallback text"
+        >
+          Copy text
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function resolveUrl(url: string, apiBaseUrl: string | undefined): string {
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (!apiBaseUrl) return url;
+  const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+  return `${base}${url}`;
 }
 
 function ArtifactRepresentationView({
@@ -83,6 +159,12 @@ function ArtifactRepresentationView({
         apiBaseUrl={apiBaseUrl}
       />
     );
+  }
+  if (representation.mime === "application/vnd.vega-lite.v5+json") {
+    return <VegaLiteArtifact representation={representation as VegaLiteArtifactRepresentation} />;
+  }
+  if (representation.mime === "application/vnd.plotly.v1+json") {
+    return <PlotlyArtifact representation={representation as PlotlyArtifactRepresentation} />;
   }
   if (representation.mime === "text/plain") {
     return <pre className="artifact-fallback-text">{representation.text}</pre>;

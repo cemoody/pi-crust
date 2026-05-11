@@ -2,6 +2,13 @@
 import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { beforeEach, vi } from "vitest";
+
+beforeEach(() => {
+  Object.assign(navigator, {
+    clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
+});
 
 import { ArtifactView } from "../../src/web/components/ArtifactView.js";
 import { ARTIFACT_SCHEMA_VERSION, type ArtifactMessageDetails } from "../../src/shared/artifact.js";
@@ -37,6 +44,21 @@ describe("<ArtifactView />", () => {
     expect(iframe).not.toBeNull();
     expect(iframe?.getAttribute("sandbox")).toBe("allow-scripts");
     expect(iframe?.getAttribute("srcdoc")).toBe("<p>inline-snippet</p>");
+  });
+
+  it("renders a download link for url-backed artifacts", () => {
+    const artifact: ArtifactMessageDetails = {
+      version: ARTIFACT_SCHEMA_VERSION,
+      artifactGroupId: "g1",
+      artifacts: [
+        { mime: "image/png", src: { kind: "url", url: "/api/sessions/s/artifacts/g1.png" } },
+        { mime: "text/plain", text: "fallback" },
+      ],
+    };
+    render(<ArtifactView artifact={artifact} apiBaseUrl="http://localhost:8787" />);
+    const link = screen.getByRole("link", { name: /download artifact/i }) as HTMLAnchorElement;
+    expect(link.href).toBe("http://localhost:8787/api/sessions/s/artifacts/g1.png");
+    expect(link.hasAttribute("download")).toBe(true);
   });
 
   it("prefers text/html over image when both representations are present", () => {

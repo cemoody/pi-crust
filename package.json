@@ -23,8 +23,12 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
+    "react-plotly.js": "^2.6.0",
+    "react-vega": "^8.0.0",
     "remark-gfm": "^4.0.1",
     "typebox": "^1.1.24",
+    "vega": "^6.2.0",
+    "vega-lite": "^6.4.3",
     "ws": "^8.20.0"
   },
   "devDependencies": {
@@ -34,6 +38,7 @@
     "@types/node": "^25.0.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/react-plotly.js": "^2.6.4",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.1",
     "jsdom": "^29.1.1",

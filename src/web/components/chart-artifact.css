@@ -1,0 +1,36 @@
+.chart-artifact {
+  width: 100%;
+  min-height: 240px;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.vega-lite-artifact > div {
+  width: 100%;
+}
+
+.plotly-artifact {
+  min-height: 320px;
+  height: 320px;
+}
+
+.chart-artifact-skeleton {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  color: var(--color-text-muted, #6b7280);
+  background: var(--color-surface, #f8fafc);
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.chart-artifact-error {
+  font-size: 0.85rem;
+  color: var(--color-error, #b91c1c);
+  background: var(--color-surface, #f8fafc);
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+}

@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
+import { gcOrphanArtifacts } from "./artifact-gc.js";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
 import { PiRpcAdapter } from "./pi/pirpc-pi-adapter.js";
@@ -64,6 +65,16 @@ function startDefaultServer(): void {
     console.log(`adapter=${adapterKind}`);
     console.log(`projectRoot=${projectRoot}`);
     console.log(`sessionRoot=${sessionRoot}`);
+    // Best-effort orphan-artifact GC at startup. Never blocks listen.
+    void gcOrphanArtifacts({ projectRoot, sessionRoot })
+      .then((result) => {
+        if (result.removed.length > 0) {
+          console.log(`artifact GC: removed ${result.removed.length} orphan session(s)`);
+        }
+      })
+      .catch((error) => {
+        console.warn(`artifact GC failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
   });
 }
 

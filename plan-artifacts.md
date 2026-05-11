@@ -77,7 +77,7 @@ export type ArtifactRepresentation =
 
 ---
 
-# Phase A — Extension skeleton + image path support
+# Phase A — Extension skeleton + image path support ✅ DONE
 
 ## Goal
 
@@ -132,7 +132,7 @@ served out-of-band over HTTP, with a basic web renderer.
 
 ---
 
-# Phase B — HTML / D3 via sandboxed iframe
+# Phase B — HTML / D3 via sandboxed iframe ✅ DONE
 
 ## Goal
 
@@ -169,7 +169,7 @@ timeline without compromising the host page.
 
 ---
 
-# Phase C — Declarative viz: Vega-Lite + Plotly
+# Phase C — Declarative viz: Vega-Lite + Plotly ✅ DONE
 
 ## Goal
 
@@ -197,7 +197,17 @@ Preferred path for charts: the LLM emits a JSON spec, the web client renders it 
 
 ---
 
-# Phase D — Polish, lifecycle, export
+# Phase D — Polish, lifecycle, export 🟡 PARTIAL
+
+Landed: orphan-artifact GC on server startup, per-artifact download/copy actions,
+full `docs/artifacts.md`.
+
+Deferred (called out in `docs/artifacts.md#known-deferred-items`):
+- Caption editing in the UI.
+- HTML/JSONL export support for artifact messages (Phase 10 territory).
+- Low-bandwidth-mode integration.
+- Re-rendering charts on theme toggle.
+- Multimodal re-feed of artifacts during compaction.
 
 ## Goal
 
