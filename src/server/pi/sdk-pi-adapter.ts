@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   AuthStorage,
@@ -30,8 +32,11 @@ export class SdkPiAdapter implements PiAdapter {
   private readonly authStorage = AuthStorage.create();
   private readonly modelRegistry = ModelRegistry.create(this.authStorage);
   private readonly settingsManager = SettingsManager.create(process.cwd());
+  private readonly sessionNames: SessionNameStore;
 
-  constructor(private readonly options: SdkPiAdapterOptions = {}) {}
+  constructor(private readonly options: SdkPiAdapterOptions = {}) {
+    this.sessionNames = new SessionNameStore(options.sessionDir);
+  }
 
   async createSession(options: CreateSessionOptions): Promise<PiSessionHandle> {
     const cwd = path.resolve(options.cwd);
@@ -42,10 +47,11 @@ export class SdkPiAdapter implements PiAdapter {
       settingsManager: this.settingsManager,
       sessionManager: SessionManager.create(cwd, this.options.sessionDir),
     });
-    if (options.sessionName && typeof session.setSessionName === "function") {
-      session.setSessionName(options.sessionName);
+    const handle = new SdkPiSessionHandle(session, cwd, this.modelRegistry, this.sessionNames);
+    if (options.sessionName) {
+      await handle.setSessionName(options.sessionName);
     }
-    return new SdkPiSessionHandle(session, cwd, this.modelRegistry);
+    return handle;
   }
 
   async openSession(options: OpenSessionOptions): Promise<PiSessionHandle> {
@@ -55,7 +61,9 @@ export class SdkPiAdapter implements PiAdapter {
       settingsManager: this.settingsManager,
       sessionManager: SessionManager.open(options.sessionFile, this.options.sessionDir),
     });
-    return new SdkPiSessionHandle(session, process.cwd(), this.modelRegistry);
+    const sdkSession = session as any;
+    const cwd = String(sdkSession.sessionManager?.getCwd?.() ?? sdkSession.cwd ?? process.cwd());
+    return new SdkPiSessionHandle(session, cwd, this.modelRegistry, this.sessionNames);
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
@@ -72,13 +80,19 @@ export class SdkPiAdapter implements PiAdapter {
     const sessions = cwd === undefined
       ? await SessionManager.listAll()
       : await SessionManager.list(path.resolve(cwd), this.options.sessionDir);
-    return sessions.map((item: any) => ({
-      id: String(item.id),
-      cwd: String(item.cwd ?? cwd ?? ""),
-      sessionFile: String(item.path),
-      ...(item.name === undefined ? {} : { sessionName: String(item.name) }),
-      ...(item.firstMessage === undefined ? {} : { firstMessage: String(item.firstMessage) }),
-      lastActivity: typeof item.timestamp === "number" ? item.timestamp : Date.parse(String(item.timestamp ?? Date.now())),
+    return Promise.all(sessions.map(async (item: any) => {
+      const id = String(item.id);
+      const sessionFile = String(item.path);
+      const storedName = await this.sessionNames.get(id, sessionFile);
+      const sessionName = item.name === undefined ? storedName : String(item.name);
+      return {
+        id,
+        cwd: String(item.cwd ?? cwd ?? ""),
+        sessionFile,
+        ...(sessionName === undefined ? {} : { sessionName }),
+        ...(item.firstMessage === undefined ? {} : { firstMessage: String(item.firstMessage) }),
+        lastActivity: typeof item.timestamp === "number" ? item.timestamp : Date.parse(String(item.timestamp ?? Date.now())),
+      };
     }));
   }
 }
@@ -87,9 +101,14 @@ class SdkPiSessionHandle implements PiSessionHandle {
   readonly id: string;
   readonly sessionFile: string;
 
-  constructor(private readonly session: any, readonly cwd: string, private readonly modelRegistry: any) {
+  constructor(
+    private readonly session: any,
+    readonly cwd: string,
+    private readonly modelRegistry: any,
+    private readonly sessionNames: SessionNameStore,
+  ) {
     this.id = String(session.sessionId);
-    this.sessionFile = String(session.sessionFile ?? "");
+    this.sessionFile = String(session.sessionFile ?? session.sessionManager?.getSessionFile?.() ?? "");
   }
 
   async getState(): Promise<SessionState> {
@@ -124,12 +143,16 @@ class SdkPiSessionHandle implements PiSessionHandle {
       // optional; ignore failures
     }
 
+    const sessionName = this.session.sessionName === undefined
+      ? await this.sessionNames.get(this.id, this.sessionFile)
+      : String(this.session.sessionName);
+
     return {
       id: this.id,
       cwd: this.cwd,
       sessionFile: this.sessionFile,
       status: this.session.isStreaming ? "running" : "idle",
-      ...(this.session.sessionName === undefined ? {} : { sessionName: String(this.session.sessionName) }),
+      ...(sessionName === undefined ? {} : { sessionName }),
       ...(sdkModel ? { modelProvider: String(sdkModel.provider ?? ""), model: String(sdkModel.id ?? "") } : {}),
       messageCount: messages.length,
       totalTokens,
@@ -159,6 +182,7 @@ class SdkPiSessionHandle implements PiSessionHandle {
       throw new Error("Pi SDK session does not support renaming sessions");
     }
     this.session.setSessionName(name);
+    await this.sessionNames.set(this.id, this.sessionFile, name);
     return this.getState();
   }
 
@@ -233,6 +257,49 @@ class SdkPiSessionHandle implements PiSessionHandle {
 
   async dispose(): Promise<void> {
     this.session.dispose();
+  }
+}
+
+interface PersistedSessionNames {
+  readonly byId?: Record<string, string>;
+  readonly byFile?: Record<string, string>;
+}
+
+class SessionNameStore {
+  private readonly file: string;
+
+  constructor(sessionDir?: string) {
+    const root = path.resolve(sessionDir ?? path.join(os.homedir(), ".pi", "agent", "sessions"));
+    this.file = path.join(root, ".pi-remote-session-names.json");
+  }
+
+  async get(sessionId: string, sessionFile: string): Promise<string | undefined> {
+    const data = await this.read();
+    return data.byId?.[sessionId] ?? data.byFile?.[sessionFile];
+  }
+
+  async set(sessionId: string, sessionFile: string, name: string): Promise<void> {
+    const trimmed = name.trim();
+    const current = await this.read();
+    const byId = { ...(current.byId ?? {}) };
+    const byFile = { ...(current.byFile ?? {}) };
+    if (trimmed) {
+      byId[sessionId] = trimmed;
+      if (sessionFile) byFile[sessionFile] = trimmed;
+    } else {
+      delete byId[sessionId];
+      if (sessionFile) delete byFile[sessionFile];
+    }
+    await fs.mkdir(path.dirname(this.file), { recursive: true });
+    await fs.writeFile(this.file, `${JSON.stringify({ byId, byFile }, null, 2)}\n`, "utf8");
+  }
+
+  private async read(): Promise<PersistedSessionNames> {
+    try {
+      return JSON.parse(await fs.readFile(this.file, "utf8")) as PersistedSessionNames;
+    } catch {
+      return {};
+    }
   }
 }
 
