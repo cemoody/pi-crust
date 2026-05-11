@@ -69,6 +69,20 @@ describe("SessionRegistry", () => {
     expect(listed[0]?.sessionName).toBe("test session");
   });
 
+  it("persists renamed sessions across reopen and list", async () => {
+    const { registry, projectA } = await makeRegistry();
+    const created = await registry.createSession({ cwd: projectA });
+
+    const renamed = await registry.setSessionName(created.id, "Renamed work");
+    expect(renamed.sessionName).toBe("Renamed work");
+    await registry.disposeSession(created.id);
+
+    const reopened = await registry.openSession(created.sessionFile);
+    await expect(reopened.handle.getState()).resolves.toMatchObject({ sessionName: "Renamed work" });
+    const listed = await registry.listSessions(projectA);
+    expect(listed.find((session) => session.id === created.id)?.sessionName).toBe("Renamed work");
+  });
+
   it("disposes hot session while keeping it reopenable from disk", async () => {
     const { registry, projectA } = await makeRegistry();
     const created = await registry.createSession({ cwd: projectA });

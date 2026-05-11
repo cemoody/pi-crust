@@ -154,6 +154,14 @@ class MockPiSessionHandle implements PiSessionHandle {
     return this.getState();
   }
 
+  async setSessionName(name: string): Promise<SessionState> {
+    const trimmed = name.trim();
+    this.sessionName = trimmed || undefined;
+    this.lastActivity = Date.now();
+    await this.persist();
+    return this.getState();
+  }
+
   async getMessages(): Promise<readonly SessionMessage[]> {
     return [...this.messages];
   }

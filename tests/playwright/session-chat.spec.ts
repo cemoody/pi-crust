@@ -125,9 +125,11 @@ test('shortcut modal opens with ? outside an input, ignored inside textarea', as
 test('can create a new session and send hello', async ({ page }) => {
   await page.goto('/');
 
+  await page.getByRole('button', { name: 'New session' }).click();
+  await expect(page.getByRole('dialog', { name: 'Create new session' })).toBeVisible();
   await page.getByLabel('New session cwd').fill(process.cwd());
   await page.getByLabel('New session name').fill('Playwright new session');
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('button', { name: 'Create session' }).click();
 
   await expect(page.getByRole('heading', { name: 'Playwright new session' })).toBeVisible();
   await page.getByLabel('Prompt draft').fill('hello');

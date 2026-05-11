@@ -139,8 +139,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   }
 
   if (req.method === "POST" && action === "rename") {
-    // Rename is currently optimistic/UI-only until adapter exposes session info mutation.
+    const body = await readJson(req) as { name?: string };
+    if (typeof body.name !== "string") return sendJson(res, 400, { error: "name is required" });
     const session = await getOrOpenSession(sessionId);
+    await registry.setSessionName(sessionId, body.name);
     return sendJson(res, 200, toSessionCard(await session.handle.getState()));
   }
 

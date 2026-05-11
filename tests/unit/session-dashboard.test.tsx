@@ -69,9 +69,11 @@ describe("SessionDashboard", () => {
 
   it("creates a session and shows the active session pane", async () => {
     render(<SessionDashboard api={makeApi()} />);
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    await screen.findByRole("dialog", { name: "Create new session" });
     fireEvent.change(screen.getByLabelText("New session cwd"), { target: { value: "/repo/app" } });
     fireEvent.change(screen.getByLabelText("New session name"), { target: { value: "Feature work" } });
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create session" }));
 
     await screen.findByRole("heading", { name: "Feature work" });
     expect(screen.getByText("/repo/app")).toBeInTheDocument();

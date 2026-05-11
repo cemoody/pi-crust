@@ -42,6 +42,9 @@ export class SdkPiAdapter implements PiAdapter {
       settingsManager: this.settingsManager,
       sessionManager: SessionManager.create(cwd, this.options.sessionDir),
     });
+    if (options.sessionName && typeof session.setSessionName === "function") {
+      session.setSessionName(options.sessionName);
+    }
     return new SdkPiSessionHandle(session, cwd, this.modelRegistry);
   }
 
@@ -148,6 +151,14 @@ class SdkPiSessionHandle implements PiSessionHandle {
     const model = this.modelRegistry.find(provider, modelId);
     if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
     await this.session.setModel(model);
+    return this.getState();
+  }
+
+  async setSessionName(name: string): Promise<SessionState> {
+    if (typeof this.session.setSessionName !== "function") {
+      throw new Error("Pi SDK session does not support renaming sessions");
+    }
+    this.session.setSessionName(name);
     return this.getState();
   }
 

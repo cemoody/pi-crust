@@ -84,6 +84,9 @@ export class ProtocolRouter {
         await this.registry.abort(op.sessionId);
         this.sendOk(envelope.id);
         return;
+      case "set_session_name":
+        this.sendOk(envelope.id, await this.registry.setSessionName(op.sessionId, op.name));
+        return;
       default:
         this.sendError(envelope.id, {
           code: "invalid_message",

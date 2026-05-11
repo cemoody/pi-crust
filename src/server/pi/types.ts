@@ -83,6 +83,7 @@ export interface PiSessionHandle {
   getMessages(): Promise<readonly SessionMessage[]>;
   prompt(message: string): Promise<void>;
   abort(): Promise<void>;
+  setSessionName(name: string): Promise<SessionState>;
   setModel(provider: string, modelId: string): Promise<SessionState>;
   subscribe(listener: PiEventListener): Unsubscribe;
   dispose(): Promise<void>;

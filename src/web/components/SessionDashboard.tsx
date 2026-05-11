@@ -29,6 +29,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [steeringBySession, setSteeringBySession] = useState<Record<string, string[]>>({});
   const [followUpBySession, setFollowUpBySession] = useState<Record<string, string[]>>({});
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [renameDraft, setRenameDraft] = useState<string | null>(null);
@@ -174,6 +175,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     setMessagesBySession((current) => ({ ...current, [created.id]: [] }));
     setActiveSessionId(created.id);
     setSessionName("");
+    setNewSessionOpen(false);
   }
 
   function beginRename() {
@@ -337,15 +339,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         </header>
 
         <section aria-label="Create session" className="session-create">
-          <label>
-            CWD
-            <input value={cwd} onChange={(event) => setCwd(event.target.value)} aria-label="New session cwd" />
-          </label>
-          <label>
-            Name
-            <input value={sessionName} onChange={(event) => setSessionName(event.target.value)} aria-label="New session name" />
-          </label>
-          <button type="button" onClick={() => void createSession()}>New session</button>
+          <button type="button" onClick={() => setNewSessionOpen(true)}>New session</button>
         </section>
 
         <section aria-label="Session browser controls" className="session-controls">
@@ -370,11 +364,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                     <option value="cwd">CWD</option>
                   </select>
                 </label>
-                <label className="popover-row">
+                <label className="popover-row checkbox-row">
                   <input type="checkbox" checked={showPaths} onChange={(event) => setShowPaths(event.target.checked)} />
                   <span>Show paths</span>
                 </label>
-                <label className="popover-row">
+                <label className="popover-row checkbox-row">
                   <input type="checkbox" checked={namedOnly} onChange={(event) => setNamedOnly(event.target.checked)} />
                   <span>Named only</span>
                 </label>
@@ -479,6 +473,41 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
           <p>Select or create a session.</p>
         )}
       </section>
+
+      {newSessionOpen ? (
+        <div className="new-session-backdrop" role="presentation" onClick={() => setNewSessionOpen(false)}>
+          <form
+            className="new-session-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create new session"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createSession();
+            }}
+          >
+            <header>
+              <h2>New session</h2>
+              <button type="button" onClick={() => setNewSessionOpen(false)} aria-label="Close new session dialog">×</button>
+            </header>
+            <div className="new-session-fields">
+              <label>
+                CWD
+                <input autoFocus value={cwd} onChange={(event) => setCwd(event.target.value)} aria-label="New session cwd" />
+              </label>
+              <label>
+                Name <span>optional</span>
+                <input value={sessionName} onChange={(event) => setSessionName(event.target.value)} aria-label="New session name" placeholder="Untitled session" />
+              </label>
+            </div>
+            <footer>
+              <button type="button" onClick={() => setNewSessionOpen(false)}>Cancel</button>
+              <button type="submit" className="primary">Create session</button>
+            </footer>
+          </form>
+        </div>
+      ) : null}
 
       {notice ? (
         <div role="status" aria-live="polite" className="dashboard-notice">
