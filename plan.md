@@ -348,41 +348,41 @@ Render Pi conversation state with enough fidelity to replace the basic TUI messa
 
 ## Todo
 
-- [ ] Render user messages.
-- [ ] Render assistant messages with Markdown.
-- [ ] Render streaming assistant drafts.
-- [ ] Render thinking blocks.
-- [ ] Add global thinking hide/show toggle.
-- [ ] Add per-thinking-block collapse.
-- [ ] Render assistant metadata:
-  - [ ] provider
-  - [ ] model
-  - [ ] stop reason
-  - [ ] token usage
-  - [ ] cost
-- [ ] Render message errors and aborted messages.
-- [ ] Render custom messages.
-- [ ] Render branch summaries.
-- [ ] Render compaction summaries.
-- [ ] Implement copy message.
-- [ ] Implement copy code block.
-- [ ] Support auto-scroll with user scroll lock.
+- [x] Render user messages.
+- [x] Render assistant messages with Markdown.
+- [x] Render streaming assistant drafts.
+- [x] Render thinking blocks.
+- [x] Add global thinking hide/show toggle.
+- [x] Add per-thinking-block collapse.
+- [x] Render assistant metadata:
+  - [x] provider
+  - [x] model
+  - [x] stop reason
+  - [x] token usage
+  - [x] cost
+- [x] Render message errors and aborted messages.
+- [x] Render custom messages.
+- [x] Render branch summaries.
+- [x] Render compaction summaries.
+- [x] Implement copy message.
+- [x] Implement copy code block.
+- [x] Support auto-scroll with user scroll lock.
 
 ## TDD-style tests
 
-- [ ] User message fixture renders text content.
-- [ ] User message fixture renders image attachment preview.
-- [ ] Assistant markdown fixture renders headings/lists/code blocks.
-- [ ] Streaming text fixture progressively updates one visible assistant draft.
-- [ ] Thinking fixture renders collapsed when global hide-thinking is enabled.
-- [ ] Assistant metadata fixture shows model/provider/usage.
-- [ ] Error assistant fixture shows error state.
-- [ ] Aborted assistant fixture shows aborted state.
-- [ ] Custom message fixture renders label and content.
-- [ ] Branch summary fixture renders summary card.
-- [ ] Compaction summary fixture renders summary card.
-- [ ] Copy button copies expected message text.
-- [ ] Auto-scroll pauses when user scrolls upward.
+- [x] User message fixture renders text content.
+- [x] User message fixture renders image attachment preview.
+- [x] Assistant markdown fixture renders headings/lists/code blocks.
+- [x] Streaming text fixture progressively updates one visible assistant draft.
+- [x] Thinking fixture renders collapsed when global hide-thinking is enabled.
+- [x] Assistant metadata fixture shows model/provider/usage.
+- [x] Error assistant fixture shows error state.
+- [x] Aborted assistant fixture shows aborted state.
+- [x] Custom message fixture renders label and content.
+- [x] Branch summary fixture renders summary card.
+- [x] Compaction summary fixture renders summary card.
+- [x] Copy button copies expected message text.
+- [x] Auto-scroll pauses when user scrolls upward.
 
 ---
 

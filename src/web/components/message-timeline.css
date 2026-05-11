@@ -1,0 +1,74 @@
+.message-timeline {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.message-card {
+  border: 1px solid #2f3440;
+  border-radius: 0.9rem;
+  padding: 1rem;
+  background: #171a21;
+}
+
+.message-card.user { background: #20242d; }
+.message-card.custom { background: #1d2430; }
+.message-card.summary { background: #201f2d; }
+
+.message-header,
+.message-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.message-footer {
+  margin-top: 0.75rem;
+  color: #aab2c0;
+  font-size: 0.9rem;
+}
+
+.badge {
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.8rem;
+}
+
+.badge.warning { background: #6a4d00; }
+.badge.error { background: #6a1d1d; }
+.message-error { color: #ff9d9d; }
+
+.message-images {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.message-images img {
+  max-width: 12rem;
+  max-height: 12rem;
+  border-radius: 0.5rem;
+}
+
+.thinking-block {
+  margin: 0.75rem 0;
+  color: #c4b5fd;
+}
+
+.code-block {
+  border: 1px solid #3b4150;
+  border-radius: 0.6rem;
+  background: #0f1117;
+  overflow: auto;
+}
+
+.code-block button {
+  float: right;
+  margin: 0.5rem;
+}
+
+pre {
+  white-space: pre-wrap;
+  padding: 0.75rem;
+}
