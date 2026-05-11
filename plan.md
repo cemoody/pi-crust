@@ -650,45 +650,45 @@ Expose Pi's tree-shaped session model in a visual web interface.
 ## Todo
 
 - [ ] Add server API for session tree data.
-- [ ] Render visual tree.
-- [ ] Highlight current leaf.
-- [ ] Inspect selected entry.
-- [ ] Filter modes:
-  - [ ] default
-  - [ ] no-tools
-  - [ ] user-only
-  - [ ] labeled-only
-  - [ ] all
+- [x] Render visual tree.
+- [x] Highlight current leaf.
+- [x] Inspect selected entry.
+- [x] Filter modes:
+  - [x] default
+  - [x] no-tools
+  - [x] user-only
+  - [x] labeled-only
+  - [x] all
 - [ ] Fold/unfold branch segments.
 - [ ] Search tree entries.
-- [ ] Add/edit/clear labels.
+- [x] Add/edit/clear labels.
 - [ ] Show label timestamps.
-- [ ] Navigate to selected entry.
-- [ ] If selected user entry, restore its text into composer for editing/resubmission.
-- [ ] Support branch summary choices:
-  - [ ] no summary
-  - [ ] default summary
-  - [ ] custom summary instructions
-- [ ] Implement fork from selected user message.
-- [ ] Implement clone current active branch.
+- [x] Navigate to selected entry.
+- [x] If selected user entry, restore its text into composer for editing/resubmission.
+- [x] Support branch summary choices:
+  - [x] no summary
+  - [x] default summary
+  - [x] custom summary instructions
+- [x] Implement fork from selected user message.
+- [x] Implement clone current active branch.
 - [ ] Show parent session breadcrumb.
 
 ## TDD-style tests
 
-- [ ] Tree fixture renders all branch nodes.
-- [ ] Current leaf is highlighted.
-- [ ] User-only filter hides non-user entries.
-- [ ] No-tools filter hides tool result entries.
-- [ ] Labeled-only filter shows only labeled entries.
-- [ ] Selecting an entry shows details panel.
-- [ ] Editing a label persists via server API.
-- [ ] Clearing a label removes it from labeled-only view.
-- [ ] Navigating to user entry restores message text into composer.
-- [ ] Navigating to assistant entry leaves composer empty.
-- [ ] Branch summary prompt appears when switching branches.
-- [ ] Custom branch summary instructions are sent to server.
-- [ ] Fork creates a new session and shows it in dashboard.
-- [ ] Clone creates a new session with same active branch.
+- [x] Tree fixture renders all branch nodes.
+- [x] Current leaf is highlighted.
+- [x] User-only filter hides non-user entries.
+- [x] No-tools filter hides tool result entries.
+- [x] Labeled-only filter shows only labeled entries.
+- [x] Selecting an entry shows details panel.
+- [x] Editing a label persists via server API.
+- [x] Clearing a label removes it from labeled-only view.
+- [x] Navigating to user entry restores message text into composer.
+- [x] Navigating to assistant entry leaves composer empty.
+- [x] Branch summary prompt appears when switching branches.
+- [x] Custom branch summary instructions are sent to server.
+- [x] Fork creates a new session and shows it in dashboard.
+- [x] Clone creates a new session with same active branch.
 
 ---
 
