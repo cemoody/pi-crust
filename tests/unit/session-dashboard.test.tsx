@@ -87,9 +87,10 @@ describe("SessionDashboard", () => {
     await screen.findByText("2 sessions");
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), { target: { value: "Beta" } });
     expect(screen.getByText("Beta")).toBeInTheDocument();
-    expect(screen.queryByText("a")).not.toBeInTheDocument();
+    expect(screen.queryByText("Untitled session")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Filter sessions" }));
     fireEvent.click(screen.getByLabelText("Named only"));
     expect(screen.getByText("Beta")).toBeInTheDocument();
     expect(screen.queryByText("a")).not.toBeInTheDocument();
@@ -99,6 +100,7 @@ describe("SessionDashboard", () => {
 
     fireEvent.change(screen.getByLabelText("Sort sessions"), { target: { value: "name" } });
     expect(screen.getByLabelText("Sort sessions")).toHaveValue("name");
+    fireEvent.click(screen.getByRole("button", { name: "Filter sessions" }));
   });
 
   it("renames the active session via the inline form", async () => {

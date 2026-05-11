@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionCardData, SessionDashboardApi } from "../api/session-api.js";
 import iconBlack from "../assets-icon-black.svg";
 import { MessageTimeline, type TimelineMessage } from "./MessageTimeline.js";
@@ -31,6 +31,19 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [renameDraft, setRenameDraft] = useState<string | null>(null);
   const [deletePending, setDeletePending] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filterRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+    function onDown(event: MouseEvent) {
+      if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
+        setFiltersOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [filtersOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -313,14 +326,38 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         </section>
 
         <section aria-label="Session browser controls" className="session-controls">
-          <input placeholder="Search sessions" value={query} onChange={(event) => setQuery(event.target.value)} />
-          <label><input type="checkbox" checked={showPaths} onChange={(event) => setShowPaths(event.target.checked)} /> Show paths</label>
-          <label><input type="checkbox" checked={namedOnly} onChange={(event) => setNamedOnly(event.target.checked)} /> Named only</label>
-          <select aria-label="Sort sessions" value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
-            <option value="recent">Recent</option>
-            <option value="name">Name</option>
-            <option value="cwd">CWD</option>
-          </select>
+          <div className="session-search" ref={filterRef}>
+            <input placeholder="Search sessions" value={query} onChange={(event) => setQuery(event.target.value)} />
+            <button
+              type="button"
+              className={`session-filter-toggle ${filtersOpen ? "open" : ""}`}
+              aria-label="Filter sessions"
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((open) => !open)}
+            >
+              <FilterGlyph />
+            </button>
+            {filtersOpen ? (
+              <div className="session-filter-popover" role="menu" aria-label="Session filters">
+                <label className="popover-row">
+                  <span>Sort by</span>
+                  <select aria-label="Sort sessions" value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
+                    <option value="recent">Recent</option>
+                    <option value="name">Name</option>
+                    <option value="cwd">CWD</option>
+                  </select>
+                </label>
+                <label className="popover-row">
+                  <input type="checkbox" checked={showPaths} onChange={(event) => setShowPaths(event.target.checked)} />
+                  <span>Show paths</span>
+                </label>
+                <label className="popover-row">
+                  <input type="checkbox" checked={namedOnly} onChange={(event) => setNamedOnly(event.target.checked)} />
+                  <span>Named only</span>
+                </label>
+              </div>
+            ) : null}
+          </div>
         </section>
 
         {error ? <p role="alert">{error}</p> : null}
@@ -333,9 +370,12 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 className={session.id === activeSessionId ? "active" : ""}
                 onClick={() => setActiveSessionId(session.id)}
               >
-                <strong>{session.sessionName ?? session.id}</strong>
-                <span>{session.status}</span>
-                <small>{showPaths ? session.cwd : basename(session.cwd)}</small>
+                <span className="session-row-name">{session.sessionName ?? "Untitled session"}</span>
+                <span className="session-row-status">{session.status}</span>
+                <span className="session-row-id">
+                  <code>{shortSessionId(session.id)}</code>
+                  {showPaths ? <> · <span>{session.cwd}</span></> : <> · <span>{basename(session.cwd)}</span></>}
+                </span>
               </button>
             </li>
           ))}
@@ -374,7 +414,10 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 </div>
               ) : (
                 <>
-                  <h2>{activeSession.sessionName ?? activeSession.id}</h2>
+                  <div className="active-title">
+                    <h2>{activeSession.sessionName ?? "Untitled session"}</h2>
+                    <span className="active-subtitle"><code>{shortSessionId(activeSession.id)}</code></span>
+                  </div>
                   <div className="active-actions">
                     <button type="button" onClick={beginRename}>Rename</button>
                     <button type="button" className="ghost-danger" onClick={beginDelete}>Delete</button>
@@ -469,6 +512,21 @@ function compactNumber(value: number): string {
   if (value < 10_000) return `${(value / 1000).toFixed(1)}k`;
   if (value < 1_000_000) return `${Math.round(value / 1000)}k`;
   return `${(value / 1_000_000).toFixed(1)}M`;
+}
+
+function shortSessionId(id: string): string {
+  const compact = id.replace(/-/g, "");
+  return compact.length > 8 ? compact.slice(0, 8) : compact;
+}
+
+function FilterGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 4h12" />
+      <path d="M4 8h8" />
+      <path d="M6 12h4" />
+    </svg>
+  );
 }
 
 function SidebarToggleGlyph() {
