@@ -90,6 +90,11 @@ export interface ToolResultLike {
   readonly details?: Record<string, unknown>;
 }
 
+export type ExtensionUiResponse =
+  | { readonly id: string; readonly value: string }
+  | { readonly id: string; readonly confirmed: boolean }
+  | { readonly id: string; readonly cancelled: true };
+
 export type ExtensionUiRequest =
   | { readonly id: string; readonly method: "confirm"; readonly title: string; readonly message?: string; readonly timeout?: number }
   | { readonly id: string; readonly method: "select"; readonly title: string; readonly options: readonly string[]; readonly timeout?: number }

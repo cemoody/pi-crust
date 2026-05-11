@@ -1,4 +1,4 @@
-import type { ExtensionUiRequest, PiWireEvent } from "../../shared/protocol.js";
+import type { ExtensionUiRequest, ExtensionUiResponse, PiWireEvent } from "../../shared/protocol.js";
 
 export type SessionStatus = "idle" | "running" | "compacting" | "retrying" | "error";
 
@@ -102,6 +102,7 @@ export interface PiSessionHandle {
   abort(): Promise<void>;
   setSessionName(name: string): Promise<SessionState>;
   setModel(provider: string, modelId: string): Promise<SessionState>;
+  respondToExtensionUi?(response: ExtensionUiResponse): Promise<void>;
   subscribe(listener: PiEventListener): Unsubscribe;
   dispose(): Promise<void>;
 }

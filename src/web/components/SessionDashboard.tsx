@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { WireMessage } from "../../shared/protocol.js";
+import type { ExtensionUiRequest, ExtensionUiResponse, WireMessage } from "../../shared/protocol.js";
 import type { DashboardArtifact, DashboardMessage, DashboardToolDetails, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
 import iconBlack from "../assets-icon-black.svg";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
@@ -8,6 +8,7 @@ import { MessageTimeline, type TimelineMessage } from "./MessageTimeline.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { PromptComposer, type ComposerAttachment } from "./PromptComposer.js";
 import { ShortcutHelp } from "./ShortcutHelp.js";
+import { ExtensionUiHost } from "./ExtensionUiHost.js";
 import "./session-dashboard.css";
 
 export interface SessionDashboardProps {
@@ -38,6 +39,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement | null>(null);
   const [promptErrorBySession, setPromptErrorBySession] = useState<Record<string, string | null>>({});
+  const [extensionUiBySession, setExtensionUiBySession] = useState<Record<string, ExtensionUiRequest[]>>({});
   const streamDraftIdsRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -126,6 +128,13 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
 
     const applyStreamEvent = (event: unknown) => {
       if (cancelled || !isRecord(event) || typeof event.type !== "string") return;
+      if (event.type === "extension_ui_request" && isExtensionUiRequest(event)) {
+        setExtensionUiBySession((current) => ({
+          ...current,
+          [activeSessionId]: upsertExtensionUiRequest(current[activeSessionId] ?? [], event),
+        }));
+        return;
+      }
       if (applyRealtimeEvent(activeSessionId, event, setMessagesBySession, streamDraftIdsRef.current)) {
         return;
       }
@@ -313,6 +322,23 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     }
   }
 
+  async function respondToExtensionUi(response: ExtensionUiResponse): Promise<void> {
+    if (!activeSession || !api.respondToExtensionUi) {
+      setNotice("This session adapter does not support extension UI responses.");
+      return;
+    }
+    const sessionId = activeSession.id;
+    try {
+      await api.respondToExtensionUi(sessionId, response);
+      setExtensionUiBySession((current) => ({
+        ...current,
+        [sessionId]: (current[sessionId] ?? []).filter((request) => request.id !== response.id),
+      }));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }
+
   async function handleBash(command: string, includeInContext: boolean) {
     if (!activeSession) return;
     const sessionId = activeSession.id;
@@ -470,6 +496,12 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
               <MessageTimeline
                 messages={messagesBySession[activeSession.id] ?? []}
                 streaming={activeSession.status === "streaming"}
+              />
+              <ExtensionUiHost
+                requests={extensionUiBySession[activeSession.id] ?? []}
+                onValueResponse={(id, value) => respondToExtensionUi({ id, value })}
+                onConfirmResponse={(id, confirmed) => respondToExtensionUi({ id, confirmed })}
+                onCancelResponse={(id) => respondToExtensionUi({ id, cancelled: true })}
               />
               {promptErrorBySession[activeSession.id] ? (
                 <div className="prompt-error-banner" role="alert" aria-label="Prompt error">
@@ -785,6 +817,30 @@ function extractArtifact(result: unknown): DashboardArtifact | undefined {
   const artifact = result.details.piRemoteControlArtifact;
   if (!isRecord(artifact) || typeof artifact.kind !== "string") return undefined;
   return artifact as unknown as DashboardArtifact;
+}
+
+function upsertExtensionUiRequest(requests: readonly ExtensionUiRequest[], request: ExtensionUiRequest): ExtensionUiRequest[] {
+  const withoutSameTarget = requests.filter((existing) => {
+    if (existing.id === request.id) return false;
+    if (existing.method === "setStatus" && request.method === "setStatus") return existing.statusKey !== request.statusKey;
+    if (existing.method === "setWidget" && request.method === "setWidget") return existing.widgetKey !== request.widgetKey;
+    if (existing.method === "setTitle" && request.method === "setTitle") return false;
+    return true;
+  });
+  return [...withoutSameTarget, request];
+}
+
+function isExtensionUiRequest(value: Record<string, unknown>): value is ExtensionUiRequest {
+  const method = value.method;
+  if (typeof value.id !== "string" || typeof method !== "string") return false;
+  if (method === "notify") return typeof value.message === "string";
+  if (method === "setStatus") return typeof value.statusKey === "string";
+  if (method === "setWidget") return typeof value.widgetKey === "string";
+  if (method === "setTitle") return typeof value.title === "string";
+  if (method === "set_editor_text") return typeof value.text === "string";
+  if (method === "confirm" || method === "input" || method === "editor") return typeof value.title === "string";
+  if (method === "select") return typeof value.title === "string" && Array.isArray(value.options);
+  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

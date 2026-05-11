@@ -9,6 +9,7 @@ import {
   ModelRegistry,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import type {
   CreateSessionOptions,
   ModelInfo,
@@ -210,6 +211,10 @@ class PiRpcSessionHandle implements PiSessionHandle {
     return this.getState();
   }
 
+  async respondToExtensionUi(response: ExtensionUiResponse): Promise<void> {
+    this.rpc.send({ type: "extension_ui_response", ...response });
+  }
+
   subscribe(listener: PiEventListener): Unsubscribe {
     this.emitter.on("event", listener);
     return () => this.emitter.off("event", listener);
@@ -304,6 +309,11 @@ class JsonlRpcProcess {
   onEvent(listener: (event: unknown) => void): Unsubscribe {
     this.eventEmitter.on("event", listener);
     return () => this.eventEmitter.off("event", listener);
+  }
+
+  send(payload: Record<string, unknown>): void {
+    if (this.closed) throw new Error("Pi RPC process is closed");
+    this.child.stdin.write(`${JSON.stringify(payload)}\n`, "utf8");
   }
 
   async request(type: string, payload: Record<string, unknown> = {}): Promise<unknown> {

@@ -5,6 +5,7 @@ import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
 import { PiRpcAdapter } from "./pi/pirpc-pi-adapter.js";
 import { MAX_PROMPT_CHARS } from "../shared/limits.js";
+import type { ExtensionUiResponse } from "../shared/protocol.js";
 import type { PromptAttachment, SessionMessage } from "./pi/types.js";
 import { PathPolicy } from "./security/path-policy.js";
 import { SessionRegistry } from "./session/session-registry.js";
@@ -77,7 +78,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return sendJson(res, 200, toSessionCard(state));
   }
 
-  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state|events))?$/);
+  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state|events|extension-ui-response))?$/);
   if (!match) return sendJson(res, 404, { error: "not found" });
   const sessionId = decodeURIComponent(match[1]!);
   const action = match[2] ?? "state";
@@ -167,6 +168,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return sendJson(res, 200, toSessionCard(await session.handle.getState()));
   }
 
+  if (req.method === "POST" && action === "extension-ui-response") {
+    const body = await readJson(req);
+    const response = parseExtensionUiResponse(body);
+    if (!response) return sendJson(res, 400, { error: "Invalid extension UI response" });
+    await getOrOpenSession(sessionId);
+    await registry.respondToExtensionUi(sessionId, response);
+    return sendJson(res, 200, { ok: true });
+  }
+
   if (req.method === "POST" && action === "delete") {
     await registry.disposeSession(sessionId);
     return sendJson(res, 200, { ok: true });
@@ -224,6 +234,16 @@ function toDashboardMessages(messages: readonly SessionMessage[]) {
 function normalizePromptAttachments(attachments: readonly PromptAttachment[] | undefined): readonly PromptAttachment[] {
   if (!Array.isArray(attachments)) return [];
   return attachments.filter((attachment) => attachment.type === "image" && typeof attachment.data === "string" && attachment.data.length > 0);
+}
+
+function parseExtensionUiResponse(value: unknown): ExtensionUiResponse | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const body = value as Record<string, unknown>;
+  if (typeof body.id !== "string" || !body.id) return undefined;
+  if (typeof body.value === "string") return { id: body.id, value: body.value };
+  if (typeof body.confirmed === "boolean") return { id: body.id, confirmed: body.confirmed };
+  if (body.cancelled === true) return { id: body.id, cancelled: true };
+  return undefined;
 }
 
 function setCors(res: http.ServerResponse): void {

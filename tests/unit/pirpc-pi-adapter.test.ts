@@ -9,9 +9,12 @@ import { SessionRegistry } from "../../src/server/session/session-registry.js";
 async function makeFakePiRpcExecutable(root: string): Promise<string> {
   const fakeRpc = path.join(root, "fake-pi-rpc.mjs");
   const sessionFile = path.join(root, "sessions", "fake.jsonl");
+  const responseFile = path.join(root, "extension-ui-response.json");
   await fs.mkdir(path.dirname(sessionFile), { recursive: true });
   await fs.writeFile(fakeRpc, `
+import { writeFileSync } from "node:fs";
 const sessionFile = ${JSON.stringify(sessionFile)};
+const responseFile = ${JSON.stringify(responseFile)};
 const sessionId = "fake-rpc-session";
 let name;
 let buffer = "";
@@ -33,12 +36,14 @@ function state() {
   return { sessionId, sessionFile, sessionName: name, isStreaming: false, isCompacting: false, messageCount: 2, model: { provider: "fake", id: "model" } };
 }
 function handle(message) {
+  if (message.type === "extension_ui_response") { writeFileSync(responseFile, JSON.stringify(message)); return; }
   if (message.type === "get_state") return send({ id: message.id, type: "response", command: "get_state", success: true, data: state() });
   if (message.type === "set_session_name") { name = message.name; return send({ id: message.id, type: "response", command: "set_session_name", success: true }); }
   if (message.type === "get_messages") return send({ id: message.id, type: "response", command: "get_messages", success: true, data: { messages: [{ role: "assistant", content: [{ type: "text", text: "hello from rpc" }] }] } });
   if (message.type === "prompt") {
     send({ id: message.id, type: "response", command: "prompt", success: true });
     send({ type: "agent_start" });
+    send({ type: "extension_ui_request", id: "ui-1", method: "confirm", title: "Continue?" });
     send({ type: "message_start", message: { role: "assistant", content: [] } });
     send({ type: "message_update", message: { role: "assistant", content: [] }, assistantMessageEvent: { type: "text_delta", delta: "hi" } });
     send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "show_artifact", result: { content: [{ type: "text", text: "displayed" }], details: { piRemoteControlArtifact: { version: 1, kind: "markdown", title: "Report", markdown: "ok" } } }, isError: false });
@@ -77,6 +82,7 @@ describe("PiRpcAdapter", () => {
 
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "agent_start" }),
+      expect.objectContaining({ type: "extension_ui_request", id: "ui-1", method: "confirm" }),
       expect.objectContaining({ type: "message_update" }),
       expect.objectContaining({
         type: "tool_execution_end",
@@ -90,6 +96,24 @@ describe("PiRpcAdapter", () => {
       expect.objectContaining({ type: "agent_end" }),
     ]));
 
+    await registry.respondToExtensionUi(session.id, { id: "ui-1", confirmed: true });
+    await expect(readEventually(path.join(root, "extension-ui-response.json")))
+      .resolves.toContain('"confirmed":true');
+
     await registry.disposeAll();
   });
 });
+
+async function readEventually(file: string): Promise<string> {
+  const deadline = Date.now() + 1_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      return await fs.readFile(file, "utf8");
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Timed out waiting for file");
+}

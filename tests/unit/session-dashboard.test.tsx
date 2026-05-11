@@ -9,6 +9,7 @@ beforeEach(() => {
   }
 });
 import { SessionDashboard } from "../../src/web/components/SessionDashboard.js";
+import type { ExtensionUiResponse } from "../../src/shared/protocol.js";
 import type { SessionCardData, SessionDashboardApi, NewSessionInput } from "../../src/web/api/session-api.js";
 
 function makeApi(initial: SessionCardData[] = []): SessionDashboardApi {
@@ -142,6 +143,92 @@ describe("SessionDashboard", () => {
       });
     });
     expect(screen.getByText("Hello")).toBeInTheDocument();
+  });
+
+  it("streams tool output and artifact metadata from SSE events", async () => {
+    let pushEvent: ((event: unknown) => void) | undefined;
+    const api = {
+      ...makeApi([
+        { id: "a", cwd: "/repo/a", sessionName: "Live", status: "idle", model: "m", lastActivity: 1 },
+      ]),
+      async getMessages() {
+        return [];
+      },
+      streamEvents(_sessionId: string, onEvent: (event: unknown) => void) {
+        pushEvent = onEvent;
+        return () => undefined;
+      },
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Live");
+    fireEvent.click(screen.getByRole("button", { name: /Live/ }));
+    await waitFor(() => expect(pushEvent).toBeDefined());
+
+    act(() => {
+      pushEvent?.({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "ls" } });
+    });
+    expect(screen.getByLabelText("tool bash")).toHaveTextContent("running");
+
+    act(() => {
+      pushEvent?.({
+        type: "tool_execution_update",
+        toolCallId: "call_1",
+        toolName: "bash",
+        args: { command: "ls" },
+        partialResult: { content: [{ type: "text", text: "package" }] },
+      });
+    });
+    expect(screen.getByText("package")).toBeInTheDocument();
+
+    act(() => {
+      pushEvent?.({
+        type: "tool_execution_end",
+        toolCallId: "call_1",
+        toolName: "bash",
+        result: {
+          content: [{ type: "text", text: "package.json" }],
+          details: { piRemoteControlArtifact: { kind: "markdown", title: "Report", markdown: "## Done" } },
+        },
+        isError: false,
+      });
+    });
+    expect(screen.getByLabelText("tool bash")).toHaveTextContent("done");
+    expect(screen.getByText("package.json")).toBeInTheDocument();
+    expect(screen.getByText("Report")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument();
+  });
+
+  it("renders extension UI requests from SSE and sends responses", async () => {
+    let pushEvent: ((event: unknown) => void) | undefined;
+    const responses: ExtensionUiResponse[] = [];
+    const api = {
+      ...makeApi([
+        { id: "a", cwd: "/repo/a", sessionName: "Live", status: "idle", model: "m", lastActivity: 1 },
+      ]),
+      streamEvents(_sessionId: string, onEvent: (event: unknown) => void) {
+        pushEvent = onEvent;
+        return () => undefined;
+      },
+      async respondToExtensionUi(_sessionId: string, response: ExtensionUiResponse) {
+        responses.push(response);
+      },
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Live");
+    fireEvent.click(screen.getByRole("button", { name: /Live/ }));
+    await waitFor(() => expect(pushEvent).toBeDefined());
+
+    act(() => {
+      pushEvent?.({ type: "extension_ui_request", id: "ui-1", method: "confirm", title: "Continue?", message: "Proceed" });
+    });
+
+    expect(screen.getByRole("dialog", { name: "Continue?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(responses).toEqual([{ id: "ui-1", confirmed: true }]));
+    expect(screen.queryByRole("dialog", { name: "Continue?" })).not.toBeInTheDocument();
   });
 
   it("renames the active session via the inline form", async () => {
