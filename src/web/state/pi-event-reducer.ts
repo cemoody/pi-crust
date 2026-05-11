@@ -1,3 +1,4 @@
+import { ARTIFACT_CUSTOM_TYPE, type ArtifactMessageDetails, isArtifactMessageDetails } from "../../shared/artifact.js";
 import type { ExtensionUiRequest, PiWireEvent, WireMessage } from "../../shared/protocol.js";
 import { truncateText } from "../../shared/truncation.js";
 
@@ -19,6 +20,10 @@ export interface WebMessage {
   readonly thinking: string;
   readonly timestamp?: number;
   readonly streaming?: boolean;
+  /** For `role === "custom"`, the pi `customType` value. */
+  readonly customType?: string;
+  /** Decoded artifact payload when `customType === "artifact"`. */
+  readonly artifact?: ArtifactMessageDetails;
 }
 
 export interface WebToolState {
@@ -205,13 +210,24 @@ function replaceLastStreamingMessage(state: WebSessionState, message: WebMessage
 }
 
 function toWebMessage(message: WireMessage, streaming: boolean): WebMessage {
-  return {
+  const wm = message as WireMessage & { readonly customType?: string; readonly details?: unknown };
+  const base: WebMessage = {
     role: message.role,
     text: contentText(message.content),
     thinking: "",
     ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
     streaming,
   };
+  if (message.role === "custom" && wm.customType) {
+    return {
+      ...base,
+      customType: wm.customType,
+      ...(wm.customType === ARTIFACT_CUSTOM_TYPE && isArtifactMessageDetails(wm.details)
+        ? { artifact: wm.details }
+        : {}),
+    };
+  }
+  return base;
 }
 
 function contentText(content: unknown): string {

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { ArtifactMessageDetails } from "../../shared/artifact.js";
+import { ArtifactView } from "./ArtifactView.js";
 import "./message-timeline.css";
 
 export interface TimelineImage {
@@ -47,6 +49,9 @@ export interface TimelineMessage {
   readonly error?: string;
   readonly aborted?: boolean;
   readonly customLabel?: string;
+  readonly customType?: string;
+  /** Decoded artifact payload when customType === "artifact". */
+  readonly artifact?: ArtifactMessageDetails;
   readonly summaryKind?: "branch" | "compaction";
   readonly tool?: TimelineToolDetails;
   readonly timestamp?: number;
@@ -57,9 +62,11 @@ export interface MessageTimelineProps {
   readonly hideThinking?: boolean;
   readonly autoScroll?: boolean;
   readonly streaming?: boolean;
+  /** Base URL prefix for artifact HTTP requests (e.g., http://localhost:8787). */
+  readonly artifactBaseUrl?: string | undefined;
 }
 
-export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false }: MessageTimelineProps) {
+export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false, artifactBaseUrl }: MessageTimelineProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -78,7 +85,7 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
           const showFooter = !isLatest || !streaming;
           return (
             <div key={`turn-${turn.messages[0]?.id ?? turnIndex}`} className="timeline-turn">
-              {turn.messages.map((message) => renderMessage(message, hideThinking))}
+              {turn.messages.map((message) => renderMessage(message, hideThinking, artifactBaseUrl))}
               {showFooter && turn.messages.length > 0 ? <TurnFooter turn={turn} /> : null}
             </div>
           );
@@ -90,9 +97,16 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
   );
 }
 
-function renderMessage(message: TimelineMessage, hideThinking: boolean) {
+function renderMessage(message: TimelineMessage, hideThinking: boolean, artifactBaseUrl: string | undefined) {
   if (message.role === "tool" && message.tool) {
     return <ToolCard key={message.id} tool={message.tool} />;
+  }
+  if (message.role === "custom" && message.artifact) {
+    return (
+      <article key={message.id} className="message-card custom artifact" aria-label="Artifact message">
+        <ArtifactView artifact={message.artifact} apiBaseUrl={artifactBaseUrl} />
+      </article>
+    );
   }
   const showLabel = message.role === "custom" || message.role === "summary";
   return (

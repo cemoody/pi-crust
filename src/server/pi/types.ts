@@ -53,11 +53,15 @@ export type PiEvent =
   | { readonly type: "extension_ui_request"; readonly id: string; readonly method: ExtensionUiRequest["method"]; readonly [key: string]: unknown };
 
 export interface SessionMessage {
-  readonly role: "user" | "assistant" | "system" | "tool";
+  readonly role: "user" | "assistant" | "system" | "tool" | "custom";
   readonly content: string;
   readonly timestamp: number;
   readonly tool?: SessionToolDetails;
   readonly images?: readonly SessionMessageImage[];
+  /** Pi `customType` for `role === "custom"` (e.g., "artifact"). */
+  readonly customType?: string;
+  /** Structured payload for custom messages (e.g., ArtifactMessageDetails). */
+  readonly customDetails?: unknown;
 }
 
 export interface SessionMessageImage {

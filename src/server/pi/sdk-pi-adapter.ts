@@ -235,6 +235,23 @@ class SdkPiSessionHandle implements PiSessionHandle {
             break;
           }
         }
+      } else if (message.role === "custom") {
+        // pi extensions inject custom messages (e.g., artifact carriers) via pi.sendMessage.
+        const text = typeof message.content === "string"
+          ? message.content
+          : Array.isArray(message.content)
+            ? message.content
+                .filter((block: any) => block?.type === "text")
+                .map((block: any) => String(block.text ?? ""))
+                .join("\n")
+            : "";
+        result.push({
+          role: "custom",
+          content: text,
+          timestamp,
+          ...(typeof message.customType === "string" ? { customType: message.customType } : {}),
+          ...(message.details === undefined ? {} : { customDetails: message.details }),
+        });
       } else if (message.role === "user" || message.role === "system") {
         const blocks: any[] = Array.isArray(message.content) ? message.content : [];
         const text = typeof message.content === "string"

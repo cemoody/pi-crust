@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import os from "node:os";
@@ -105,6 +107,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const state = await created.handle.getState();
     context.coldSessionFiles.set(created.id, created.sessionFile);
     return sendJson(res, 200, toSessionCard(state));
+  }
+
+  // Per-session artifact files: /api/sessions/:sessionId/artifacts/:filename
+  const artifactMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/artifacts\/([^/]+)$/);
+  if (artifactMatch && req.method === "GET") {
+    const sessionId = decodeURIComponent(artifactMatch[1]!);
+    const filename = decodeURIComponent(artifactMatch[2]!);
+    return serveArtifact(req, res, context, sessionId, filename);
   }
 
   const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state|events|extension-ui-response))?$/);
@@ -257,6 +267,8 @@ function toDashboardMessages(messages: readonly SessionMessage[]) {
     tool: message.tool,
     images: message.images,
     timestamp: message.timestamp,
+    ...(message.customType ? { customType: message.customType } : {}),
+    ...(message.customDetails === undefined ? {} : { customDetails: message.customDetails }),
   }));
 }
 
@@ -273,6 +285,102 @@ function parseExtensionUiResponse(value: unknown): ExtensionUiResponse | undefin
   if (typeof body.confirmed === "boolean") return { id: body.id, confirmed: body.confirmed };
   if (body.cancelled === true) return { id: body.id, cancelled: true };
   return undefined;
+}
+
+/**
+ * Stream a stored artifact for a session. The route is scoped:
+ *  - The session must be openable (i.e., its file is on the coldSessionFiles map or the
+ *    session is hot). This is the same gate the rest of /api/sessions/:id/... uses.
+ *  - The filename may not contain path separators (regex above already enforces that).
+ *  - The resolved disk path must live under <cwd>/.pi/artifacts/<sessionId>/.
+ */
+async function serveArtifact(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  context: HttpApiServerContext,
+  sessionId: string,
+  filename: string,
+): Promise<void> {
+  // Defense in depth — the URL regex already rejects '/'
+  if (filename.includes("/") || filename.includes("..") || filename.startsWith(".")) {
+    return sendJson(res, 403, { error: "invalid artifact filename" });
+  }
+
+  let cwd: string;
+  try {
+    const session = await getOrOpenSession(context, sessionId);
+    cwd = session.cwd;
+  } catch (error) {
+    return sendJson(res, 404, { error: error instanceof Error ? error.message : "unknown session" });
+  }
+
+  const artifactsRoot = path.resolve(cwd, ".pi", "artifacts", sessionId);
+  const requested = path.resolve(artifactsRoot, filename);
+  // realpath both, then assert containment
+  const [realRoot, realFile] = await Promise.all([
+    fs.realpath(artifactsRoot).catch(() => artifactsRoot),
+    fs.realpath(requested).catch(() => requested),
+  ]);
+  const rel = path.relative(realRoot, realFile);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    return sendJson(res, 403, { error: "artifact path escapes session root" });
+  }
+
+  let stat;
+  try {
+    stat = await fs.stat(realFile);
+  } catch {
+    return sendJson(res, 404, { error: "artifact not found" });
+  }
+  if (!stat.isFile()) {
+    return sendJson(res, 404, { error: "artifact not a file" });
+  }
+
+  const mime = artifactMimeFromFilename(filename);
+  setCors(res);
+  res.statusCode = 200;
+  res.setHeader("Content-Type", mime);
+  res.setHeader("Content-Length", String(stat.size));
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  if (mime === "text/html") {
+    // Defense in depth alongside the iframe's sandbox= attribute on the client.
+    res.setHeader(
+      "Content-Security-Policy",
+      "sandbox; default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:",
+    );
+  }
+  if (req.method === "HEAD") {
+    res.end();
+    return;
+  }
+  const stream = createReadStream(realFile);
+  stream.on("error", () => {
+    if (!res.headersSent) res.statusCode = 500;
+    res.end();
+  });
+  stream.pipe(res);
+}
+
+const ARTIFACT_FILE_MIMES: Readonly<Record<string, string>> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+  html: "text/html",
+  txt: "text/plain",
+  json: "application/json",
+};
+
+function artifactMimeFromFilename(filename: string): string {
+  const lower = filename.toLowerCase();
+  // Match compound extensions first (e.g. foo.vl.json)
+  if (lower.endsWith(".vl.json")) return "application/vnd.vega-lite.v5+json";
+  if (lower.endsWith(".plotly.json")) return "application/vnd.plotly.v1+json";
+  const ext = lower.split(".").pop() ?? "";
+  return ARTIFACT_FILE_MIMES[ext] ?? "application/octet-stream";
 }
 
 function setCors(res: http.ServerResponse): void {
