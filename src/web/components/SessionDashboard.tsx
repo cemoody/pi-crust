@@ -43,6 +43,21 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     return () => { cancelled = true; };
   }, [api]);
 
+  useEffect(() => {
+    if (!activeSessionId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const messages = await api.getMessages(activeSessionId);
+        if (cancelled) return;
+        setMessagesBySession((current) => ({ ...current, [activeSessionId]: messages.map(toTimelineMessage) }));
+      } catch (caught) {
+        if (!cancelled) setError(errorMessage(caught));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeSessionId, api]);
+
   const visibleSessions = useMemo(() => {
     const lowered = query.toLowerCase();
     const filtered = sessions.filter((session) => {

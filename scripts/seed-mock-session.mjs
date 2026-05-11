@@ -11,7 +11,10 @@ await fs.writeFile(sessionFile, JSON.stringify({
   cwd,
   sessionFile,
   sessionName: 'Seeded session',
-  messages: [],
+  messages: [
+    { role: 'user', content: 'previously sent hello', timestamp: 1700000000000 },
+    { role: 'assistant', content: 'previously stored response', timestamp: 1700000000001 },
+  ],
   lastActivity: Date.now(),
 }, null, 2) + '\n');
 console.log(`seeded ${sessionFile}`);

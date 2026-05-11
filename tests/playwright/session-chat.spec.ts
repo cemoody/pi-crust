@@ -13,6 +13,14 @@ test('can select a listed cold session and send hello without unknown-session er
   await expect(page.getByText(/Unknown session/)).toHaveCount(0);
 });
 
+test('shows existing session history when a session is selected (before sending)', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Seeded session/ }).click();
+
+  await expect(page.getByText('previously sent hello')).toBeVisible();
+  await expect(page.getByText('previously stored response')).toBeVisible();
+});
+
 test('opens model picker for /model slash command instead of sending it as a prompt', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Seeded session/ }).click();
