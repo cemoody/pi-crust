@@ -27,6 +27,8 @@ export interface NewSessionInput {
   readonly sessionName?: string;
 }
 
+import type { ExtensionUiResponse } from "../../shared/protocol.js";
+
 export interface DashboardArtifact {
   readonly version?: number;
   readonly kind: "image" | "html" | "markdown" | "json" | "table" | "vega-lite" | string;
@@ -96,6 +98,7 @@ export interface SessionDashboardApi {
   abort(sessionId: string): Promise<void>;
   getSession?(sessionId: string): Promise<SessionCardData>;
   streamEvents?(sessionId: string, onEvent: (event: unknown) => void): () => void;
+  respondToExtensionUi?(sessionId: string, response: ExtensionUiResponse): Promise<void>;
   listModels?(): Promise<readonly ModelOption[]>;
   setModel?(sessionId: string, provider: string, modelId: string): Promise<SessionCardData>;
 }

@@ -1,3 +1,4 @@
+import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import type { PathPolicy } from "../security/path-policy.js";
 import type { CreateSessionOptions, ModelInfo, PiAdapter, PiEventListener, PiSessionHandle, PromptAttachment, SessionListItem, SessionState } from "../pi/types.js";
 
@@ -82,6 +83,12 @@ export class SessionRegistry {
 
   async setModel(sessionId: string, provider: string, modelId: string): Promise<void> {
     await this.getSession(sessionId).handle.setModel(provider, modelId);
+  }
+
+  async respondToExtensionUi(sessionId: string, response: ExtensionUiResponse): Promise<void> {
+    const handle = this.getSession(sessionId).handle;
+    if (!handle.respondToExtensionUi) throw new Error("Session adapter does not support extension UI responses");
+    await handle.respondToExtensionUi(response);
   }
 
   subscribe(sessionId: string, listener: PiEventListener): () => void {

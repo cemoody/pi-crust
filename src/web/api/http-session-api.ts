@@ -1,3 +1,4 @@
+import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import type { DashboardMessage, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi } from "./session-api.js";
 
 const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "http://127.0.0.1:8787";
@@ -63,6 +64,10 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
 
   async setModel(sessionId: string, provider: string, modelId: string): Promise<SessionCardData> {
     return request<SessionCardData>(`/api/sessions/${encodeURIComponent(sessionId)}/model`, { method: "POST", body: { provider, modelId } });
+  }
+
+  async respondToExtensionUi(sessionId: string, response: ExtensionUiResponse): Promise<void> {
+    await request(`/api/sessions/${encodeURIComponent(sessionId)}/extension-ui-response`, { method: "POST", body: response });
   }
 }
 
