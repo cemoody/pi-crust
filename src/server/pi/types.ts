@@ -72,6 +72,20 @@ export interface PromptAttachment {
   readonly data?: string;
 }
 
+export interface ForkMessage {
+  readonly entryId: string;
+  readonly text: string;
+}
+
+export interface ForkSessionResult {
+  readonly cancelled: boolean;
+  readonly text?: string;
+}
+
+export interface CloneSessionResult {
+  readonly cancelled: boolean;
+}
+
 export interface SessionToolDetails {
   readonly id: string;
   readonly name: string;
@@ -102,6 +116,9 @@ export interface PiSessionHandle {
   abort(): Promise<void>;
   setSessionName(name: string): Promise<SessionState>;
   setModel(provider: string, modelId: string): Promise<SessionState>;
+  getForkMessages?(): Promise<readonly ForkMessage[]>;
+  fork?(entryId: string): Promise<ForkSessionResult>;
+  clone?(): Promise<CloneSessionResult>;
   respondToExtensionUi?(response: ExtensionUiResponse): Promise<void>;
   subscribe(listener: PiEventListener): Unsubscribe;
   dispose(): Promise<void>;

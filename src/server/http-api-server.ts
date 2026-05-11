@@ -108,7 +108,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     return sendJson(res, 200, toSessionCard(state));
   }
 
-  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state|events|extension-ui-response))?$/);
+  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state|events|extension-ui-response|fork-messages|fork|clone))?$/);
   if (!match) return sendJson(res, 404, { error: "not found" });
   const sessionId = decodeURIComponent(match[1]!);
   const action = match[2] ?? "state";
@@ -151,6 +151,27 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   if (req.method === "GET" && (action === "state" || action === undefined)) {
     const session = await getOrOpenSession(context, sessionId);
     return sendJson(res, 200, toSessionCard(await session.handle.getState()));
+  }
+
+  if (req.method === "GET" && action === "fork-messages") {
+    await getOrOpenSession(context, sessionId);
+    return sendJson(res, 200, await context.registry.getForkMessages(sessionId));
+  }
+
+  if (req.method === "POST" && action === "fork") {
+    const body = await readJson(req) as { entryId?: string };
+    if (!body.entryId) return sendJson(res, 400, { error: "entryId is required" });
+    await getOrOpenSession(context, sessionId);
+    const { result, session } = await context.registry.forkSession(sessionId, body.entryId);
+    context.coldSessionFiles.set(session.id, session.sessionFile);
+    return sendJson(res, 200, { ...result, session: toSessionCard(await session.handle.getState()) });
+  }
+
+  if (req.method === "POST" && action === "clone") {
+    await getOrOpenSession(context, sessionId);
+    const { result, session } = await context.registry.cloneSession(sessionId);
+    context.coldSessionFiles.set(session.id, session.sessionFile);
+    return sendJson(res, 200, { ...result, session: toSessionCard(await session.handle.getState()) });
   }
 
   if (req.method === "POST" && action === "prompt") {

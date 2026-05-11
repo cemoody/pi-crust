@@ -25,6 +25,7 @@ export interface PromptComposerProps {
   readonly onBash: (command: string, includeInContext: boolean) => void | Promise<void>;
   readonly onAbortBash?: () => void | Promise<void>;
   readonly onSlashCommand?: (name: string, argv: string) => void | Promise<void>;
+  readonly draftSeed?: { readonly id: string; readonly value: string };
   readonly statusText?: string;
   readonly statusCwd?: string;
   readonly statusModel?: string;
@@ -50,6 +51,12 @@ export function PromptComposer(props: PromptComposerProps) {
   useEffect(() => {
     setDraft(storageGet(storageKey) ?? "");
   }, [storageKey]);
+
+  useEffect(() => {
+    if (!props.draftSeed) return;
+    setDraft(props.draftSeed.value);
+    textareaRef.current?.focus({ preventScroll: true });
+  }, [props.draftSeed]);
 
   useEffect(() => {
     storageSet(storageKey, draft);

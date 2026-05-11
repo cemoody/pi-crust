@@ -255,6 +255,69 @@ describe("SessionDashboard", () => {
     expect(screen.queryByRole("dialog", { name: "Continue?" })).not.toBeInTheDocument();
   });
 
+  it("fork button opens fork picker and restores selected prompt in the new session", async () => {
+    const forked: SessionCardData = { id: "forked", cwd: "/repo/a", sessionName: "Forked", status: "idle", model: "m", lastActivity: 2 };
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
+      async getForkMessages() {
+        return [{ entryId: "entry-1", text: "original prompt text" }];
+      },
+      async forkSession(_sessionId: string, entryId: string) {
+        expect(entryId).toBe("entry-1");
+        return { cancelled: false, text: "original prompt text", session: forked };
+      },
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Fork" }));
+
+    await screen.findByRole("dialog", { name: "Fork session" });
+    fireEvent.click(screen.getByRole("button", { name: /original prompt text/ }));
+
+    await screen.findByRole("heading", { name: "Forked" });
+    await waitFor(() => expect(screen.getByLabelText("Prompt draft")).toHaveValue("original prompt text"));
+    expect(screen.getByText(/ready to edit/i)).toBeInTheDocument();
+  });
+
+  it("/fork with an index forks without using the picker", async () => {
+    const forked: SessionCardData = { id: "forked", cwd: "/repo/a", sessionName: "Forked", status: "idle", model: "m", lastActivity: 2 };
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
+      async getForkMessages() {
+        return [{ entryId: "entry-1", text: "first prompt" }, { entryId: "entry-2", text: "second prompt" }];
+      },
+      async forkSession(_sessionId: string, entryId: string) {
+        expect(entryId).toBe("entry-2");
+        return { cancelled: false, text: "second prompt", session: forked };
+      },
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/fork 2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByRole("heading", { name: "Forked" });
+    expect(screen.queryByRole("dialog", { name: "Fork session" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Prompt draft")).toHaveValue("second prompt"));
+  });
+
+  it("disables unimplemented top-right session action buttons", async () => {
+    render(<SessionDashboard api={makeApi([
+      { id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 },
+    ])} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+
+    expect(await screen.findByRole("button", { name: "Compact" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Tree" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clone" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Fork" })).toBeEnabled();
+  });
+
   it("renames the active session via the inline form", async () => {
     render(<SessionDashboard api={makeApi([
       { id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 },

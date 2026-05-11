@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ExtensionUiRequest, ExtensionUiResponse, WireMessage } from "../../shared/protocol.js";
-import type { DashboardArtifact, DashboardMessage, DashboardToolDetails, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
+import type { DashboardArtifact, DashboardMessage, DashboardToolDetails, ForkMessageOption, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
 import iconBlack from "../assets-icon-black.svg";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
 import { MessageTimeline, type TimelineMessage } from "./MessageTimeline.js";
@@ -40,6 +40,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const filterRef = useRef<HTMLDivElement | null>(null);
   const [promptErrorBySession, setPromptErrorBySession] = useState<Record<string, string | null>>({});
   const [extensionUiBySession, setExtensionUiBySession] = useState<Record<string, ExtensionUiRequest[]>>({});
+  const [forkDialogOpen, setForkDialogOpen] = useState(false);
+  const [forkMessages, setForkMessages] = useState<readonly ForkMessageOption[]>([]);
+  const [forkBusy, setForkBusy] = useState(false);
+  const [forkError, setForkError] = useState<string | null>(null);
+  const [draftSeedBySession, setDraftSeedBySession] = useState<Record<string, { readonly id: string; readonly value: string }>>({});
   const streamDraftIdsRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -288,6 +293,82 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     setFollowUpBySession((current) => ({ ...current, [activeSession.id]: [...(current[activeSession.id] ?? []), text] }));
   }
 
+  async function openForkDialog(argv = "") {
+    if (!activeSession) return;
+    if (!api.getForkMessages || !api.forkSession) {
+      setNotice("This session adapter does not support /fork yet.");
+      return;
+    }
+    setForkBusy(true);
+    setForkError(null);
+    setForkDialogOpen(true);
+    try {
+      const messages = await api.getForkMessages(activeSession.id);
+      setForkMessages(messages);
+      const target = argv.trim();
+      if (target) {
+        const selected = resolveForkSelection(messages, target);
+        if (!selected) {
+          setForkError(`No fork message matches "${target}".`);
+          return;
+        }
+        await forkFromMessage(selected.entryId);
+      }
+    } catch (caught) {
+      setForkError(errorMessage(caught));
+    } finally {
+      setForkBusy(false);
+    }
+  }
+
+  async function forkFromMessage(entryId: string) {
+    if (!activeSession || !api.forkSession) return;
+    setForkBusy(true);
+    setForkError(null);
+    try {
+      const result = await api.forkSession(activeSession.id, entryId);
+      if (result.cancelled) {
+        setNotice("Fork cancelled by extension.");
+        return;
+      }
+      const session = result.session;
+      setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+      setMessagesBySession((current) => ({ ...current, [session.id]: [] }));
+      if (result.text) {
+        setDraftSeedBySession((current) => ({ ...current, [session.id]: { id: `${Date.now()}-${entryId}`, value: result.text ?? "" } }));
+      }
+      setActiveSessionId(session.id);
+      setForkDialogOpen(false);
+      setNotice(result.text ? "Forked session. The selected prompt is ready to edit." : "Forked session.");
+    } catch (caught) {
+      setForkError(errorMessage(caught));
+    } finally {
+      setForkBusy(false);
+    }
+  }
+
+  async function cloneActiveSession() {
+    if (!activeSession) return;
+    if (!api.cloneSession) {
+      setNotice("This session adapter does not support /clone yet.");
+      return;
+    }
+    try {
+      const result = await api.cloneSession(activeSession.id);
+      if (result.cancelled) {
+        setNotice("Clone cancelled by extension.");
+        return;
+      }
+      const session = result.session;
+      setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+      setMessagesBySession((current) => ({ ...current, [session.id]: [] }));
+      setActiveSessionId(session.id);
+      setNotice("Cloned session.");
+    } catch (caught) {
+      setNotice(errorMessage(caught));
+    }
+  }
+
   async function handleSlashCommand(name: string, argv: string) {
     if (!activeSession) {
       setNotice("Open or create a session first to run slash commands.");
@@ -305,6 +386,12 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       case "new":
         await createSession();
         return;
+      case "fork":
+        await openForkDialog(argv);
+        return;
+      case "clone":
+        await cloneActiveSession();
+        return;
       case "name":
         if (!argv.trim()) {
           setNotice("Usage: /name <session name>");
@@ -319,7 +406,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         return;
       case "help":
       case "hotkeys":
-        setNotice("Available: /model, /session, /new, /name <name>, /quit, /help");
+        setNotice("Available: /model, /session, /new, /fork, /clone, /name <name>, /quit, /help");
         return;
       default:
         setNotice(`Command \"/${name}\" is recognised in the TUI but not yet implemented in the WUI.`);
@@ -489,16 +576,16 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                     <span className="active-subtitle"><code>{shortSessionId(activeSession.id)}</code></span>
                   </div>
                   <div className="active-actions">
-                    <button type="button" className="action-icon" aria-label="Compact" title="Compact context" onClick={() => void handleSlashCommand("compact", "")}>
+                    <button type="button" className="action-icon" aria-label="Compact" title="Compact is not implemented in the web UI yet" disabled>
                       <CompactGlyph />
                     </button>
                     <button type="button" className="action-icon" aria-label="Fork" title="Fork session from a previous message" onClick={() => void handleSlashCommand("fork", "")}>
                       <ForkGlyph />
                     </button>
-                    <button type="button" className="action-icon" aria-label="Tree" title="Jump to a point in this session" onClick={() => void handleSlashCommand("tree", "")}>
+                    <button type="button" className="action-icon" aria-label="Tree" title="Tree is not implemented in the web UI yet" disabled>
                       <TreeGlyph />
                     </button>
-                    <button type="button" className="action-icon" aria-label="Clone" title="Clone this branch into a new session" onClick={() => void handleSlashCommand("clone", "")}>
+                    <button type="button" className="action-icon" aria-label="Clone" title="Clone is not implemented in the web UI yet" disabled>
                       <CloneGlyph />
                     </button>
                     <span className="active-actions-sep" aria-hidden="true" />
@@ -541,7 +628,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 steeringQueue={steeringBySession[activeSession.id] ?? []}
                 followUpQueue={followUpBySession[activeSession.id] ?? []}
                 fileSuggestions={["README.md", "package.json", "src/web/main.tsx", "src/server/session/session-registry.ts"]}
-                commandSuggestions={["model", "settings", "tree", "compact", "session", "new"]}
+                commandSuggestions={["model", "settings", "tree", "compact", "session", "new", "fork", "clone"]}
                 statusText={activeSession.status}
                 statusCwd={activeSession.cwd}
                 {...(activeSession.model === undefined ? {} : { statusModel: activeSession.model })}
@@ -552,6 +639,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 onAbort={() => activeSession ? api.abort(activeSession.id) : undefined}
                 onBash={handleBash}
                 onAbortBash={() => undefined}
+                {...(draftSeedBySession[activeSession.id] === undefined ? {} : { draftSeed: draftSeedBySession[activeSession.id] })}
                 onSlashCommand={handleSlashCommand}
               />
             </div>
@@ -593,6 +681,42 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
               <button type="submit" className="primary">Create session</button>
             </footer>
           </form>
+        </div>
+      ) : null}
+
+      {forkDialogOpen ? (
+        <div className="new-session-backdrop" role="presentation" onClick={() => setForkDialogOpen(false)}>
+          <section
+            className="new-session-dialog fork-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Fork session"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header>
+              <h2>Fork session</h2>
+              <button type="button" onClick={() => setForkDialogOpen(false)} aria-label="Close fork dialog">×</button>
+            </header>
+            <p className="dialog-help">Choose a previous user message. Pi Remote Control will create a new session and restore that prompt into the composer so you can edit it.</p>
+            {forkError ? <p role="alert" className="dialog-error">{forkError}</p> : null}
+            {forkBusy ? <p role="status">Loading fork points…</p> : null}
+            {!forkBusy && forkMessages.length === 0 ? <p>No user messages are available to fork yet.</p> : null}
+            {forkMessages.length > 0 ? (
+              <ol className="fork-message-list" aria-label="Fork points">
+                {forkMessages.map((message, index) => (
+                  <li key={message.entryId}>
+                    <button type="button" onClick={() => void forkFromMessage(message.entryId)} disabled={forkBusy}>
+                      <span className="fork-message-index">{index + 1}</span>
+                      <span className="fork-message-text">{truncate(message.text, 180)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            <footer>
+              <button type="button" onClick={() => setForkDialogOpen(false)}>Cancel</button>
+            </footer>
+          </section>
         </div>
       ) : null}
 
@@ -881,6 +1005,17 @@ function toPromptAttachment(attachment: ComposerAttachment): import("../api/sess
 
 function basename(value: string): string {
   return value.split("/").filter(Boolean).at(-1) ?? value;
+}
+
+function resolveForkSelection(messages: readonly ForkMessageOption[], input: string): ForkMessageOption | undefined {
+  const maybeIndex = Number(input);
+  if (Number.isInteger(maybeIndex) && maybeIndex >= 1 && maybeIndex <= messages.length) return messages[maybeIndex - 1];
+  return messages.find((message) => message.entryId === input || message.entryId.startsWith(input));
+}
+
+function truncate(value: string, max: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
 }
 
 function readSessionFromUrl(): string | null {

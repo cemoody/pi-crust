@@ -27,6 +27,22 @@ export interface NewSessionInput {
   readonly sessionName?: string;
 }
 
+export interface ForkMessageOption {
+  readonly entryId: string;
+  readonly text: string;
+}
+
+export interface ForkSessionResult {
+  readonly cancelled: boolean;
+  readonly text?: string;
+  readonly session: SessionCardData;
+}
+
+export interface CloneSessionResult {
+  readonly cancelled: boolean;
+  readonly session: SessionCardData;
+}
+
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
 
 export interface DashboardArtifact {
@@ -96,6 +112,9 @@ export interface SessionDashboardApi {
   prompt(sessionId: string, text: string, attachments?: readonly PromptAttachment[]): Promise<readonly DashboardMessage[]>;
   bash(sessionId: string, command: string, includeInContext: boolean): Promise<readonly DashboardMessage[]>;
   abort(sessionId: string): Promise<void>;
+  getForkMessages?(sessionId: string): Promise<readonly ForkMessageOption[]>;
+  forkSession?(sessionId: string, entryId: string): Promise<ForkSessionResult>;
+  cloneSession?(sessionId: string): Promise<CloneSessionResult>;
   getSession?(sessionId: string): Promise<SessionCardData>;
   streamEvents?(sessionId: string, onEvent: (event: unknown) => void): () => void;
   respondToExtensionUi?(sessionId: string, response: ExtensionUiResponse): Promise<void>;

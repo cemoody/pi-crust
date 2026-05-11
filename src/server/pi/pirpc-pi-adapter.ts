@@ -11,7 +11,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import type {
+  CloneSessionResult,
   CreateSessionOptions,
+  ForkMessage,
+  ForkSessionResult,
   ModelInfo,
   OpenSessionOptions,
   PiAdapter,
@@ -122,9 +125,9 @@ interface StartRpcSessionOptions {
 }
 
 class PiRpcSessionHandle implements PiSessionHandle {
-  readonly id: string;
-  readonly cwd: string;
-  readonly sessionFile: string;
+  id: string;
+  cwd: string;
+  sessionFile: string;
 
   private readonly rpc: JsonlRpcProcess;
   private readonly emitter = new EventEmitter();
@@ -211,6 +214,28 @@ class PiRpcSessionHandle implements PiSessionHandle {
     return this.getState();
   }
 
+  async getForkMessages(): Promise<readonly ForkMessage[]> {
+    const data = await this.rpc.request("get_fork_messages");
+    const messages = isRecord(data) && Array.isArray(data.messages) ? data.messages : [];
+    return messages
+      .filter((message): message is Record<string, unknown> => isRecord(message) && typeof message.entryId === "string" && typeof message.text === "string")
+      .map((message) => ({ entryId: String(message.entryId), text: String(message.text) }));
+  }
+
+  async fork(entryId: string): Promise<ForkSessionResult> {
+    const data = await this.rpc.request("fork", { entryId });
+    const result = parseForkResult(data);
+    if (!result.cancelled) await this.refreshIdentity();
+    return result;
+  }
+
+  async clone(): Promise<CloneSessionResult> {
+    const data = await this.rpc.request("clone");
+    const result = parseCloneResult(data);
+    if (!result.cancelled) await this.refreshIdentity();
+    return result;
+  }
+
   async respondToExtensionUi(response: ExtensionUiResponse): Promise<void> {
     this.rpc.send({ type: "extension_ui_response", ...response });
   }
@@ -225,6 +250,17 @@ class PiRpcSessionHandle implements PiSessionHandle {
     this.disposed = true;
     this.emitter.removeAllListeners();
     await this.rpc.dispose();
+  }
+
+  private async refreshIdentity(): Promise<void> {
+    const data = await this.rpc.request("get_state");
+    if (!isRecord(data)) throw new Error("Pi RPC get_state returned invalid data");
+    this.latestState = data;
+    this.id = String(data.sessionId ?? "");
+    this.sessionFile = String(data.sessionFile ?? "");
+    this.cwd = String(data.cwd ?? this.cwd);
+    if (!this.id) throw new Error("Pi RPC session did not report a sessionId after fork");
+    if (!this.sessionFile) throw new Error("Pi RPC session did not report a sessionFile after fork");
   }
 
   private waitForAgentEnd(): Promise<void> {
@@ -518,6 +554,18 @@ function contentTextAndImages(content: unknown): { text: string; images: NonNull
     }
   }
   return { text: text.join("\n"), images };
+}
+
+function parseForkResult(data: unknown): ForkSessionResult {
+  if (!isRecord(data)) return { cancelled: false };
+  return {
+    cancelled: data.cancelled === true,
+    ...(typeof data.text === "string" ? { text: data.text } : {}),
+  };
+}
+
+function parseCloneResult(data: unknown): CloneSessionResult {
+  return { cancelled: isRecord(data) && data.cancelled === true };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

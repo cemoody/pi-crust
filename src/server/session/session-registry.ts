@@ -1,6 +1,6 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import type { PathPolicy } from "../security/path-policy.js";
-import type { CreateSessionOptions, ModelInfo, PiAdapter, PiEventListener, PiSessionHandle, PromptAttachment, SessionListItem, SessionState } from "../pi/types.js";
+import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ModelInfo, PiAdapter, PiEventListener, PiSessionHandle, PromptAttachment, SessionListItem, SessionState } from "../pi/types.js";
 
 export interface SessionRegistryOptions {
   readonly adapter: PiAdapter;
@@ -85,6 +85,26 @@ export class SessionRegistry {
     await this.getSession(sessionId).handle.setModel(provider, modelId);
   }
 
+  async getForkMessages(sessionId: string): Promise<readonly ForkMessage[]> {
+    const handle = this.getSession(sessionId).handle;
+    if (!handle.getForkMessages) throw new Error("Session adapter does not support forking");
+    return handle.getForkMessages();
+  }
+
+  async forkSession(sessionId: string, entryId: string): Promise<{ readonly result: ForkSessionResult; readonly session: RegisteredSession }> {
+    const registered = this.getSession(sessionId);
+    if (!registered.handle.fork) throw new Error("Session adapter does not support forking");
+    const result = await registered.handle.fork(entryId);
+    return { result, session: result.cancelled ? registered : this.replaceSessionId(sessionId, registered.handle) };
+  }
+
+  async cloneSession(sessionId: string): Promise<{ readonly result: CloneSessionResult; readonly session: RegisteredSession }> {
+    const registered = this.getSession(sessionId);
+    if (!registered.handle.clone) throw new Error("Session adapter does not support cloning");
+    const result = await registered.handle.clone();
+    return { result, session: result.cancelled ? registered : this.replaceSessionId(sessionId, registered.handle) };
+  }
+
   async respondToExtensionUi(sessionId: string, response: ExtensionUiResponse): Promise<void> {
     const handle = this.getSession(sessionId).handle;
     if (!handle.respondToExtensionUi) throw new Error("Session adapter does not support extension UI responses");
@@ -115,5 +135,10 @@ export class SessionRegistry {
     };
     this.sessions.set(handle.id, registered);
     return registered;
+  }
+
+  private replaceSessionId(oldSessionId: string, handle: PiSessionHandle): RegisteredSession {
+    this.sessions.delete(oldSessionId);
+    return this.register(handle);
   }
 }

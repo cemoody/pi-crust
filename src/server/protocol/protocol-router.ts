@@ -87,6 +87,19 @@ export class ProtocolRouter {
       case "set_session_name":
         this.sendOk(envelope.id, await this.registry.setSessionName(op.sessionId, op.name));
         return;
+      case "get_fork_messages":
+        this.sendOk(envelope.id, await this.registry.getForkMessages(op.sessionId));
+        return;
+      case "fork": {
+        const { result, session } = await this.registry.forkSession(op.sessionId, op.entryId);
+        this.sendOk(envelope.id, { ...result, session: await session.handle.getState() });
+        return;
+      }
+      case "clone": {
+        const { result, session } = await this.registry.cloneSession(op.sessionId);
+        this.sendOk(envelope.id, { ...result, session: await session.handle.getState() });
+        return;
+      }
       default:
         this.sendError(envelope.id, {
           code: "invalid_message",

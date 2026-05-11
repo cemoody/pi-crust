@@ -150,9 +150,14 @@
   cursor: pointer;
 }
 
-.active-actions button.action-icon:hover {
+.active-actions button.action-icon:hover:not(:disabled) {
   background: var(--gray-080);
   color: var(--black-900);
+}
+
+.active-actions button.action-icon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .active-actions button.action-icon:focus-visible {
@@ -411,7 +416,7 @@
 .active-actions { margin-left: auto; display: flex; gap: 2px; align-items: center; }
 
 .active-actions button.ghost-danger { color: var(--red-600); }
-.active-actions button.ghost-danger:hover { background: var(--red-100); color: var(--red-600); }
+.active-actions button.ghost-danger:hover:not(:disabled) { background: var(--red-100); color: var(--red-600); }
 
 .inline-rename,
 .inline-confirm {
@@ -639,6 +644,69 @@
   border-color: var(--black-900);
 }
 .new-session-dialog footer button.primary:hover { background: var(--black-1000); }
+
+.fork-dialog { width: min(560px, 100%); }
+.fork-dialog .dialog-help {
+  margin: 0;
+  padding: 14px 18px 8px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.fork-dialog .dialog-error {
+  margin: 8px 18px 0;
+  color: var(--red-600);
+  font-size: 12.5px;
+}
+.fork-dialog > p[role="status"],
+.fork-dialog > p:not(.dialog-help):not(.dialog-error) {
+  margin: 0;
+  padding: 12px 18px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.fork-message-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 12px 12px;
+  display: grid;
+  gap: 6px;
+  max-height: min(46vh, 420px);
+  overflow: auto;
+}
+.fork-message-list button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  text-align: left;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--white-000);
+  color: var(--text-primary);
+  padding: 9px 10px;
+  cursor: pointer;
+}
+.fork-message-list button:hover:not(:disabled) { background: var(--gray-060); border-color: var(--blue-accent); }
+.fork-message-list button:disabled { opacity: 0.6; cursor: default; }
+.fork-message-index {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--gray-080);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.fork-message-text {
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 
 .dashboard-notice {
   position: fixed;

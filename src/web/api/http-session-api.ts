@@ -1,5 +1,5 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
-import type { DashboardMessage, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import type { CloneSessionResult, DashboardMessage, ForkMessageOption, ForkSessionResult, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi } from "./session-api.js";
 
 const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "";
 
@@ -40,6 +40,18 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
 
   async bash(sessionId: string, command: string, includeInContext: boolean): Promise<readonly DashboardMessage[]> {
     return request<DashboardMessage[]>(`/api/sessions/${encodeURIComponent(sessionId)}/bash`, { method: "POST", body: { command, includeInContext } });
+  }
+
+  async getForkMessages(sessionId: string): Promise<readonly ForkMessageOption[]> {
+    return request<ForkMessageOption[]>(`/api/sessions/${encodeURIComponent(sessionId)}/fork-messages`);
+  }
+
+  async forkSession(sessionId: string, entryId: string): Promise<ForkSessionResult> {
+    return request<ForkSessionResult>(`/api/sessions/${encodeURIComponent(sessionId)}/fork`, { method: "POST", body: { entryId } });
+  }
+
+  async cloneSession(sessionId: string): Promise<CloneSessionResult> {
+    return request<CloneSessionResult>(`/api/sessions/${encodeURIComponent(sessionId)}/clone`, { method: "POST", body: {} });
   }
 
   async abort(sessionId: string): Promise<void> {

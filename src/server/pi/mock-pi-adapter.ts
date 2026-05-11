@@ -3,7 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import type {
+  CloneSessionResult,
   CreateSessionOptions,
+  ForkMessage,
+  ForkSessionResult,
   ModelInfo,
   OpenSessionOptions,
   PiAdapter,
@@ -66,12 +69,12 @@ export class MockPiAdapter implements PiAdapter {
       lastActivity: Date.now(),
     };
     await writeSession(persisted);
-    return new MockPiSessionHandle(persisted, this.assistantResponse);
+    return new MockPiSessionHandle(persisted, this.sessionRoot, this.assistantResponse);
   }
 
   async openSession(options: OpenSessionOptions): Promise<PiSessionHandle> {
     const persisted = await readSession(path.resolve(options.sessionFile));
-    return new MockPiSessionHandle(persisted, this.assistantResponse);
+    return new MockPiSessionHandle(persisted, this.sessionRoot, this.assistantResponse);
   }
 
   async listSessions(cwd?: string): Promise<readonly SessionListItem[]> {
@@ -98,9 +101,9 @@ export class MockPiAdapter implements PiAdapter {
 }
 
 class MockPiSessionHandle implements PiSessionHandle {
-  readonly id: string;
-  readonly cwd: string;
-  readonly sessionFile: string;
+  id: string;
+  cwd: string;
+  sessionFile: string;
 
   private readonly emitter = new EventEmitter();
   private status: SessionStatus = "idle";
@@ -110,14 +113,16 @@ class MockPiSessionHandle implements PiSessionHandle {
   private messages: SessionMessage[];
   private lastActivity: number;
   private readonly assistantResponse: (prompt: string) => string;
+  private readonly sessionRoot: string;
 
-  constructor(persisted: PersistedMockSession, assistantResponse: (prompt: string) => string) {
+  constructor(persisted: PersistedMockSession, sessionRoot: string, assistantResponse: (prompt: string) => string) {
     this.id = persisted.id;
     this.cwd = persisted.cwd;
     this.sessionFile = persisted.sessionFile;
     this.sessionName = persisted.sessionName;
     this.messages = [...persisted.messages];
     this.lastActivity = persisted.lastActivity;
+    this.sessionRoot = sessionRoot;
     this.assistantResponse = assistantResponse;
   }
 
@@ -165,6 +170,26 @@ class MockPiSessionHandle implements PiSessionHandle {
 
   async getMessages(): Promise<readonly SessionMessage[]> {
     return [...this.messages];
+  }
+
+  async getForkMessages(): Promise<readonly ForkMessage[]> {
+    return this.messages.flatMap((message, index) => message.role === "user"
+      ? [{ entryId: mockEntryId(message, index), text: message.content }]
+      : []);
+  }
+
+  async fork(entryId: string): Promise<ForkSessionResult> {
+    const index = this.findForkMessageIndex(entryId);
+    if (index === -1) throw new Error(`Unknown fork entry: ${entryId}`);
+    const selected = this.messages[index]!;
+    const nextMessages = this.messages.slice(0, index);
+    await this.replaceWithMessages(nextMessages, `Fork of ${this.sessionName ?? shortId(this.id)}`);
+    return { cancelled: false, text: selected.content };
+  }
+
+  async clone(): Promise<CloneSessionResult> {
+    await this.replaceWithMessages([...this.messages], `Clone of ${this.sessionName ?? shortId(this.id)}`);
+    return { cancelled: false };
   }
 
   async prompt(message: string, attachments: readonly PromptAttachment[] = []): Promise<void> {
@@ -223,6 +248,20 @@ class MockPiSessionHandle implements PiSessionHandle {
     this.emitter.emit("event", event);
   }
 
+  private findForkMessageIndex(entryId: string): number {
+    return this.messages.findIndex((message, index) => message.role === "user" && mockEntryId(message, index) === entryId);
+  }
+
+  private async replaceWithMessages(messages: SessionMessage[], sessionName: string): Promise<void> {
+    const id = crypto.randomUUID();
+    this.id = id;
+    this.sessionFile = path.join(this.sessionRoot, `${Date.now()}_${id}.mock-session.json`);
+    this.messages = messages;
+    this.sessionName = sessionName;
+    this.lastActivity = Date.now();
+    await this.persist();
+  }
+
   private async persist(): Promise<void> {
     await writeSession({
       id: this.id,
@@ -233,6 +272,14 @@ class MockPiSessionHandle implements PiSessionHandle {
       lastActivity: this.lastActivity,
     });
   }
+}
+
+function mockEntryId(message: SessionMessage, index: number): string {
+  return `${message.timestamp}-${index}`;
+}
+
+function shortId(id: string): string {
+  return id.slice(0, 8);
 }
 
 async function readSession(sessionFile: string): Promise<PersistedMockSession> {
