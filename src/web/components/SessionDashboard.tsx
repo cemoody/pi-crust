@@ -48,7 +48,9 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   useEffect(() => {
     if (!activeSessionId) return;
     let cancelled = false;
-    void (async () => {
+    let pendingRefresh: ReturnType<typeof setTimeout> | undefined;
+
+    const refresh = async () => {
       try {
         const [messages, refreshed] = await Promise.all([
           api.getMessages(activeSessionId),
@@ -62,8 +64,25 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       } catch (caught) {
         if (!cancelled) setError(errorMessage(caught));
       }
-    })();
-    return () => { cancelled = true; };
+    };
+
+    const scheduleRefresh = () => {
+      if (cancelled) return;
+      if (pendingRefresh) clearTimeout(pendingRefresh);
+      pendingRefresh = setTimeout(() => {
+        pendingRefresh = undefined;
+        void refresh();
+      }, 80);
+    };
+
+    void refresh();
+    const unsubscribe = api.streamEvents ? api.streamEvents(activeSessionId, scheduleRefresh) : () => undefined;
+
+    return () => {
+      cancelled = true;
+      if (pendingRefresh) clearTimeout(pendingRefresh);
+      unsubscribe();
+    };
   }, [activeSessionId, api]);
 
   const visibleSessions = useMemo(() => {
@@ -135,7 +154,9 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     setSessions((current) => current.map((session) => session.id === activeSession.id ? { ...session, status: "streaming" } : session));
     try {
       const messages = await api.prompt(activeSession.id, text);
-      setMessagesBySession((current) => ({ ...current, [activeSession.id]: messages.map(toTimelineMessage) }));
+      if (Array.isArray(messages) && messages.length > 0) {
+        setMessagesBySession((current) => ({ ...current, [activeSession.id]: messages.map(toTimelineMessage) }));
+      }
     } catch (caught) {
       appendMessage(activeSession.id, { id: `error-${now}`, role: "custom", customLabel: "Error", text: errorMessage(caught) });
     } finally {

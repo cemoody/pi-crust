@@ -49,6 +49,16 @@ test('opens model picker for /model slash command instead of sending it as a pro
   await expect(page.getByText('mock/mock-echo')).toBeVisible();
 });
 
+test('streams the user and assistant messages over SSE during a turn', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Seeded session/ }).click();
+  await page.getByLabel('Prompt draft').fill('streaming hello');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByText('streaming hello').first()).toBeVisible();
+  await expect(page.getByText('Mock response to: streaming hello')).toBeVisible();
+});
+
 test('shows status row beneath composer with cwd, model, tokens', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Seeded session/ }).click();

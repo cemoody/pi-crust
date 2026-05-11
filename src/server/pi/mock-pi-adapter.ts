@@ -152,17 +152,21 @@ class MockPiSessionHandle implements PiSessionHandle {
     this.emit({ type: "agent_start" });
     const timestamp = Date.now();
     const userMessage: SessionMessage = { role: "user", content: message, timestamp };
+    this.messages.push(userMessage);
+    this.lastActivity = Date.now();
+    this.emit({ type: "message", message: userMessage });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
     const assistantMessage: SessionMessage = {
       role: "assistant",
       content: this.assistantResponse(message),
       timestamp: timestamp + 1,
     };
-    this.messages.push(userMessage, assistantMessage);
+    this.messages.push(assistantMessage);
     this.lastActivity = Date.now();
-    this.emit({ type: "message", message: userMessage });
     this.emit({ type: "message", message: assistantMessage });
-    this.status = "idle";
     await this.persist();
+    this.status = "idle";
     this.emit({ type: "agent_end", messages: [userMessage, assistantMessage] });
   }
 

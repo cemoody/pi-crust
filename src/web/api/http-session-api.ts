@@ -45,6 +45,18 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     await request(`/api/sessions/${encodeURIComponent(sessionId)}/abort`, { method: "POST", body: {} });
   }
 
+  streamEvents(sessionId: string, onEvent: (event: unknown) => void): () => void {
+    const source = new EventSource(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/events`);
+    source.onmessage = (event) => {
+      try {
+        onEvent(JSON.parse(event.data));
+      } catch {
+        // ignore malformed payloads
+      }
+    };
+    return () => source.close();
+  }
+
   async listModels(): Promise<readonly ModelOption[]> {
     return request<ModelOption[]>("/api/models");
   }

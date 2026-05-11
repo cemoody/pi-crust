@@ -46,6 +46,7 @@ export interface SessionDashboardApi {
   bash(sessionId: string, command: string, includeInContext: boolean): Promise<readonly DashboardMessage[]>;
   abort(sessionId: string): Promise<void>;
   getSession?(sessionId: string): Promise<SessionCardData>;
+  streamEvents?(sessionId: string, onEvent: (event: unknown) => void): () => void;
   listModels?(): Promise<readonly ModelOption[]>;
   setModel?(sessionId: string, provider: string, modelId: string): Promise<SessionCardData>;
 }

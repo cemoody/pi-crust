@@ -67,10 +67,40 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return sendJson(res, 200, toSessionCard(state));
   }
 
-  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state))?$/);
+  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state|events))?$/);
   if (!match) return sendJson(res, 404, { error: "not found" });
   const sessionId = decodeURIComponent(match[1]!);
   const action = match[2] ?? "state";
+
+  if (req.method === "GET" && action === "events") {
+    const session = await getOrOpenSession(sessionId);
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(`event: ready\ndata: ${JSON.stringify({ sessionId })}\n\n`);
+
+    const unsubscribe = session.handle.subscribe((event) => {
+      try {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      } catch {
+        // socket closed; cleanup below
+      }
+    });
+
+    const heartbeat = setInterval(() => {
+      try { res.write(`: heartbeat\n\n`); } catch { /* socket closed */ }
+    }, 25_000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+    return;
+  }
 
   if (req.method === "GET" && action === "messages") {
     const session = await getOrOpenSession(sessionId);
