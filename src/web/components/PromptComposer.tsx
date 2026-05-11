@@ -124,14 +124,25 @@ export function PromptComposer(props: PromptComposerProps) {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.altKey) {
+            if (event.key === "Enter" && event.altKey) {
+              event.preventDefault();
+              void submit("follow-up");
+              return;
+            }
+            if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               void submit();
+              return;
+            }
+            if (event.key === "Escape" && props.isStreaming) {
+              event.preventDefault();
+              void props.onAbort();
               return;
             }
             if (event.key === "Tab") {
               event.preventDefault();
               pathComplete();
+              return;
             }
             if (event.key === "ArrowUp" && event.altKey && history[0]) {
               event.preventDefault();
@@ -209,6 +220,10 @@ export function PromptComposer(props: PromptComposerProps) {
           {queueSummary.map((item, index) => <li key={index}>{item}</li>)}
         </ul>
       ) : null}
+
+      <p className="composer-hint" aria-hidden="true">
+        <kbd>Enter</kbd> send · <kbd>Shift+Enter</kbd> newline · <kbd>Alt+Enter</kbd> follow-up{props.isStreaming ? <> · <kbd>Esc</kbd> abort</> : null} · <kbd>Alt+↑</kbd> history
+      </p>
     </section>
   );
 }

@@ -137,4 +137,37 @@ describe("PromptComposer", () => {
     fireEvent.keyDown(draft, { key: "Enter" });
     expect(handlers.onPrompt).toHaveBeenCalledWith("line 1", []);
   });
+
+  it("submits with Cmd/Ctrl+Enter as an alias for Enter", () => {
+    const handlers = renderComposer();
+    const draft = screen.getByLabelText("Prompt draft");
+    fireEvent.change(draft, { target: { value: "command enter" } });
+    fireEvent.keyDown(draft, { key: "Enter", metaKey: true });
+    expect(handlers.onPrompt).toHaveBeenCalledWith("command enter", []);
+  });
+
+  it("queues a follow-up with Alt+Enter", () => {
+    const handlers = renderComposer();
+    const draft = screen.getByLabelText("Prompt draft");
+    fireEvent.change(draft, { target: { value: "do this later" } });
+    fireEvent.keyDown(draft, { key: "Enter", altKey: true });
+    expect(handlers.onFollowUp).toHaveBeenCalledWith("do this later");
+    expect(handlers.onPrompt).not.toHaveBeenCalled();
+  });
+
+  it("aborts with Escape while streaming", () => {
+    const handlers = renderComposer({ isStreaming: true });
+    const draft = screen.getByLabelText("Prompt draft");
+    fireEvent.keyDown(draft, { key: "Escape" });
+    expect(handlers.onAbort).toHaveBeenCalled();
+  });
+
+  it("ignores Escape when idle (does not clear or abort)", () => {
+    const handlers = renderComposer();
+    const draft = screen.getByLabelText("Prompt draft");
+    fireEvent.change(draft, { target: { value: "keep me" } });
+    fireEvent.keyDown(draft, { key: "Escape" });
+    expect(handlers.onAbort).not.toHaveBeenCalled();
+    expect(draft).toHaveValue("keep me");
+  });
 });
