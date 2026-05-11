@@ -6,6 +6,7 @@
   "description": "Mobile-first self-hosted web control plane for many concurrent Pi coding-agent sessions.",
   "scripts": {
     "dev": "vite",
+    "dev:api": "tsx src/server/http-api-server.ts",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -31,6 +32,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.1",
     "jsdom": "^29.1.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.0",
     "vite": "^8.0.11",
     "vitest": "^4.0.0"

@@ -33,6 +33,19 @@ function makeApi(initial: SessionCardData[] = []): SessionDashboardApi {
     async deleteSession(sessionId: string) {
       sessions = sessions.filter((session) => session.id !== sessionId);
     },
+    async getMessages() {
+      return [];
+    },
+    async prompt(_sessionId: string, text: string) {
+      return [
+        { id: "u", role: "user", text },
+        { id: "a", role: "assistant", text: `Mock response to: ${text}` },
+      ];
+    },
+    async bash(_sessionId: string, command: string) {
+      return [{ id: "b", role: "custom", text: command }];
+    },
+    async abort() {}, 
   };
 }
 

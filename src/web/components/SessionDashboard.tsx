@@ -57,8 +57,8 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     if (!activeSession) return;
     const name = window.prompt("New session name", activeSession.sessionName ?? "");
     if (name === null) return;
-    const updated = await api.renameSession(activeSession.id, name);
-    setSessions((current) => current.map((session) => session.id === updated.id ? updated : session));
+    await api.renameSession(activeSession.id, name);
+    setSessions((current) => current.map((session) => session.id === activeSession.id ? { ...session, sessionName: name } : session));
   }
 
   async function deleteActive() {
@@ -81,11 +81,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     }));
   }
 
-  function handlePrompt(text: string, attachments: readonly ComposerAttachment[]) {
+  async function handlePrompt(text: string, attachments: readonly ComposerAttachment[]) {
     if (!activeSession) return;
     const now = Date.now();
     appendMessage(activeSession.id, {
-      id: `user-${now}`,
+      id: `user-pending-${now}`,
       role: "user",
       text,
       images: attachments.filter((attachment) => attachment.previewUrl).map((attachment) => ({
@@ -94,16 +94,15 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         alt: attachment.name,
       })),
     });
-    appendMessage(activeSession.id, {
-      id: `assistant-${now}`,
-      role: "assistant",
-      text: `Mock response to: ${text}\n\nThis is currently a local demo session. The next integration step is wiring this composer to the Pi SDK session registry.` ,
-      provider: "mock",
-      model: activeSession.model ?? "mock/model",
-      stopReason: "stop",
-      tokenUsage: "0 tokens",
-      cost: "$0.00",
-    });
+    setSessions((current) => current.map((session) => session.id === activeSession.id ? { ...session, status: "streaming" } : session));
+    try {
+      const messages = await api.prompt(activeSession.id, text);
+      setMessagesBySession((current) => ({ ...current, [activeSession.id]: messages.map(toTimelineMessage) }));
+    } catch (caught) {
+      appendMessage(activeSession.id, { id: `error-${now}`, role: "custom", customLabel: "Error", text: errorMessage(caught) });
+    } finally {
+      setSessions((current) => current.map((session) => session.id === activeSession.id ? { ...session, status: "idle" } : session));
+    }
   }
 
   function handleSteer(text: string) {
@@ -116,15 +115,21 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     setFollowUpBySession((current) => ({ ...current, [activeSession.id]: [...(current[activeSession.id] ?? []), text] }));
   }
 
-  function handleBash(command: string, includeInContext: boolean) {
+  async function handleBash(command: string, includeInContext: boolean) {
     if (!activeSession) return;
     const now = Date.now();
     appendMessage(activeSession.id, {
       id: `bash-${now}`,
       role: "custom",
       customLabel: includeInContext ? "Shell command" : "Hidden shell command",
-      text: `$ ${command}\nmock shell output`,
+      text: `$ ${command}\nSending to Pi...`,
     });
+    try {
+      const messages = await api.bash(activeSession.id, command, includeInContext);
+      setMessagesBySession((current) => ({ ...current, [activeSession.id]: messages.map(toTimelineMessage) }));
+    } catch (caught) {
+      appendMessage(activeSession.id, { id: `error-${now}`, role: "custom", customLabel: "Error", text: errorMessage(caught) });
+    }
   }
 
   return (
@@ -206,7 +211,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 onPrompt={handlePrompt}
                 onSteer={handleSteer}
                 onFollowUp={handleFollowUp}
-                onAbort={() => undefined}
+                onAbort={() => activeSession ? api.abort(activeSession.id) : undefined}
                 onBash={handleBash}
                 onAbortBash={() => undefined}
               />
@@ -222,6 +227,20 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
 
 function basename(value: string): string {
   return value.split("/").filter(Boolean).at(-1) ?? value;
+}
+
+function toTimelineMessage(message: import("../api/session-api.js").DashboardMessage): TimelineMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    ...(message.provider === undefined ? {} : { provider: message.provider }),
+    ...(message.model === undefined ? {} : { model: message.model }),
+    ...(message.stopReason === undefined ? {} : { stopReason: message.stopReason }),
+    ...(message.tokenUsage === undefined ? {} : { tokenUsage: message.tokenUsage }),
+    ...(message.cost === undefined ? {} : { cost: message.cost }),
+    ...(message.error === undefined ? {} : { error: message.error }),
+  };
 }
 
 function errorMessage(error: unknown): string {
