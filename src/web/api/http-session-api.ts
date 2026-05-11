@@ -1,6 +1,6 @@
 import type { DashboardMessage, NewSessionInput, SessionCardData, SessionDashboardApi } from "./session-api.js";
 
-const API_BASE = "http://127.0.0.1:8787";
+const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "http://127.0.0.1:8787";
 
 export class HttpSessionDashboardApi implements SessionDashboardApi {
   async listSessions(): Promise<readonly SessionCardData[]> {
