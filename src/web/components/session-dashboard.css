@@ -797,3 +797,14 @@
 .scoped-model-row { grid-template-columns: 1fr auto auto; align-items: center; }
 .scoped-model-row label { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-primary); }
 .scoped-model-row small { color: var(--text-secondary); }
+
+.auth-provider-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--white-000);
+}
+
+.auth-provider-card span { color: var(--text-secondary); font-size: 12px; }

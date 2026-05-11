@@ -1,5 +1,5 @@
 import type { PathPolicy } from "../security/path-policy.js";
-import type { CreateSessionOptions, ModelInfo, PiAdapter, PiEventListener, PiSessionHandle, PromptAttachment, SessionListItem, SessionState } from "../pi/types.js";
+import type { CreateSessionOptions, DashboardConfigurationInfo, ModelInfo, PiAdapter, PiEventListener, PiSessionHandle, PromptAttachment, SessionListItem, SessionState } from "../pi/types.js";
 
 export interface SessionRegistryOptions {
   readonly adapter: PiAdapter;
@@ -78,6 +78,39 @@ export class SessionRegistry {
 
   async listModels(): Promise<readonly ModelInfo[]> {
     return this.adapter.listModels();
+  }
+
+  async getConfiguration(): Promise<DashboardConfigurationInfo> {
+    if (!this.adapter.getConfiguration) throw new Error("Configuration API is not available");
+    return this.adapter.getConfiguration();
+  }
+
+  async saveApiKey(provider: string, apiKey: string): Promise<DashboardConfigurationInfo> {
+    if (!this.adapter.saveApiKey) throw new Error("Auth API is not available");
+    return this.adapter.saveApiKey(provider, apiKey);
+  }
+
+  async logoutProvider(provider: string): Promise<DashboardConfigurationInfo> {
+    if (!this.adapter.logoutProvider) throw new Error("Auth API is not available");
+    return this.adapter.logoutProvider(provider);
+  }
+
+  async saveSetting(key: string, value: unknown): Promise<DashboardConfigurationInfo> {
+    if (!this.adapter.saveSetting) throw new Error("Settings API is not available");
+    return this.adapter.saveSetting(key, value);
+  }
+
+  async getScopedModels(): Promise<readonly string[]> {
+    return this.adapter.getScopedModels ? this.adapter.getScopedModels() : [];
+  }
+
+  async setScopedModels(modelIds: readonly string[]): Promise<readonly string[]> {
+    if (!this.adapter.setScopedModels) throw new Error("Scoped model API is not available");
+    return this.adapter.setScopedModels(modelIds);
+  }
+
+  async reloadResources(): Promise<readonly string[]> {
+    return this.adapter.reloadResources ? this.adapter.reloadResources() : [];
   }
 
   async setModel(sessionId: string, provider: string, modelId: string): Promise<void> {

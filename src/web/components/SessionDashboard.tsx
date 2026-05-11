@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { WireMessage } from "../../shared/protocol.js";
-import type { DashboardMessage, DashboardToolDetails, SessionCardData, SessionDashboardApi, SessionTreeData } from "../api/session-api.js";
+import type { DashboardConfigurationData, DashboardMessage, DashboardToolDetails, SessionCardData, SessionDashboardApi, SessionTreeData } from "../api/session-api.js";
 import iconBlack from "../assets-icon-black.svg";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
 import { BUILTIN_WUI_COMMANDS, commandSuggestionNames, resolveSlashCommand, type DynamicSlashCommand, type SlashCommandDefinition } from "../commands/slash-command-registry.js";
@@ -52,7 +52,9 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [availableModels, setAvailableModels] = useState<readonly { provider: string; id: string; name: string; available: boolean }[]>([]);
   const [scopedModelIds, setScopedModelIds] = useState<readonly string[]>([]);
   const [authOpen, setAuthOpen] = useState<"login" | "logout" | null>(null);
+  const [authDialogKeys, setAuthDialogKeys] = useState<Record<string, string>>({});
   const [configuredProviders, setConfiguredProviders] = useState<readonly string[]>([]);
+  const [configuration, setConfiguration] = useState<DashboardConfigurationData | null>(null);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -369,13 +371,13 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         await copyLastAssistantMessage(activeSession.id);
         return;
       case "settings":
-        setSettingsOpen(true);
+        await openSettings();
         return;
       case "login":
-        setAuthOpen("login");
+        await openAuthDialog("login");
         return;
       case "logout":
-        setAuthOpen("logout");
+        await openAuthDialog("logout");
         return;
       case "scoped-models":
         await openScopedModels();
@@ -501,10 +503,29 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     }
   }
 
+  async function refreshConfiguration() {
+    if (!api.getConfiguration) return null;
+    const next = await api.getConfiguration();
+    setConfiguration(next);
+    setConfiguredProviders(next.authProviders.filter((provider) => provider.status !== "logged-out").map((provider) => provider.provider));
+    return next;
+  }
+
+  async function openSettings() {
+    await refreshConfiguration().catch((caught) => setNotice(`Failed to load configuration: ${errorMessage(caught)}`));
+    setSettingsOpen(true);
+  }
+
+  async function openAuthDialog(mode: "login" | "logout") {
+    await refreshConfiguration().catch(() => undefined);
+    setAuthOpen(mode);
+  }
+
   async function openScopedModels() {
     const models = api.listModels ? await api.listModels() : [];
     setAvailableModels(models);
-    setScopedModelIds((current) => current.length ? current : models.filter((model) => model.available).map((model) => `${model.provider}/${model.id}`));
+    const persisted = api.getScopedModels ? await api.getScopedModels() : [];
+    setScopedModelIds(persisted.length ? persisted : models.filter((model) => model.available).map((model) => `${model.provider}/${model.id}`));
     setScopedModelsOpen(true);
   }
 
@@ -521,6 +542,64 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       [next[index], next[nextIndex]] = [next[nextIndex]!, next[index]!];
       return next;
     });
+  }
+
+  async function saveScopedModels() {
+    if (!api.setScopedModels) {
+      setNotice("Scoped model persistence API is not available yet.");
+      return;
+    }
+    try {
+      const saved = await api.setScopedModels(scopedModelIds);
+      setScopedModelIds(saved);
+      setNotice(`Saved ${saved.length} scoped model${saved.length === 1 ? "" : "s"}.`);
+      setScopedModelsOpen(false);
+    } catch (caught) {
+      setNotice(`Failed to save scoped models: ${errorMessage(caught)}`);
+    }
+  }
+
+  async function saveApiKey(provider: string, apiKey: string) {
+    if (!api.saveApiKey) {
+      setConfiguredProviders((current) => current.includes(provider) ? current : [...current, provider]);
+      setNotice(`${provider} marked configured for this WUI session.`);
+      return;
+    }
+    try {
+      setConfiguration(await api.saveApiKey(provider, apiKey));
+      setConfiguredProviders((current) => current.includes(provider) ? current : [...current, provider]);
+      setNotice(`${provider} API key saved.`);
+    } catch (caught) {
+      setNotice(`Failed to save ${provider} API key: ${errorMessage(caught)}`);
+    }
+  }
+
+  async function logoutProvider(provider: string) {
+    if (!api.logoutProvider) {
+      setConfiguredProviders((current) => current.filter((item) => item !== provider));
+      setNotice(`${provider} credentials removed from this WUI session.`);
+      return;
+    }
+    try {
+      setConfiguration(await api.logoutProvider(provider));
+      setConfiguredProviders((current) => current.filter((item) => item !== provider));
+      setNotice(`${provider} credentials removed.`);
+    } catch (caught) {
+      setNotice(`Failed to logout ${provider}: ${errorMessage(caught)}`);
+    }
+  }
+
+  async function saveSetting(key: string, value: string) {
+    if (!api.saveSetting) {
+      setNotice(`Saving setting ${key} is not available yet.`);
+      return;
+    }
+    try {
+      setConfiguration(await api.saveSetting(key, value));
+      setNotice(`Saved setting ${key}.`);
+    } catch (caught) {
+      setNotice(`Failed to save setting ${key}: ${errorMessage(caught)}`);
+    }
   }
 
   async function openTree(sessionId: string) {
@@ -808,23 +887,23 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       {settingsOpen ? (
         <SimpleDialog title="Configuration" onClose={() => setSettingsOpen(false)} wide>
           <ConfigurationPanel
-            authProviders={["anthropic", "openai", "google"].map((provider) => ({ provider, status: configuredProviders.includes(provider) ? "api-key" as const : "logged-out" as const }))}
-            models={[]}
-            thinkingLevel="medium"
-            tools={[]}
-            settings={{ note: "Settings write support is being wired through the Pi adapter." }}
-            resources={[]}
-            packages={[]}
-            themes={[]}
-            hotkeys={[{ action: "Send", key: "Enter" }, { action: "Help", key: "?" }]}
-            versions={[{ name: "pi-remote-control", version: "0.0.0" }]}
-            onLogin={(provider) => { setConfiguredProviders((current) => current.includes(provider) ? current : [...current, provider]); setNotice(`${provider} marked configured for this WUI session.`); }}
-            onLogout={(provider) => { setConfiguredProviders((current) => current.filter((item) => item !== provider)); setNotice(`${provider} credentials removed from this WUI session.`); }}
-            onApiKey={(provider) => { setConfiguredProviders((current) => current.includes(provider) ? current : [...current, provider]); setNotice(`${provider} API key captured for this WUI session.`); }}
+            authProviders={configuration?.authProviders ?? ["anthropic", "openai", "google"].map((provider) => ({ provider, status: configuredProviders.includes(provider) ? "api-key" as const : "logged-out" as const }))}
+            models={configuration?.models ?? []}
+            thinkingLevel={configuration?.thinkingLevel ?? "medium"}
+            tools={configuration?.tools ?? []}
+            settings={configuration?.settings ?? { note: "Settings API is not available yet." }}
+            resources={configuration?.resources ?? []}
+            packages={configuration?.packages ?? []}
+            themes={configuration?.themes ?? []}
+            hotkeys={configuration?.hotkeys ?? [{ action: "Send", key: "Enter" }, { action: "Help", key: "?" }]}
+            versions={configuration?.versions ?? [{ name: "pi-remote-control", version: "0.0.0" }]}
+            onLogin={(provider) => void openAuthDialog("login").then(() => setAuthOpen("login"))}
+            onLogout={(provider) => void logoutProvider(provider)}
+            onApiKey={(provider, key) => void saveApiKey(provider, key)}
             onModelSelect={(provider, modelId) => activeSession && api.setModel ? void api.setModel(activeSession.id, provider, modelId) : undefined}
-            onThinkingSelect={(level) => setNotice(`Thinking level ${level} support is planned.`)}
-            onToolToggle={(name) => setNotice(`Tool toggle for ${name} is planned.`)}
-            onSaveSetting={(key) => setNotice(`Saving setting ${key} is planned.`)}
+            onThinkingSelect={(level) => void saveSetting("defaultThinkingLevel", level)}
+            onToolToggle={(name) => setNotice(`Tool toggle for ${name} is not exposed by the Pi SDK settings API yet.`)}
+            onSaveSetting={(key, value) => void saveSetting(key, value)}
             onReloadResources={() => void reloadResources()}
             onPackageInstall={(source) => setNotice(`Package install disabled for ${source}.`)}
             onPackageRemove={(source) => setNotice(`Package remove disabled for ${source}.`)}
@@ -921,17 +1000,20 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       {authOpen ? (
         <SimpleDialog title={authOpen === "login" ? "Login provider" : "Logout provider"} onClose={() => setAuthOpen(null)}>
           <ul className="resume-session-list" aria-label="Auth providers">
-            {["anthropic", "openai", "google"].map((provider) => (
-              <li key={provider}>
-                <button type="button" onClick={() => {
-                  if (authOpen === "login") setConfiguredProviders((current) => current.includes(provider) ? current : [...current, provider]);
-                  else setConfiguredProviders((current) => current.filter((item) => item !== provider));
-                  setNotice(authOpen === "login" ? `${provider} marked configured for this WUI session.` : `${provider} credentials removed from this WUI session.`);
-                  setAuthOpen(null);
-                }}>
-                  <strong>{provider}</strong>
-                  <span>{configuredProviders.includes(provider) ? "configured" : "not configured"}</span>
-                </button>
+            {(configuration?.authProviders ?? ["anthropic", "openai", "google"].map((provider) => ({ provider, status: configuredProviders.includes(provider) ? "api-key" as const : "logged-out" as const, source: undefined }))).map((auth) => (
+              <li key={auth.provider}>
+                <div className="auth-provider-card">
+                  <strong>{auth.provider}</strong>
+                  <span>{auth.status}{auth.source ? ` (${auth.source})` : ""}</span>
+                  {authOpen === "login" ? (
+                    <>
+                      <input aria-label={`${auth.provider} slash API key`} placeholder="API key" value={authDialogKeys[auth.provider] ?? ""} onChange={(event) => setAuthDialogKeys((current) => ({ ...current, [auth.provider]: event.target.value }))} />
+                      <button type="button" onClick={() => void saveApiKey(auth.provider, authDialogKeys[auth.provider] ?? "").then(() => setAuthOpen(null))}>Save API key</button>
+                    </>
+                  ) : (
+                    <button type="button" onClick={() => void logoutProvider(auth.provider).then(() => setAuthOpen(null))}>Logout</button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
@@ -955,6 +1037,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             })}
           </ul>
           <p>Scoped model order: {scopedModelIds.join(", ") || "none"}</p>
+          <footer><button type="button" className="primary" onClick={() => void saveScopedModels()}>Save scoped models</button></footer>
         </SimpleDialog>
       ) : null}
 

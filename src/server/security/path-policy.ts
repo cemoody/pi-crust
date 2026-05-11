@@ -29,6 +29,22 @@ export class PathPolicy {
     }
     return resolved;
   }
+
+  assertAllowedImportFile(filePath: string): string {
+    const resolved = path.resolve(filePath);
+    if (![...this.allowedProjectRoots, ...this.allowedSessionRoots].some((root) => isWithinOrEqual(resolved, root))) {
+      throw new Error(`Import file is outside allowed roots: ${filePath}`);
+    }
+    return resolved;
+  }
+
+  assertAllowedExportFile(filePath: string): string {
+    const resolved = path.resolve(filePath);
+    if (![...this.allowedProjectRoots, ...this.allowedSessionRoots].some((root) => isWithinOrEqual(resolved, root))) {
+      throw new Error(`Export file is outside allowed roots: ${filePath}`);
+    }
+    return resolved;
+  }
 }
 
 function normalizeDir(value: string): string {

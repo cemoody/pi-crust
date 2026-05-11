@@ -42,6 +42,29 @@ export interface ModelInfo {
   readonly reason?: string;
 }
 
+export interface AuthProviderInfo {
+  readonly provider: string;
+  readonly displayName?: string;
+  readonly status: "logged-in" | "logged-out" | "api-key";
+  readonly source?: string;
+  readonly label?: string;
+  readonly supportsOAuth?: boolean;
+  readonly warning?: string;
+}
+
+export interface DashboardConfigurationInfo {
+  readonly authProviders: readonly AuthProviderInfo[];
+  readonly models: readonly ModelInfo[];
+  readonly thinkingLevel: string;
+  readonly settings: Record<string, unknown>;
+  readonly tools: readonly { readonly name: string; readonly enabled: boolean; readonly source: "built-in" | "extension" | "custom" }[];
+  readonly resources: readonly { readonly kind: string; readonly name: string; readonly status: "loaded" | "error"; readonly detail?: string }[];
+  readonly packages: readonly { readonly source: string; readonly resources: readonly string[] }[];
+  readonly themes: readonly { readonly name: string; readonly tokens: Record<string, string> }[];
+  readonly hotkeys: readonly { readonly action: string; readonly key: string }[];
+  readonly versions: readonly { readonly name: string; readonly version: string }[];
+}
+
 export type PiEvent =
   | { readonly type: "agent_start" }
   | { readonly type: "agent_end"; readonly messages: readonly SessionMessage[] }
@@ -137,4 +160,11 @@ export interface PiAdapter {
   openSession(options: OpenSessionOptions): Promise<PiSessionHandle>;
   listSessions(cwd?: string): Promise<readonly SessionListItem[]>;
   listModels(): Promise<readonly ModelInfo[]>;
+  getConfiguration?(): Promise<DashboardConfigurationInfo>;
+  saveApiKey?(provider: string, apiKey: string): Promise<DashboardConfigurationInfo>;
+  logoutProvider?(provider: string): Promise<DashboardConfigurationInfo>;
+  saveSetting?(key: string, value: unknown): Promise<DashboardConfigurationInfo>;
+  getScopedModels?(): Promise<readonly string[]>;
+  setScopedModels?(modelIds: readonly string[]): Promise<readonly string[]>;
+  reloadResources?(): Promise<readonly string[]>;
 }

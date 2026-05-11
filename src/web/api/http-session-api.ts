@@ -1,4 +1,4 @@
-import type { DashboardMessage, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi, SessionTreeData, SlashCommandOption } from "./session-api.js";
+import type { DashboardConfigurationData, DashboardMessage, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi, SessionTreeData, SlashCommandOption } from "./session-api.js";
 
 const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "http://127.0.0.1:8787";
 
@@ -109,6 +109,32 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
 
   async cloneSession(sessionId: string): Promise<SessionCardData> {
     return request<SessionCardData>(`/api/sessions/${encodeURIComponent(sessionId)}/clone`, { method: "POST", body: {} });
+  }
+
+  async getConfiguration(): Promise<DashboardConfigurationData> {
+    return request<DashboardConfigurationData>("/api/config");
+  }
+
+  async saveApiKey(provider: string, apiKey: string): Promise<DashboardConfigurationData> {
+    return request<DashboardConfigurationData>(`/api/auth/${encodeURIComponent(provider)}/api-key`, { method: "POST", body: { apiKey } });
+  }
+
+  async logoutProvider(provider: string): Promise<DashboardConfigurationData> {
+    return request<DashboardConfigurationData>(`/api/auth/${encodeURIComponent(provider)}/logout`, { method: "POST", body: {} });
+  }
+
+  async saveSetting(key: string, value: unknown): Promise<DashboardConfigurationData> {
+    return request<DashboardConfigurationData>("/api/config/settings", { method: "POST", body: { key, value } });
+  }
+
+  async getScopedModels(): Promise<readonly string[]> {
+    const data = await request<{ modelIds: readonly string[] }>("/api/config/scoped-models");
+    return data.modelIds;
+  }
+
+  async setScopedModels(modelIds: readonly string[]): Promise<readonly string[]> {
+    const data = await request<{ modelIds: readonly string[] }>("/api/config/scoped-models", { method: "POST", body: { modelIds } });
+    return data.modelIds;
   }
 }
 

@@ -7,11 +7,13 @@ import {
   ModelRegistry,
   SessionManager,
   SettingsManager,
+  VERSION,
 } from "@earendil-works/pi-coding-agent";
 import type {
   CreateSessionOptions,
   ModelInfo,
   OpenSessionOptions,
+  DashboardConfigurationInfo,
   PiAdapter,
   PiEventListener,
   PiSessionHandle,
@@ -46,6 +48,7 @@ export class SdkPiAdapter implements PiAdapter {
       authStorage: this.authStorage,
       modelRegistry: this.modelRegistry,
       settingsManager: this.settingsManager,
+      scopedModels: this.resolveScopedModels(),
       sessionManager: SessionManager.create(cwd, this.options.sessionDir),
     });
     const handle = new SdkPiSessionHandle(session, cwd, this.modelRegistry, this.sessionNames);
@@ -68,13 +71,94 @@ export class SdkPiAdapter implements PiAdapter {
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
-    const available = await this.modelRegistry.getAvailable();
-    return available.map((model: any) => ({
-      provider: String(model.provider ?? ""),
-      id: String(model.id ?? ""),
-      name: String(model.name ?? model.id ?? "unknown"),
-      available: true,
-    }));
+    return this.modelRegistry.getAll().map((model: any) => {
+      const status = this.modelRegistry.getProviderAuthStatus(String(model.provider ?? ""));
+      const available = this.modelRegistry.hasConfiguredAuth(model);
+      return {
+        provider: String(model.provider ?? ""),
+        id: String(model.id ?? ""),
+        name: String(model.name ?? model.id ?? "unknown"),
+        available,
+        ...(available ? {} : { reason: status.label ?? status.source ?? "auth not configured" }),
+      };
+    });
+  }
+
+  async getConfiguration(): Promise<DashboardConfigurationInfo> {
+    const models = await this.listModels();
+    const providerNames = [...new Set(models.map((model) => model.provider))].sort();
+    const oauthProviders = this.authStorage.getOAuthProviders().map((provider: any) => String(provider.id));
+    const authProviders = [...new Set([...providerNames, ...oauthProviders])].map((provider) => {
+      const status = this.authStorage.getAuthStatus(provider);
+      const credential = this.authStorage.get(provider);
+      return {
+        provider,
+        displayName: this.modelRegistry.getProviderDisplayName(provider),
+        status: credential?.type === "oauth" ? "logged-in" as const : credential?.type === "api_key" ? "api-key" as const : status.configured ? "logged-in" as const : "logged-out" as const,
+        ...(status.source ? { source: status.source } : {}),
+        ...(status.label ? { label: status.label } : {}),
+        supportsOAuth: oauthProviders.includes(provider),
+      };
+    });
+    const effectiveSettings = this.settingsManager.getGlobalSettings();
+    const projectSettings = this.settingsManager.getProjectSettings();
+    return {
+      authProviders,
+      models,
+      thinkingLevel: this.settingsManager.getDefaultThinkingLevel() ?? "medium",
+      settings: {
+        effective: effectiveSettings,
+        project: projectSettings,
+        enabledModels: this.settingsManager.getEnabledModels() ?? [],
+      },
+      tools: ["read", "bash", "edit", "write"].map((name) => ({ name, enabled: true, source: "built-in" as const })),
+      resources: this.modelRegistry.getError() ? [{ kind: "models", name: "models.json", status: "error" as const, detail: this.modelRegistry.getError()! }] : [],
+      packages: this.settingsManager.getPackages().map((source) => ({ source: typeof source === "string" ? source : source.source, resources: [] })),
+      themes: [],
+      hotkeys: [
+        { action: "Send", key: "Enter" },
+        { action: "Newline", key: "Shift+Enter" },
+        { action: "Abort", key: "Esc" },
+      ],
+      versions: [{ name: "pi-coding-agent", version: VERSION }],
+    };
+  }
+
+  async saveApiKey(provider: string, apiKey: string) {
+    if (!apiKey.trim()) throw new Error("API key is required");
+    this.authStorage.set(provider, { type: "api_key", key: apiKey.trim() });
+    this.modelRegistry.refresh();
+    return this.getConfiguration();
+  }
+
+  async logoutProvider(provider: string) {
+    this.authStorage.logout(provider);
+    this.modelRegistry.refresh();
+    return this.getConfiguration();
+  }
+
+  async saveSetting(key: string, value: unknown) {
+    applySetting(this.settingsManager, key, value);
+    await this.settingsManager.flush();
+    this.modelRegistry.refresh();
+    return this.getConfiguration();
+  }
+
+  async getScopedModels() {
+    return this.settingsManager.getEnabledModels() ?? [];
+  }
+
+  async setScopedModels(modelIds: readonly string[]) {
+    this.settingsManager.setEnabledModels([...modelIds]);
+    await this.settingsManager.flush();
+    return this.settingsManager.getEnabledModels() ?? [];
+  }
+
+  async reloadResources() {
+    this.authStorage.reload();
+    await this.settingsManager.reload();
+    this.modelRegistry.refresh();
+    return ["Reloaded auth, settings, and model registry.", ...this.settingsManager.drainErrors().map((error) => `${error.scope}: ${error.error.message}`)];
   }
 
   async listSessions(cwd?: string): Promise<readonly SessionListItem[]> {
@@ -95,6 +179,18 @@ export class SdkPiAdapter implements PiAdapter {
         lastActivity: typeof item.timestamp === "number" ? item.timestamp : Date.parse(String(item.timestamp ?? Date.now())),
       };
     }));
+  }
+
+  private resolveScopedModels() {
+    const patterns = this.settingsManager.getEnabledModels() ?? [];
+    const all = this.modelRegistry.getAll();
+    const scoped: { model: any }[] = [];
+    for (const pattern of patterns) {
+      const lower = pattern.toLowerCase();
+      const exact = all.find((model: any) => `${model.provider}/${model.id}`.toLowerCase() === lower || String(model.id).toLowerCase() === lower);
+      if (exact && !scoped.some((item) => item.model.provider === exact.provider && item.model.id === exact.id)) scoped.push({ model: exact });
+    }
+    return scoped;
   }
 }
 
@@ -384,6 +480,58 @@ class SessionNameStore {
       return {};
     }
   }
+}
+
+function applySetting(settings: any, key: string, value: unknown): void {
+  const parsed = parseSettingValue(value);
+  switch (key) {
+    case "defaultProvider": settings.setDefaultProvider(String(parsed)); break;
+    case "defaultModel": settings.setDefaultModel(String(parsed)); break;
+    case "defaultThinkingLevel": settings.setDefaultThinkingLevel(String(parsed)); break;
+    case "steeringMode": settings.setSteeringMode(String(parsed)); break;
+    case "followUpMode": settings.setFollowUpMode(String(parsed)); break;
+    case "theme": settings.setTheme(String(parsed)); break;
+    case "compaction.enabled": settings.setCompactionEnabled(Boolean(parsed)); break;
+    case "retry.enabled": settings.setRetryEnabled(Boolean(parsed)); break;
+    case "hideThinkingBlock": settings.setHideThinkingBlock(Boolean(parsed)); break;
+    case "shellPath": settings.setShellPath(parsed ? String(parsed) : undefined); break;
+    case "quietStartup": settings.setQuietStartup(Boolean(parsed)); break;
+    case "shellCommandPrefix": settings.setShellCommandPrefix(parsed ? String(parsed) : undefined); break;
+    case "npmCommand": settings.setNpmCommand(Array.isArray(parsed) ? parsed.map(String) : String(parsed).split(/\s+/).filter(Boolean)); break;
+    case "collapseChangelog": settings.setCollapseChangelog(Boolean(parsed)); break;
+    case "enableInstallTelemetry": settings.setEnableInstallTelemetry(Boolean(parsed)); break;
+    case "packages": settings.setPackages(Array.isArray(parsed) ? parsed : String(parsed).split(",").map((item) => item.trim()).filter(Boolean)); break;
+    case "extensions": settings.setExtensionPaths(Array.isArray(parsed) ? parsed.map(String) : String(parsed).split(",").map((item) => item.trim()).filter(Boolean)); break;
+    case "skills": settings.setSkillPaths(Array.isArray(parsed) ? parsed.map(String) : String(parsed).split(",").map((item) => item.trim()).filter(Boolean)); break;
+    case "prompts": settings.setPromptTemplatePaths(Array.isArray(parsed) ? parsed.map(String) : String(parsed).split(",").map((item) => item.trim()).filter(Boolean)); break;
+    case "themes": settings.setThemePaths(Array.isArray(parsed) ? parsed.map(String) : String(parsed).split(",").map((item) => item.trim()).filter(Boolean)); break;
+    case "enableSkillCommands": settings.setEnableSkillCommands(Boolean(parsed)); break;
+    case "terminal.showImages": settings.setShowImages(Boolean(parsed)); break;
+    case "terminal.imageWidthCells": settings.setImageWidthCells(Number(parsed)); break;
+    case "terminal.clearOnShrink": settings.setClearOnShrink(Boolean(parsed)); break;
+    case "terminal.showTerminalProgress": settings.setShowTerminalProgress(Boolean(parsed)); break;
+    case "images.autoResize": settings.setImageAutoResize(Boolean(parsed)); break;
+    case "images.blockImages": settings.setBlockImages(Boolean(parsed)); break;
+    case "enabledModels": settings.setEnabledModels(Array.isArray(parsed) ? parsed.map(String) : String(parsed).split(",").map((item) => item.trim()).filter(Boolean)); break;
+    case "doubleEscapeAction": settings.setDoubleEscapeAction(String(parsed)); break;
+    case "treeFilterMode": settings.setTreeFilterMode(String(parsed)); break;
+    case "showHardwareCursor": settings.setShowHardwareCursor(Boolean(parsed)); break;
+    case "editorPaddingX": settings.setEditorPaddingX(Number(parsed)); break;
+    case "autocompleteMaxVisible": settings.setAutocompleteMaxVisible(Number(parsed)); break;
+    case "warnings": settings.setWarnings(typeof parsed === "object" && parsed !== null ? parsed : {}); break;
+    default: throw new Error(`Unsupported setting: ${key}`);
+  }
+}
+
+function parseSettingValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed === "null") return null;
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  if ((trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"))) return JSON.parse(trimmed);
+  return value;
 }
 
 function stringifyContent(content: unknown): string {

@@ -42,6 +42,9 @@ export class MockPiAdapter implements PiAdapter {
   private readonly sessionRoot: string;
   private readonly assistantResponse: (prompt: string) => string;
   private readonly models: readonly ModelInfo[];
+  private readonly apiKeys = new Set<string>();
+  private scopedModels: readonly string[] = [];
+  private settings: Record<string, unknown> = { enabledModels: [] };
 
   constructor(options: MockPiAdapterOptions) {
     this.sessionRoot = path.resolve(options.sessionRoot);
@@ -50,7 +53,55 @@ export class MockPiAdapter implements PiAdapter {
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
-    return this.models;
+    return this.models.map((model) => ({ ...model, available: model.available || this.apiKeys.has(model.provider), ...(model.available || this.apiKeys.has(model.provider) ? {} : { reason: "auth not configured" }) }));
+  }
+
+  async getConfiguration() {
+    const models = await this.listModels();
+    const providers = [...new Set(models.map((model) => model.provider))];
+    return {
+      authProviders: providers.map((provider) => ({ provider, status: this.apiKeys.has(provider) ? "api-key" as const : "logged-out" as const })),
+      models,
+      thinkingLevel: "medium",
+      settings: this.settings,
+      tools: ["read", "bash", "edit", "write"].map((name) => ({ name, enabled: true, source: "built-in" as const })),
+      resources: [],
+      packages: [],
+      themes: [],
+      hotkeys: [{ action: "Send", key: "Enter" }],
+      versions: [{ name: "mock-pi", version: "0.0.0" }],
+    };
+  }
+
+  async saveApiKey(provider: string, apiKey: string) {
+    if (!apiKey.trim()) throw new Error("API key is required");
+    this.apiKeys.add(provider);
+    return this.getConfiguration();
+  }
+
+  async logoutProvider(provider: string) {
+    this.apiKeys.delete(provider);
+    return this.getConfiguration();
+  }
+
+  async saveSetting(key: string, value: unknown) {
+    this.settings = { ...this.settings, [key]: value };
+    if (key === "enabledModels") this.scopedModels = Array.isArray(value) ? value.map(String) : [];
+    return this.getConfiguration();
+  }
+
+  async getScopedModels() {
+    return this.scopedModels;
+  }
+
+  async setScopedModels(modelIds: readonly string[]) {
+    this.scopedModels = [...modelIds];
+    this.settings = { ...this.settings, enabledModels: this.scopedModels };
+    return this.scopedModels;
+  }
+
+  async reloadResources() {
+    return ["Reloaded mock resources."];
   }
 
   async createSession(options: CreateSessionOptions): Promise<PiSessionHandle> {

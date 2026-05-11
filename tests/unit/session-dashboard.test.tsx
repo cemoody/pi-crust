@@ -345,4 +345,56 @@ describe("SessionDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByRole("dialog", { name: "Scoped models" })).toHaveTextContent("One");
   });
+
+  it("persists auth, settings, and scoped model slash command changes through API hooks", async () => {
+    const saveApiKey = vi.fn(async () => configuration);
+    const logoutProvider = vi.fn(async () => configuration);
+    const saveSetting = vi.fn(async () => configuration);
+    const setScopedModels = vi.fn(async (ids: readonly string[]) => ids);
+    const configuration = {
+      authProviders: [{ provider: "mock", status: "logged-out" as const }],
+      models: [{ provider: "mock", id: "one", name: "One", available: true }, { provider: "mock", id: "two", name: "Two", available: true }],
+      thinkingLevel: "medium",
+      settings: { effective: { defaultModel: "one" } },
+      tools: [],
+      resources: [],
+      packages: [],
+      themes: [],
+      hotkeys: [],
+      versions: [],
+    };
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Persist", status: "idle", model: "m", lastActivity: 1 }]),
+      async listModels() { return configuration.models; },
+      async getConfiguration() { return configuration; },
+      saveApiKey,
+      logoutProvider,
+      saveSetting,
+      async getScopedModels() { return ["mock/two"]; },
+      setScopedModels,
+    } satisfies SessionDashboardApi;
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Persist");
+    fireEvent.click(screen.getByRole("button", { name: /Persist/ }));
+
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "/login" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.change(await screen.findByLabelText("mock slash API key"), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save API key" }));
+    await waitFor(() => expect(saveApiKey).toHaveBeenCalledWith("mock", "secret"));
+
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "/settings" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.change(await screen.findByLabelText("Setting key"), { target: { value: "defaultThinkingLevel" } });
+    fireEvent.change(screen.getByLabelText("Setting value"), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save setting" }));
+    await waitFor(() => expect(saveSetting).toHaveBeenCalledWith("defaultThinkingLevel", "high"));
+    fireEvent.click(screen.getByLabelText("Close Configuration"));
+
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "/scoped-models" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("dialog", { name: "Scoped models" })).toHaveTextContent("Two");
+    fireEvent.click(screen.getByRole("button", { name: "Save scoped models" }));
+    await waitFor(() => expect(setScopedModels).toHaveBeenCalledWith(["mock/two"]));
+  });
 });

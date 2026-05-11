@@ -76,6 +76,19 @@ export interface SlashCommandOption {
   readonly source: "extension" | "prompt" | "skill";
 }
 
+export interface DashboardConfigurationData {
+  readonly authProviders: readonly { readonly provider: string; readonly displayName?: string; readonly status: "logged-in" | "logged-out" | "api-key"; readonly source?: string; readonly label?: string; readonly supportsOAuth?: boolean; readonly warning?: string }[];
+  readonly models: readonly ModelOption[];
+  readonly thinkingLevel: string;
+  readonly settings: Record<string, unknown>;
+  readonly tools: readonly { readonly name: string; readonly enabled: boolean; readonly source: "built-in" | "extension" | "custom" }[];
+  readonly resources: readonly { readonly kind: string; readonly name: string; readonly status: "loaded" | "error"; readonly detail?: string }[];
+  readonly packages: readonly { readonly source: string; readonly resources: readonly string[] }[];
+  readonly themes: readonly { readonly name: string; readonly tokens: Record<string, string> }[];
+  readonly hotkeys: readonly { readonly action: string; readonly key: string }[];
+  readonly versions: readonly { readonly name: string; readonly version: string }[];
+}
+
 export interface SessionTreeData {
   readonly entries: readonly {
     readonly id: string;
@@ -112,4 +125,10 @@ export interface SessionDashboardApi {
   setTreeLabel?(sessionId: string, entryId: string, label: string | undefined): Promise<void>;
   forkSession?(sessionId: string, entryId: string): Promise<SessionCardData & { readonly selectedText?: string }>;
   cloneSession?(sessionId: string): Promise<SessionCardData>;
+  getConfiguration?(): Promise<DashboardConfigurationData>;
+  saveApiKey?(provider: string, apiKey: string): Promise<DashboardConfigurationData>;
+  logoutProvider?(provider: string): Promise<DashboardConfigurationData>;
+  saveSetting?(key: string, value: unknown): Promise<DashboardConfigurationData>;
+  getScopedModels?(): Promise<readonly string[]>;
+  setScopedModels?(modelIds: readonly string[]): Promise<readonly string[]>;
 }

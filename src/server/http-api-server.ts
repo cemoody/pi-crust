@@ -14,9 +14,10 @@ const projectRoot = path.resolve(process.env.PI_REMOTE_PROJECT_ROOT ?? process.e
 const sessionRoot = path.resolve(process.env.PI_REMOTE_SESSION_ROOT ?? path.join(os.homedir(), ".pi", "agent", "sessions"));
 const useMock = process.env.PI_REMOTE_USE_MOCK === "1";
 
+const pathPolicy = new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] });
 const registry = new SessionRegistry({
   adapter: useMock ? new MockPiAdapter({ sessionRoot }) : new SdkPiAdapter({ sessionDir: sessionRoot }),
-  pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
+  pathPolicy,
 });
 const coldSessionFiles = new Map<string, string>();
 
@@ -60,8 +61,42 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     })));
   }
 
+  if (req.method === "GET" && url.pathname === "/api/config") {
+    return sendJson(res, 200, await registry.getConfiguration());
+  }
+
   if (req.method === "POST" && url.pathname === "/api/config/reload") {
-    return sendJson(res, 200, { diagnostics: ["Resources reload requested. Full SDK reload parity is pending."] });
+    return sendJson(res, 200, { diagnostics: await registry.reloadResources() });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/config/settings") {
+    const body = await readJson(req) as { key?: string; value?: unknown };
+    if (!body.key) return sendJson(res, 400, { error: "key is required" });
+    return sendJson(res, 200, await registry.saveSetting(body.key, body.value));
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/config/scoped-models") {
+    return sendJson(res, 200, { modelIds: await registry.getScopedModels() });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/config/scoped-models") {
+    const body = await readJson(req) as { modelIds?: readonly string[] };
+    if (!Array.isArray(body.modelIds)) return sendJson(res, 400, { error: "modelIds is required" });
+    return sendJson(res, 200, { modelIds: await registry.setScopedModels(body.modelIds.map(String)) });
+  }
+
+  const authMatch = url.pathname.match(/^\/api\/auth\/([^/]+)\/(api-key|logout)$/);
+  if (authMatch) {
+    const provider = decodeURIComponent(authMatch[1]!);
+    const action = authMatch[2]!;
+    if (req.method === "POST" && action === "api-key") {
+      const body = await readJson(req) as { apiKey?: string };
+      if (!body.apiKey) return sendJson(res, 400, { error: "apiKey is required" });
+      return sendJson(res, 200, await registry.saveApiKey(provider, body.apiKey));
+    }
+    if (req.method === "POST" && action === "logout") {
+      return sendJson(res, 200, await registry.logoutProvider(provider));
+    }
   }
 
   if (req.method === "POST" && url.pathname === "/api/sessions") {
@@ -76,7 +111,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   if (req.method === "POST" && url.pathname === "/api/sessions/import") {
     const body = await readJson(req) as { path?: string; cwd?: string };
     if (!body.path) return sendJson(res, 400, { error: "path is required" });
-    const imported = await registry.createSession({ cwd: body.cwd ?? projectRoot, sessionName: `Imported ${path.basename(body.path)}` });
+    const inputPath = pathPolicy.assertAllowedImportFile(body.path);
+    await validateJsonlSession(inputPath);
+    const targetCwd = body.cwd ? pathPolicy.assertAllowedCwd(body.cwd) : projectRoot;
+    const targetPath = path.join(sessionRoot, `${Date.now()}_${path.basename(inputPath)}`);
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.copyFile(inputPath, targetPath);
+    const imported = await registry.openSession(targetPath).catch(async () => registry.createSession({ cwd: targetCwd, sessionName: `Imported ${path.basename(inputPath)}` }));
     coldSessionFiles.set(imported.id, imported.sessionFile);
     return sendJson(res, 200, toSessionCard(await imported.handle.getState()));
   }
@@ -209,7 +250,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   if (req.method === "POST" && action === "export") {
     const body = await readJson(req) as { outputPath?: string };
     const session = await getOrOpenSession(sessionId);
-    const out = path.resolve(body.outputPath ?? path.join(os.tmpdir(), `${sessionId}.html`));
+    const out = pathPolicy.assertAllowedExportFile(body.outputPath ?? path.join(projectRoot, `${sessionId}.html`));
+    await fs.mkdir(path.dirname(out), { recursive: true });
     await fs.writeFile(out, renderSimpleSessionHtml(await session.handle.getMessages()), "utf8");
     return sendJson(res, 200, { path: out });
   }
@@ -308,6 +350,24 @@ function setCors(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+async function validateJsonlSession(filePath: string): Promise<void> {
+  const raw = await fs.readFile(filePath, "utf8");
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length === 0) throw new Error("Import file is empty");
+  let hasSessionHeader = false;
+  for (const [index, line] of lines.entries()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (caught) {
+      throw new Error(`Import file contains invalid JSONL on line ${index + 1}: ${caught instanceof Error ? caught.message : String(caught)}`);
+    }
+    if (!parsed || typeof parsed !== "object") throw new Error(`Import line ${index + 1} must be an object`);
+    if ((parsed as Record<string, unknown>).type === "session") hasSessionHeader = true;
+  }
+  if (!hasSessionHeader) throw new Error("Import file does not contain a Pi session header");
 }
 
 async function readJson(req: http.IncomingMessage): Promise<unknown> {
