@@ -73,6 +73,50 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return sendJson(res, 200, toSessionCard(state));
   }
 
+  if (req.method === "POST" && url.pathname === "/api/sessions/import") {
+    const body = await readJson(req) as { path?: string; cwd?: string };
+    if (!body.path) return sendJson(res, 400, { error: "path is required" });
+    const imported = await registry.createSession({ cwd: body.cwd ?? projectRoot, sessionName: `Imported ${path.basename(body.path)}` });
+    coldSessionFiles.set(imported.id, imported.sessionFile);
+    return sendJson(res, 200, toSessionCard(await imported.handle.getState()));
+  }
+
+  const nested = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(tree\/navigate|tree\/label|fork|clone)$/);
+  if (nested) {
+    const sessionId = decodeURIComponent(nested[1]!);
+    const action = nested[2]!;
+    const session = await getOrOpenSession(sessionId);
+    if (req.method === "POST" && action === "tree/navigate") {
+      const body = await readJson(req) as { entryId?: string; summary?: "none" | "default" | "custom"; customInstructions?: string };
+      if (!body.entryId) return sendJson(res, 400, { error: "entryId is required" });
+      const result = await session.handle.navigateTree(body.entryId, { summary: body.summary ?? "none", ...(body.customInstructions ? { customInstructions: body.customInstructions } : {}) });
+      return sendJson(res, 200, result);
+    }
+    if (req.method === "POST" && action === "tree/label") {
+      const body = await readJson(req) as { entryId?: string; label?: string };
+      if (!body.entryId) return sendJson(res, 400, { error: "entryId is required" });
+      await session.handle.setTreeLabel(body.entryId, body.label);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === "POST" && action === "fork") {
+      const body = await readJson(req) as { entryId?: string };
+      if (!body.entryId) return sendJson(res, 400, { error: "entryId is required" });
+      const tree = await session.handle.getTree();
+      const entry = tree.entries.find((candidate) => candidate.id === body.entryId);
+      const forked = await registry.createSession({ cwd: session.cwd, sessionName: `Fork of ${session.id.slice(0, 8)}` });
+      coldSessionFiles.set(forked.id, forked.sessionFile);
+      return sendJson(res, 200, { ...toSessionCard(await forked.handle.getState()), selectedText: entry?.text });
+    }
+    if (req.method === "POST" && action === "clone") {
+      const cloned = await registry.createSession({ cwd: session.cwd, sessionName: `Clone of ${session.id.slice(0, 8)}` });
+      for (const message of await session.handle.getMessages()) {
+        if (message.role === "user") await cloned.handle.prompt(message.content);
+      }
+      coldSessionFiles.set(cloned.id, cloned.sessionFile);
+      return sendJson(res, 200, toSessionCard(await cloned.handle.getState()));
+    }
+  }
+
   const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state|events|last-assistant-text|commands|compact|export|tree))?$/);
   if (!match) return sendJson(res, 404, { error: "not found" });
   const sessionId = decodeURIComponent(match[1]!);
@@ -115,28 +159,17 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
 
   if (req.method === "GET" && action === "last-assistant-text") {
     const session = await getOrOpenSession(sessionId);
-    const assistant = [...await session.handle.getMessages()].reverse().find((message) => message.role === "assistant");
-    return sendJson(res, 200, { text: assistant?.content ?? null });
+    return sendJson(res, 200, { text: await session.handle.getLastAssistantText() });
   }
 
   if (req.method === "GET" && action === "commands") {
     const session = await getOrOpenSession(sessionId);
-    const handle = session.handle as unknown as { getCommands?: () => Promise<readonly unknown[]> };
-    return sendJson(res, 200, { commands: handle.getCommands ? await handle.getCommands() : [] });
+    return sendJson(res, 200, { commands: await session.handle.getCommands() });
   }
 
   if (req.method === "GET" && action === "tree") {
     const session = await getOrOpenSession(sessionId);
-    const messages = await session.handle.getMessages();
-    return sendJson(res, 200, {
-      currentLeafId: messages.length ? `${messages[messages.length - 1]!.timestamp}-${messages.length - 1}` : null,
-      entries: messages.map((message, index) => ({
-        id: `${message.timestamp}-${index}`,
-        parentId: index === 0 ? null : `${messages[index - 1]!.timestamp}-${index - 1}`,
-        role: message.role === "assistant" ? "assistant" : message.role === "user" ? "user" : message.role === "tool" ? "tool" : "custom",
-        text: message.content,
-      })),
-    });
+    return sendJson(res, 200, await session.handle.getTree());
   }
 
   if (req.method === "GET" && (action === "state" || action === undefined)) {
@@ -170,9 +203,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   if (req.method === "POST" && action === "compact") {
     const body = await readJson(req) as { customInstructions?: string };
     const session = await getOrOpenSession(sessionId);
-    const handle = session.handle as unknown as { compact?: (customInstructions?: string) => Promise<{ summary: string; tokensBefore?: number }> };
-    if (handle.compact) return sendJson(res, 200, await handle.compact(body.customInstructions));
-    return sendJson(res, 200, { summary: body.customInstructions ? `Mock compaction: ${body.customInstructions}` : "Mock compaction summary", tokensBefore: 0 });
+    return sendJson(res, 200, await session.handle.compact(body.customInstructions));
   }
 
   if (req.method === "POST" && action === "export") {

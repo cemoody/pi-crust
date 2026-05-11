@@ -271,6 +271,69 @@ class SdkPiSessionHandle implements PiSessionHandle {
     await this.session.abort();
   }
 
+  async getLastAssistantText(): Promise<string | null> {
+    if (typeof this.session.getLastAssistantText === "function") return this.session.getLastAssistantText();
+    const messages = await this.getMessages();
+    return [...messages].reverse().find((message) => message.role === "assistant")?.content ?? null;
+  }
+
+  async getCommands() {
+    const commands = typeof this.session.getCommands === "function" ? this.session.getCommands() : [];
+    return commands.map((command: any) => ({
+      name: String(command.name ?? command.invocationName ?? ""),
+      ...(command.description === undefined ? {} : { description: String(command.description) }),
+      source: command.source === "skill" ? "skill" as const : command.source === "prompt" ? "prompt" as const : "extension" as const,
+    })).filter((command: { name: string }) => command.name.length > 0);
+  }
+
+  async compact(customInstructions?: string) {
+    if (typeof this.session.compact !== "function") throw new Error("Pi SDK session does not support compaction");
+    const result = await this.session.compact(customInstructions);
+    return {
+      summary: String(result?.summary ?? "Compaction complete"),
+      ...(typeof result?.tokensBefore === "number" ? { tokensBefore: result.tokensBefore } : {}),
+    };
+  }
+
+  async getTree() {
+    return this.treeFromSessionManager();
+  }
+
+  async setTreeLabel(entryId: string, label: string | undefined) {
+    const manager = this.session.sessionManager;
+    if (manager && typeof manager.appendLabelChange === "function") manager.appendLabelChange(entryId, label);
+    return this.treeFromSessionManager();
+  }
+
+  async navigateTree(entryId: string, options: { readonly summary: "none" | "default" | "custom"; readonly customInstructions?: string }) {
+    if (typeof this.session.navigateTree !== "function") throw new Error("Pi SDK session does not support tree navigation");
+    const result = await this.session.navigateTree(entryId, {
+      summarize: options.summary !== "none",
+      ...(options.customInstructions ? { customInstructions: options.customInstructions } : {}),
+    });
+    return { ...(result?.editorText === undefined ? {} : { editorText: String(result.editorText) }), tree: await this.getTree() };
+  }
+
+  private treeFromSessionManager() {
+    const manager = this.session.sessionManager;
+    const entries: any[] = typeof manager?.getEntries === "function" ? manager.getEntries() : [];
+    const currentLeafId = typeof manager?.getLeafId === "function" ? manager.getLeafId() : null;
+    return {
+      currentLeafId: currentLeafId ? String(currentLeafId) : null,
+      entries: entries.map((entry) => ({
+        id: String(entry.id),
+        parentId: entry.parentId === null || entry.parentId === undefined ? null : String(entry.parentId),
+        role: entry.type === "message" && entry.message?.role === "assistant" ? "assistant" as const
+          : entry.type === "message" && entry.message?.role === "user" ? "user" as const
+            : entry.type === "message" && entry.message?.role === "toolResult" ? "tool" as const
+              : entry.type === "compaction" || entry.type === "branch_summary" ? "summary" as const
+                : "custom" as const,
+        text: entry.type === "message" ? stringifyContent(entry.message?.content) : String(entry.summary ?? entry.type ?? ""),
+        ...(typeof manager?.getLabel === "function" && manager.getLabel(entry.id) ? { label: String(manager.getLabel(entry.id)) } : {}),
+      })),
+    };
+  }
+
   subscribe(listener: PiEventListener): Unsubscribe {
     return this.session.subscribe(listener as any);
   }

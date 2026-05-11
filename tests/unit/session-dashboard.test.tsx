@@ -265,4 +265,45 @@ describe("SessionDashboard", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("copy me"));
     expect(screen.getByRole("status")).toHaveTextContent("Copied last assistant message");
   });
+
+  it("opens settings from /settings", async () => {
+    render(<SessionDashboard api={makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Settings", status: "idle", model: "m", lastActivity: 1 }])} />);
+    await screen.findByText("Settings");
+    fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "/settings" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("dialog", { name: "Configuration" })).toBeInTheDocument();
+  });
+
+  it("runs compact and appends a summary for /compact", async () => {
+    const compact = vi.fn(async () => ({ summary: "compacted", tokensBefore: 12 }));
+    const api = { ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Compact", status: "idle", model: "m", lastActivity: 1 }]), compact } satisfies SessionDashboardApi;
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Compact");
+    fireEvent.click(screen.getByRole("button", { name: /Compact/ }));
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "/compact focus on files" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(compact).toHaveBeenCalledWith("a", "focus on files"));
+    expect(screen.getByRole("status")).toHaveTextContent("Compacted session");
+  });
+
+  it("opens tree from /tree and can fork selected entry", async () => {
+    const forkSession = vi.fn(async () => ({ id: "fork", cwd: "/repo/a", sessionName: "Fork", status: "idle" as const, model: "m", lastActivity: 2, selectedText: "hello" }));
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Tree", status: "idle", model: "m", lastActivity: 1 }]),
+      forkSession,
+      async getSessionTree() {
+        return { currentLeafId: "u1", entries: [{ id: "u1", parentId: null, role: "user" as const, text: "hello" }] };
+      },
+    } satisfies SessionDashboardApi;
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Tree");
+    fireEvent.click(screen.getByRole("button", { name: /Tree/ }));
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "/tree" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("dialog", { name: "Session tree" })).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/hello/));
+    fireEvent.click(screen.getByRole("button", { name: "Fork" }));
+    await waitFor(() => expect(forkSession).toHaveBeenCalledWith("a", "u1"));
+  });
 });

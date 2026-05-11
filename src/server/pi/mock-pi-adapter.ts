@@ -210,6 +210,53 @@ class MockPiSessionHandle implements PiSessionHandle {
     await this.persist();
   }
 
+  async getLastAssistantText(): Promise<string | null> {
+    return [...this.messages].reverse().find((message) => message.role === "assistant")?.content ?? null;
+  }
+
+  async getCommands() {
+    return [
+      { name: "mock-dynamic", description: "Mock dynamic command", source: "extension" as const },
+      { name: "skill:mock", description: "Mock skill command", source: "skill" as const },
+    ];
+  }
+
+  async compact(customInstructions?: string) {
+    this.status = "compacting";
+    this.emit({ type: "message", message: { role: "system", content: "Compaction started", timestamp: Date.now() } });
+    const summary = customInstructions ? `Mock compaction summary focused on: ${customInstructions}` : "Mock compaction summary";
+    const message: SessionMessage = { role: "system", content: summary, timestamp: Date.now() };
+    this.messages.push(message);
+    this.status = "idle";
+    this.lastActivity = Date.now();
+    await this.persist();
+    return { summary, tokensBefore: this.messages.reduce((sum, item) => sum + item.content.length, 0) };
+  }
+
+  async getTree() {
+    return this.treeFromMessages();
+  }
+
+  async setTreeLabel(_entryId: string, _label: string | undefined) {
+    return this.treeFromMessages();
+  }
+
+  async navigateTree(entryId: string) {
+    const tree = this.treeFromMessages();
+    const entry = tree.entries.find((candidate) => candidate.id === entryId);
+    return { ...(entry?.role === "user" ? { editorText: entry.text } : {}), tree };
+  }
+
+  private treeFromMessages() {
+    const entries = this.messages.map((message, index) => ({
+      id: `${message.timestamp}-${index}`,
+      parentId: index === 0 ? null : `${this.messages[index - 1]!.timestamp}-${index - 1}`,
+      role: message.role === "assistant" ? "assistant" as const : message.role === "user" ? "user" as const : message.role === "tool" ? "tool" as const : "custom" as const,
+      text: message.content,
+    }));
+    return { entries, currentLeafId: entries.at(-1)?.id ?? null };
+  }
+
   subscribe(listener: PiEventListener): Unsubscribe {
     this.emitter.on("event", listener);
     return () => this.emitter.off("event", listener);

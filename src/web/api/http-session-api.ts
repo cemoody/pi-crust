@@ -87,8 +87,28 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     return request<{ diagnostics?: readonly string[] }>(`/api/config/reload`, { method: "POST", body: { sessionId } });
   }
 
+  async importSession(path: string, cwd?: string): Promise<SessionCardData> {
+    return request<SessionCardData>("/api/sessions/import", { method: "POST", body: { path, cwd } });
+  }
+
   async getSessionTree(sessionId: string): Promise<SessionTreeData> {
     return request<SessionTreeData>(`/api/sessions/${encodeURIComponent(sessionId)}/tree`);
+  }
+
+  async navigateTree(sessionId: string, entryId: string, options: { readonly summary: "none" | "default" | "custom"; readonly customInstructions?: string }): Promise<{ readonly editorText?: string }> {
+    return request<{ editorText?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/tree/navigate`, { method: "POST", body: { entryId, ...options } });
+  }
+
+  async setTreeLabel(sessionId: string, entryId: string, label: string | undefined): Promise<void> {
+    await request(`/api/sessions/${encodeURIComponent(sessionId)}/tree/label`, { method: "POST", body: { entryId, label } });
+  }
+
+  async forkSession(sessionId: string, entryId: string): Promise<SessionCardData & { readonly selectedText?: string }> {
+    return request<SessionCardData & { selectedText?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/fork`, { method: "POST", body: { entryId } });
+  }
+
+  async cloneSession(sessionId: string): Promise<SessionCardData> {
+    return request<SessionCardData>(`/api/sessions/${encodeURIComponent(sessionId)}/clone`, { method: "POST", body: {} });
   }
 }
 

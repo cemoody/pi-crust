@@ -76,6 +76,30 @@ export interface SessionToolDetails {
   readonly output: string;
 }
 
+export interface SlashCommandInfo {
+  readonly name: string;
+  readonly description?: string;
+  readonly source: "extension" | "prompt" | "skill";
+}
+
+export interface SessionTreeEntryInfo {
+  readonly id: string;
+  readonly parentId: string | null;
+  readonly role: "user" | "assistant" | "tool" | "summary" | "custom";
+  readonly text: string;
+  readonly label?: string;
+}
+
+export interface SessionTreeInfo {
+  readonly entries: readonly SessionTreeEntryInfo[];
+  readonly currentLeafId: string | null;
+}
+
+export interface CompactionResultInfo {
+  readonly summary: string;
+  readonly tokensBefore?: number;
+}
+
 export interface CreateSessionOptions {
   readonly cwd: string;
   readonly sessionName?: string;
@@ -98,6 +122,12 @@ export interface PiSessionHandle {
   abort(): Promise<void>;
   setSessionName(name: string): Promise<SessionState>;
   setModel(provider: string, modelId: string): Promise<SessionState>;
+  getLastAssistantText(): Promise<string | null>;
+  getCommands(): Promise<readonly SlashCommandInfo[]>;
+  compact(customInstructions?: string): Promise<CompactionResultInfo>;
+  getTree(): Promise<SessionTreeInfo>;
+  setTreeLabel(entryId: string, label: string | undefined): Promise<SessionTreeInfo>;
+  navigateTree(entryId: string, options: { readonly summary: "none" | "default" | "custom"; readonly customInstructions?: string }): Promise<{ readonly editorText?: string; readonly tree: SessionTreeInfo }>;
   subscribe(listener: PiEventListener): Unsubscribe;
   dispose(): Promise<void>;
 }
