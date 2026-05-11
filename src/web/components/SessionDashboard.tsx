@@ -89,7 +89,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     let cancelled = false;
     let pendingRefresh: ReturnType<typeof setTimeout> | undefined;
 
-    const refresh = async () => {
+    const refresh = async (options: { readonly preserveLastActivity?: boolean } = {}) => {
       try {
         const [messages, refreshed] = await Promise.all([
           api.getMessages(activeSessionId),
@@ -106,7 +106,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
               ...(refreshed.model === undefined ? {} : { model: refreshed.model }),
               ...(refreshed.tokenSummary === undefined ? {} : { tokenSummary: refreshed.tokenSummary }),
               ...(refreshed.stats === undefined ? {} : { stats: refreshed.stats }),
-              lastActivity: refreshed.lastActivity,
+              lastActivity: options.preserveLastActivity ? session.lastActivity : refreshed.lastActivity,
             };
           }));
         }
@@ -144,7 +144,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       }
     };
 
-    void refresh();
+    // Selecting a session often requires opening and hydrating it, but that is
+    // only a view action. Keep its existing sort timestamp so the row does not
+    // jump out from under the pointer just because it was clicked. Real agent
+    // activity still updates the timestamp through scheduled refreshes below.
+    void refresh({ preserveLastActivity: true });
     const unsubscribe = api.streamEvents ? api.streamEvents(activeSessionId, applyStreamEvent) : () => undefined;
 
     return () => {

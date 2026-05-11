@@ -148,6 +148,8 @@ class SdkPiSessionHandle implements PiSessionHandle {
       ? await this.sessionNames.get(this.id, this.sessionFile)
       : String(this.session.sessionName);
 
+    const lastActivity = newestMessageTimestamp(messages) ?? await sessionFileMtime(this.sessionFile) ?? 0;
+
     return {
       id: this.id,
       cwd: this.cwd,
@@ -167,7 +169,7 @@ class SdkPiSessionHandle implements PiSessionHandle {
         contextPercent,
         contextWindow,
       },
-      lastActivity: Date.now(),
+      lastActivity,
     };
   }
 
@@ -321,6 +323,38 @@ class SessionNameStore {
       return {};
     }
   }
+}
+
+function newestMessageTimestamp(messages: readonly unknown[]): number | undefined {
+  let newest: number | undefined;
+  for (const message of messages) {
+    const timestamp = isRecord(message) ? coerceTimestamp(message.timestamp) : undefined;
+    if (timestamp === undefined) continue;
+    newest = newest === undefined ? timestamp : Math.max(newest, timestamp);
+  }
+  return newest;
+}
+
+async function sessionFileMtime(sessionFile: string): Promise<number | undefined> {
+  if (!sessionFile) return undefined;
+  try {
+    return (await fs.stat(sessionFile)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+function coerceTimestamp(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function stringifyContent(content: unknown): string {
