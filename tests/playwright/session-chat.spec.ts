@@ -25,7 +25,18 @@ test('opens model picker for /model slash command instead of sending it as a pro
   await expect(dialog.getByText('Mock Echo')).toBeVisible();
   await expect(page.getByText(/Mock response to: \/model/)).toHaveCount(0);
 
-  await dialog.getByRole('button', { name: /Mock Echo/ }).click();
+  const echoItem = dialog.getByRole('button', { name: /Mock Echo/ });
+  await expect(echoItem.locator('strong')).toHaveText('Mock Echo');
+  await expect(echoItem.locator('span')).toHaveText('mock/mock-echo');
+
+  const dimensions = await echoItem.evaluate((node) => ({
+    height: (node as HTMLElement).getBoundingClientRect().height,
+    display: window.getComputedStyle(node).display,
+  }));
+  expect(dimensions.height).toBeGreaterThan(40);
+  expect(dimensions.display).toBe('grid');
+
+  await echoItem.click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText('mock/mock-echo')).toBeVisible();
 });

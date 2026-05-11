@@ -39,7 +39,7 @@
 .composer-actions button,
 .attachments button,
 .suggestions button,
-[role="dialog"] button {
+.prompt-composer [role="dialog"] button {
   height: 28px;
   padding: 0 10px;
   border-radius: var(--radius-pill);
@@ -56,7 +56,7 @@
 .composer-actions button:hover,
 .attachments button:hover,
 .suggestions button:hover,
-[role="dialog"] button:hover { background: var(--gray-080); color: var(--black-900); }
+.prompt-composer [role="dialog"] button:hover { background: var(--gray-080); color: var(--black-900); }
 
 .prompt-composer textarea[aria-label="Prompt draft"] {
   grid-row: 1;
@@ -136,7 +136,7 @@
   font-size: 12px;
 }
 
-[role="dialog"] {
+.prompt-composer [role="dialog"] {
   border: 1px solid var(--blue-accent);
   border-radius: 14px;
   padding: 14px;
@@ -144,4 +144,4 @@
   box-shadow: 0 0 0 3px var(--blue-focus), var(--shadow-1);
 }
 
-[role="dialog"] textarea { width: 100%; min-height: 16rem; border: 1px solid var(--hairline); border-radius: 8px; padding: 10px; }
+.prompt-composer [role="dialog"] textarea { width: 100%; min-height: 16rem; border: 1px solid var(--hairline); border-radius: 8px; padding: 10px; }
