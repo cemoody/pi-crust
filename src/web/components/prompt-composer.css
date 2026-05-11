@@ -1,11 +1,11 @@
 .prompt-composer {
-  padding: 14px 28px 22px;
+  padding: 10px 24px 16px;
   border-top: 1px solid var(--hairline);
   background: linear-gradient(to bottom, rgba(255,255,255,0) 0%, var(--white-000) 28%);
   display: grid;
   grid-template-columns: minmax(0, var(--composer-max));
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .prompt-composer.bash textarea { box-shadow: inset 3px 0 0 var(--gold-600); }
@@ -17,19 +17,19 @@
   gap: 4px;
   flex-wrap: wrap;
   align-items: center;
-  padding: 6px 8px 0;
+  padding: 4px 6px 0;
   border-left: 1px solid var(--hairline);
   border-right: 1px solid var(--hairline);
   background: var(--white-000);
 }
 
 .composer-toolbar span {
-  height: 28px;
-  padding: 0 10px;
+  height: 22px;
+  padding: 0 8px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--hairline);
   background: var(--white-000);
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--text-secondary);
   display: inline-flex;
   align-items: center;
@@ -40,12 +40,12 @@
 .attachments button,
 .suggestions button,
 .prompt-composer [role="dialog"] button {
-  height: 28px;
-  padding: 0 10px;
+  height: 22px;
+  padding: 0 8px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--hairline);
   background: var(--white-000);
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--text-secondary);
   display: inline-flex;
   align-items: center;
@@ -61,16 +61,16 @@
 .prompt-composer textarea[aria-label="Prompt draft"] {
   grid-row: 1;
   width: 100%;
-  min-height: 84px;
+  min-height: 64px;
   max-height: 220px;
   resize: vertical;
   border: 1px solid var(--hairline);
   border-bottom: 0;
   outline: 0;
   background: var(--white-000);
-  border-radius: 14px 14px 0 0;
-  padding: 14px;
-  font-size: 14.5px;
+  border-radius: 12px 12px 0 0;
+  padding: 10px 12px;
+  font-size: 13.5px;
   line-height: 1.5;
   color: var(--text-primary);
   font-family: var(--font-sans);
@@ -79,16 +79,16 @@
 
 .prompt-composer textarea[aria-label="Prompt draft"]:focus {
   border-color: var(--blue-accent);
-  box-shadow: 0 0 0 3px var(--blue-focus), var(--shadow-1);
+  box-shadow: 0 0 0 2px var(--blue-focus), var(--shadow-1);
 }
 
 .suggestions,
 .attachments {
   list-style: none;
   margin: 0;
-  padding: 8px;
+  padding: 6px;
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
   border-left: 1px solid var(--hairline);
   border-right: 1px solid var(--hairline);
@@ -96,25 +96,25 @@
 }
 
 .prompt-composer input[type="file"] {
-  padding: 6px 8px;
+  padding: 4px 6px;
   border-left: 1px solid var(--hairline);
   border-right: 1px solid var(--hairline);
   background: var(--white-000);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: 11.5px;
 }
 
-.attachments img { max-width: 48px; max-height: 48px; border-radius: 6px; border: 1px solid var(--hairline); }
+.attachments img { max-width: 36px; max-height: 36px; border-radius: 5px; border: 1px solid var(--hairline); }
 
 .composer-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
-  padding: 0 8px 8px;
+  padding: 0 6px 6px;
   border-left: 1px solid var(--hairline);
   border-right: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
-  border-radius: 0 0 14px 14px;
+  border-radius: 0 0 12px 12px;
   background: var(--white-000);
   box-shadow: var(--shadow-1);
 }
@@ -133,15 +133,15 @@
   margin: 0;
   padding: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
 .prompt-composer [role="dialog"] {
   border: 1px solid var(--blue-accent);
-  border-radius: 14px;
-  padding: 14px;
+  border-radius: 12px;
+  padding: 10px;
   background: var(--white-000);
-  box-shadow: 0 0 0 3px var(--blue-focus), var(--shadow-1);
+  box-shadow: 0 0 0 2px var(--blue-focus), var(--shadow-1);
 }
 
-.prompt-composer [role="dialog"] textarea { width: 100%; min-height: 16rem; border: 1px solid var(--hairline); border-radius: 8px; padding: 10px; }
+.prompt-composer [role="dialog"] textarea { width: 100%; min-height: 14rem; border: 1px solid var(--hairline); border-radius: 6px; padding: 8px; font-size: 13px; }
