@@ -91,6 +91,15 @@ class SdkPiSessionHandle implements PiSessionHandle {
 
   async getState(): Promise<SessionState> {
     const sdkModel = this.session.model;
+    const messages = Array.isArray(this.session.messages) ? this.session.messages : [];
+    const totalTokens = messages.reduce((sum: number, message: any) => {
+      const usage = message?.usage;
+      if (!usage) return sum;
+      const candidate = Number(
+        usage.totalTokens ?? usage.total ?? ((usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0)),
+      );
+      return Number.isFinite(candidate) ? sum + candidate : sum;
+    }, 0);
     return {
       id: this.id,
       cwd: this.cwd,
@@ -98,7 +107,8 @@ class SdkPiSessionHandle implements PiSessionHandle {
       status: this.session.isStreaming ? "running" : "idle",
       ...(this.session.sessionName === undefined ? {} : { sessionName: String(this.session.sessionName) }),
       ...(sdkModel ? { modelProvider: String(sdkModel.provider ?? ""), model: String(sdkModel.id ?? "") } : {}),
-      messageCount: Array.isArray(this.session.messages) ? this.session.messages.length : 0,
+      messageCount: messages.length,
+      totalTokens,
       lastActivity: Date.now(),
     };
   }

@@ -22,6 +22,10 @@ export interface PromptComposerProps {
   readonly onBash: (command: string, includeInContext: boolean) => void | Promise<void>;
   readonly onAbortBash?: () => void | Promise<void>;
   readonly onSlashCommand?: (name: string, argv: string) => void | Promise<void>;
+  readonly statusText?: string;
+  readonly statusCwd?: string;
+  readonly statusModel?: string;
+  readonly statusTokens?: string;
 }
 
 export function PromptComposer(props: PromptComposerProps) {
@@ -30,6 +34,7 @@ export function PromptComposer(props: PromptComposerProps) {
   const [history, setHistory] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     setDraft(storageGet(storageKey) ?? "");
@@ -38,6 +43,13 @@ export function PromptComposer(props: PromptComposerProps) {
   useEffect(() => {
     storageSet(storageKey, draft);
   }, [draft, storageKey]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft]);
 
   const mode = draft.startsWith("!!") ? "hidden-bash" : draft.startsWith("!") ? "bash" : "prompt";
   const activeToken = draft.split(/\s/).at(-1) ?? "";
@@ -119,6 +131,8 @@ export function PromptComposer(props: PromptComposerProps) {
     <section className={`prompt-composer ${mode}`} aria-label="Prompt composer">
       <div className="composer-input">
         <textarea
+          ref={textareaRef}
+          rows={1}
           aria-label="Prompt draft"
           placeholder={placeholder}
           value={draft}
@@ -194,7 +208,7 @@ export function PromptComposer(props: PromptComposerProps) {
         </ul>
       ) : null}
 
-      <div className="composer-meta">
+      <div className="composer-meta" aria-label="Session status">
         <button type="button" className="composer-icon" aria-label="Add attachment" onClick={() => fileInputRef.current?.click()}>
           <PaperclipGlyph />
         </button>
@@ -213,6 +227,13 @@ export function PromptComposer(props: PromptComposerProps) {
             <button type="button" className="composer-text-action" onClick={() => void submit("follow-up")}>Follow-up</button>
           </>
         ) : null}
+
+        <span className="composer-status">
+          {props.statusText ? <span>{props.statusText}</span> : null}
+          {props.statusCwd ? <><span className="sep">·</span><span title={props.statusCwd}>{shortPath(props.statusCwd)}</span></> : null}
+          <span className="sep">·</span><span>{props.statusModel ?? "no model selected"}</span>
+          <span className="sep">·</span><span>{props.statusTokens ?? "0 tokens"}</span>
+        </span>
       </div>
 
       {queueSummary.length ? (
@@ -222,6 +243,12 @@ export function PromptComposer(props: PromptComposerProps) {
       ) : null}
     </section>
   );
+}
+
+function shortPath(value: string): string {
+  const segments = value.split("/").filter(Boolean);
+  if (segments.length <= 2) return value;
+  return `…/${segments.slice(-2).join("/")}`;
 }
 
 function SuggestionList({ label, items, onPick }: { readonly label: string; readonly items: readonly string[]; readonly onPick: (item: string) => void }) {

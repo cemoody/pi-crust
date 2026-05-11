@@ -67,7 +67,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return sendJson(res, 200, toSessionCard(state));
   }
 
-  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model))?$/);
+  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state))?$/);
   if (!match) return sendJson(res, 404, { error: "not found" });
   const sessionId = decodeURIComponent(match[1]!);
   const action = match[2] ?? "state";
@@ -75,6 +75,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   if (req.method === "GET" && action === "messages") {
     const session = await getOrOpenSession(sessionId);
     return sendJson(res, 200, toDashboardMessages(await session.handle.getMessages()));
+  }
+
+  if (req.method === "GET" && (action === "state" || action === undefined)) {
+    const session = await getOrOpenSession(sessionId);
+    return sendJson(res, 200, toSessionCard(await session.handle.getState()));
   }
 
   if (req.method === "POST" && action === "prompt") {
@@ -139,9 +144,17 @@ function toSessionCard(state: Awaited<ReturnType<import("./pi/types.js").PiSessi
     sessionName: state.sessionName,
     status: state.status === "running" ? "streaming" : state.status,
     model: state.modelProvider && state.model ? `${state.modelProvider}/${state.model}` : undefined,
-    tokenSummary: `${state.messageCount} messages`,
+    tokenSummary: state.totalTokens === undefined || state.totalTokens === null
+      ? undefined
+      : `${formatTokens(state.totalTokens)} tokens`,
     lastActivity: state.lastActivity,
   };
+}
+
+function formatTokens(value: number): string {
+  if (value < 1000) return String(value);
+  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`;
+  return `${(value / 1_000_000).toFixed(1)}M`;
 }
 
 function toDashboardMessages(messages: readonly SessionMessage[]) {

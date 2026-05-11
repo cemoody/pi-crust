@@ -18,6 +18,7 @@ export interface SessionState {
   readonly model?: string;
   readonly modelProvider?: string;
   readonly messageCount: number;
+  readonly totalTokens?: number;
   readonly lastActivity: number;
 }
 

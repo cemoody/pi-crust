@@ -49,15 +49,15 @@ test('opens model picker for /model slash command instead of sending it as a pro
   await expect(page.getByText('mock/mock-echo')).toBeVisible();
 });
 
-test('shows status bar below composer with cwd, model, tokens', async ({ page }) => {
+test('shows status row beneath composer with cwd, model, tokens', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Seeded session/ }).click();
 
   const status = page.getByLabel('Session status');
   await expect(status).toBeVisible();
-  await expect(status).toContainText('cwd');
-  await expect(status).toContainText('model');
-  await expect(status).toContainText('tokens');
+  await expect(status).toContainText('idle');
+  await expect(status).toContainText('pi-remote-control');
+  await expect(status).toContainText('no model selected');
 });
 
 test('sidebar collapses and expands via the toggle', async ({ page }) => {

@@ -50,9 +50,15 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const messages = await api.getMessages(activeSessionId);
+        const [messages, refreshed] = await Promise.all([
+          api.getMessages(activeSessionId),
+          api.getSession ? api.getSession(activeSessionId) : Promise.resolve(null),
+        ]);
         if (cancelled) return;
         setMessagesBySession((current) => ({ ...current, [activeSessionId]: messages.map(toTimelineMessage) }));
+        if (refreshed) {
+          setSessions((current) => current.map((session) => session.id === refreshed.id ? { ...session, ...refreshed } : session));
+        }
       } catch (caught) {
         if (!cancelled) setError(errorMessage(caught));
       }
@@ -283,6 +289,10 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 followUpQueue={followUpBySession[activeSession.id] ?? []}
                 fileSuggestions={["README.md", "package.json", "src/web/main.tsx", "src/server/session/session-registry.ts"]}
                 commandSuggestions={["model", "settings", "tree", "compact", "session", "new"]}
+                statusText={activeSession.status}
+                statusCwd={activeSession.cwd}
+                {...(activeSession.model === undefined ? {} : { statusModel: activeSession.model })}
+                {...(activeSession.tokenSummary === undefined ? {} : { statusTokens: activeSession.tokenSummary })}
                 onPrompt={handlePrompt}
                 onSteer={handleSteer}
                 onFollowUp={handleFollowUp}
@@ -291,15 +301,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 onAbortBash={() => undefined}
                 onSlashCommand={handleSlashCommand}
               />
-              <div className="session-status-bar" aria-label="Session status">
-                <span><span className="label">status</span>{activeSession.status}</span>
-                <span className="sep">·</span>
-                <span title={activeSession.cwd}><span className="label">cwd</span>{shortPath(activeSession.cwd)}</span>
-                <span className="sep">·</span>
-                <span><span className="label">model</span>{activeSession.model ?? "not selected"}</span>
-                <span className="sep">·</span>
-                <span><span className="label">tokens</span>{activeSession.tokenSummary ?? "0"}</span>
-              </div>
             </div>
           </>
         ) : (
@@ -332,12 +333,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
 
 function basename(value: string): string {
   return value.split("/").filter(Boolean).at(-1) ?? value;
-}
-
-function shortPath(value: string): string {
-  const segments = value.split("/").filter(Boolean);
-  if (segments.length <= 2) return value;
-  return `…/${segments.slice(-2).join("/")}`;
 }
 
 function SidebarToggleGlyph() {

@@ -25,6 +25,10 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     await request(`/api/sessions/${encodeURIComponent(sessionId)}/delete`, { method: "POST", body: {} });
   }
 
+  async getSession(sessionId: string): Promise<SessionCardData> {
+    return request<SessionCardData>(`/api/sessions/${encodeURIComponent(sessionId)}/state`);
+  }
+
   async getMessages(sessionId: string): Promise<readonly DashboardMessage[]> {
     return request<DashboardMessage[]>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
   }
