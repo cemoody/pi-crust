@@ -43,6 +43,7 @@ function createDefaultRegistry(adapterKind: string, sessionRoot: string, project
 
 function startDefaultServer(): void {
   const port = Number(process.env.PI_REMOTE_API_PORT ?? 8787);
+  const host = process.env.PI_REMOTE_API_HOST ?? "127.0.0.1";
   const projectRoot = path.resolve(process.env.PI_REMOTE_PROJECT_ROOT ?? process.env.HOME ?? process.cwd());
   const sessionRoot = path.resolve(process.env.PI_REMOTE_SESSION_ROOT ?? path.join(os.homedir(), ".pi", "agent", "sessions"));
   const adapterKind = process.env.PI_REMOTE_USE_MOCK === "1"
@@ -57,8 +58,8 @@ function startDefaultServer(): void {
     sessionRoot,
     defaultCwd: process.cwd(),
   });
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`pi-remote-control API listening on http://127.0.0.1:${port}`);
+  server.listen(port, host, () => {
+    console.log(`pi-remote-control API listening on http://${host}:${port}`);
     console.log(`adapter=${adapterKind}`);
     console.log(`projectRoot=${projectRoot}`);
     console.log(`sessionRoot=${sessionRoot}`);
