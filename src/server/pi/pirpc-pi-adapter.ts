@@ -178,7 +178,7 @@ class PiRpcSessionHandle implements PiSessionHandle {
   async getMessages(): Promise<readonly SessionMessage[]> {
     const data = await this.rpc.request("get_messages");
     const messages = isRecord(data) && Array.isArray(data.messages) ? data.messages : [];
-    return messages.flatMap((message) => toSessionMessages(message));
+    return toSessionMessages(messages);
   }
 
   async prompt(message: string, attachments: readonly PromptAttachment[] = []): Promise<void> {
@@ -421,27 +421,83 @@ async function resolveArtifactExtension(configured: false | string | undefined):
   return undefined;
 }
 
-function toSessionMessages(message: unknown): SessionMessage[] {
-  if (!isRecord(message)) return [];
-  const role = String(message.role ?? "");
-  const timestamp = typeof message.timestamp === "number" ? message.timestamp : Date.now();
-  if (role === "assistant") {
-    const text = contentText(message.content).trim();
-    return text ? [{ role: "assistant", content: text, timestamp }] : [];
+function toSessionMessages(messages: readonly unknown[]): SessionMessage[] {
+  const result: SessionMessage[] = [];
+  const toolCallIndexes = new Map<string, number>();
+
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const role = String(message.role ?? "");
+    const timestamp = typeof message.timestamp === "number" ? message.timestamp : Date.now();
+
+    if (role === "assistant") {
+      const text = contentText(message.content).trim();
+      if (text) result.push({ role: "assistant", content: text, timestamp });
+
+      const blocks = Array.isArray(message.content) ? message.content : [];
+      for (const block of blocks) {
+        if (!isRecord(block) || block.type !== "toolCall") continue;
+        const id = String(block.id ?? block.toolCallId ?? "");
+        if (!id) continue;
+        const args = isRecord(block.arguments)
+          ? block.arguments
+          : isRecord(block.input)
+            ? block.input
+            : {};
+        const index = result.length;
+        result.push({
+          role: "tool",
+          content: "",
+          timestamp,
+          tool: {
+            id,
+            name: String(block.name ?? block.toolName ?? ""),
+            args,
+            status: "running",
+            output: "",
+          },
+        });
+        toolCallIndexes.set(id, index);
+      }
+      continue;
+    }
+
+    if (role === "user" || role === "system") {
+      const { text, images } = contentTextAndImages(message.content);
+      result.push({
+        role: role as "user" | "system",
+        content: text,
+        timestamp,
+        ...(images.length > 0 ? { images } : {}),
+      });
+      continue;
+    }
+
+    if (role === "toolResult") {
+      const output = contentText(message.content);
+      const toolCallId = String(message.toolCallId ?? message.id ?? "");
+      const index = toolCallIndexes.get(toolCallId);
+      if (index !== undefined) {
+        const previous = result[index];
+        if (previous?.role === "tool" && previous.tool) {
+          result[index] = {
+            ...previous,
+            content: output,
+            timestamp,
+            tool: {
+              ...previous.tool,
+              status: message.isError ? "error" : "success",
+              output,
+            },
+          };
+          continue;
+        }
+      }
+      result.push({ role: "tool", content: output, timestamp });
+    }
   }
-  if (role === "user" || role === "system") {
-    const { text, images } = contentTextAndImages(message.content);
-    return [{
-      role: role as "user" | "system",
-      content: text,
-      timestamp,
-      ...(images.length > 0 ? { images } : {}),
-    }];
-  }
-  if (role === "toolResult") {
-    return [{ role: "tool", content: contentText(message.content), timestamp }];
-  }
-  return [];
+
+  return result;
 }
 
 function contentText(content: unknown): string {

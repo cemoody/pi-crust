@@ -91,8 +91,10 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
 }
 
 function renderMessage(message: TimelineMessage, hideThinking: boolean) {
-  if (message.role === "tool" && message.tool) {
-    return <ToolCard key={message.id} tool={message.tool} />;
+  if (message.role === "tool") {
+    return message.tool
+      ? <ToolCard key={message.id} tool={message.tool} />
+      : <OrphanToolResult key={message.id} text={message.text} />;
   }
   const showLabel = message.role === "custom" || message.role === "summary";
   return (
@@ -311,6 +313,18 @@ function TypingDots() {
     <div className="typing-dots" role="status" aria-label="Assistant is responding">
       <span /><span /><span />
     </div>
+  );
+}
+
+function OrphanToolResult({ text }: { readonly text: string }) {
+  return (
+    <article className="orphan-tool-result" aria-label="tool result">
+      <header>
+        <span className="tool-icon" aria-hidden="true">✓</span>
+        <strong>Tool result</strong>
+      </header>
+      {text ? <pre>{text}</pre> : null}
+    </article>
   );
 }
 

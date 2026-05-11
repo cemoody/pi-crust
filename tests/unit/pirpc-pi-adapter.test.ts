@@ -39,7 +39,13 @@ function handle(message) {
   if (message.type === "extension_ui_response") { writeFileSync(responseFile, JSON.stringify(message)); return; }
   if (message.type === "get_state") return send({ id: message.id, type: "response", command: "get_state", success: true, data: state() });
   if (message.type === "set_session_name") { name = message.name; return send({ id: message.id, type: "response", command: "set_session_name", success: true }); }
-  if (message.type === "get_messages") return send({ id: message.id, type: "response", command: "get_messages", success: true, data: { messages: [{ role: "assistant", content: [{ type: "text", text: "hello from rpc" }] }] } });
+  if (message.type === "get_messages") return send({ id: message.id, type: "response", command: "get_messages", success: true, data: { messages: [
+    { role: "assistant", timestamp: 1000, content: [
+      { type: "text", text: "hello from rpc" },
+      { type: "toolCall", id: "call_hist", name: "bash", arguments: { command: "npm test" } }
+    ] },
+    { role: "toolResult", timestamp: 1001, toolCallId: "call_hist", isError: false, content: [{ type: "text", text: "> pi-remote-control@0.0.0 test\\nPASS tests/unit/foo.test.ts" }] }
+  ] } });
   if (message.type === "prompt") {
     send({ id: message.id, type: "response", command: "prompt", success: true });
     send({ type: "agent_start" });
@@ -75,6 +81,22 @@ describe("PiRpcAdapter", () => {
     const session = await registry.createSession({ cwd: projectRoot, sessionName: "RPC smoke" });
     expect(session.id).toBe("fake-rpc-session");
     await expect(session.handle.getState()).resolves.toMatchObject({ sessionName: "RPC smoke", modelProvider: "fake", model: "model" });
+
+    const messages = await session.handle.getMessages();
+    expect(messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", content: "hello from rpc" }),
+      expect.objectContaining({
+        role: "tool",
+        content: "> pi-remote-control@0.0.0 test\nPASS tests/unit/foo.test.ts",
+        tool: expect.objectContaining({
+          id: "call_hist",
+          name: "bash",
+          args: { command: "npm test" },
+          status: "success",
+          output: "> pi-remote-control@0.0.0 test\nPASS tests/unit/foo.test.ts",
+        }),
+      }),
+    ]));
 
     const events: unknown[] = [];
     registry.subscribe(session.id, (event) => events.push(event));

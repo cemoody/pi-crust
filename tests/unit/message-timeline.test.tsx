@@ -137,6 +137,20 @@ describe("MessageTimeline", () => {
     expect(card.querySelector("pre")).toBeNull();
   });
 
+  it("renders orphan tool-result text as preformatted output instead of markdown", () => {
+    render(<MessageTimeline messages={[{
+      id: "t-orphan",
+      role: "tool",
+      text: "> pi-remote-control@0.0.0 typecheck tsc --noEmit\nD file.ts M other.ts\ncreate mode 100644 package.json",
+    }]} />);
+
+    const orphan = screen.getByLabelText("tool result");
+    expect(orphan).toBeInTheDocument();
+    const pre = orphan.querySelector("pre");
+    expect(pre).toHaveTextContent("> pi-remote-control@0.0.0 typecheck tsc --noEmit");
+    expect(orphan.querySelector("blockquote")).toBeNull();
+  });
+
   it("renders Pi Remote Control artifact metadata from tool results", () => {
     render(<MessageTimeline messages={[{
       id: "t1",

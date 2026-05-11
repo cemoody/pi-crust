@@ -308,11 +308,24 @@
   white-space: pre;
 }
 
-.tool-card {
+.tool-card,
+.orphan-tool-result {
   border: 0;
   background: transparent;
   margin: 0;
 }
+
+.orphan-tool-result header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.orphan-tool-result header strong { font-weight: 500; color: var(--text-primary); }
 
 .tool-card summary {
   display: flex;
@@ -329,7 +342,8 @@
 .tool-card summary::-webkit-details-marker { display: none; }
 .tool-card summary:hover { background: var(--gray-080); color: var(--black-900); }
 
-.tool-card .tool-icon {
+.tool-card .tool-icon,
+.orphan-tool-result .tool-icon {
   display: inline-grid;
   place-items: center;
   width: 14px;
@@ -346,7 +360,8 @@
   animation: tool-pulse 1.2s ease-in-out infinite;
 }
 
-.tool-card.success .tool-icon { background: rgba(118, 164, 125, 0.18); color: var(--green-500); }
+.tool-card.success .tool-icon,
+.orphan-tool-result .tool-icon { background: rgba(118, 164, 125, 0.18); color: var(--green-500); }
 .tool-card.error .tool-icon { background: rgba(209, 74, 37, 0.12); color: var(--red-600); }
 
 @keyframes tool-pulse {
@@ -361,7 +376,8 @@
 .tool-card .tool-status-text { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); font-style: italic; }
 .tool-card.error .tool-status-text { color: var(--red-600); font-style: normal; }
 
-.tool-card pre {
+.tool-card pre,
+.orphan-tool-result pre {
   margin: 4px 0 0;
   padding: 8px 10px;
   background: var(--gray-060);
