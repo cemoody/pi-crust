@@ -26,6 +26,20 @@ test('shows existing session history and renders markdown when a session is sele
   await expect(page.locator('.code-block')).toContainText('const answer = 42;');
 });
 
+test('shows a turn copy button and age below each completed turn', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/');
+  await page.getByRole('button', { name: /Seeded session/ }).click();
+
+  const footers = page.getByLabel('Turn actions');
+  await expect(footers.first()).toBeVisible();
+  const copyBtn = footers.first().getByRole('button', { name: 'Copy turn as markdown' });
+  await expect(copyBtn).toBeVisible();
+
+  await copyBtn.click();
+  await expect(footers.first().getByText('copied')).toBeVisible();
+});
+
 test('preserves the active session in the URL across reloads', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Seeded session/ }).click();

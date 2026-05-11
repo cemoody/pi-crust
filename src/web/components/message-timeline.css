@@ -11,6 +11,39 @@
   gap: 12px;
 }
 
+.timeline-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.turn-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+  color: var(--gray-500);
+  font-size: 10.5px;
+}
+
+.turn-footer .turn-copy {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--gray-500);
+  padding: 0;
+  cursor: pointer;
+}
+
+.turn-footer .turn-copy:hover { background: var(--gray-080); color: var(--text-primary); }
+
+.turn-footer .turn-copied { color: var(--green-500); font-style: italic; }
+.turn-footer .turn-age { font-variant-numeric: tabular-nums; }
+
 .message-card {
   background: transparent;
   border: 0;

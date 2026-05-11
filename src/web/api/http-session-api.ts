@@ -1,4 +1,4 @@
-import type { DashboardMessage, ModelOption, NewSessionInput, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import type { DashboardMessage, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi } from "./session-api.js";
 
 const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "http://127.0.0.1:8787";
 
@@ -33,8 +33,8 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     return request<DashboardMessage[]>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
   }
 
-  async prompt(sessionId: string, text: string): Promise<readonly DashboardMessage[]> {
-    return request<DashboardMessage[]>(`/api/sessions/${encodeURIComponent(sessionId)}/prompt`, { method: "POST", body: { text } });
+  async prompt(sessionId: string, text: string, attachments: readonly PromptAttachment[] = []): Promise<readonly DashboardMessage[]> {
+    return request<DashboardMessage[]>(`/api/sessions/${encodeURIComponent(sessionId)}/prompt`, { method: "POST", body: { text, attachments } });
   }
 
   async bash(sessionId: string, command: string, includeInContext: boolean): Promise<readonly DashboardMessage[]> {

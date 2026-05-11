@@ -35,6 +35,13 @@ export interface DashboardToolDetails {
   readonly output: string;
 }
 
+export interface PromptAttachment {
+  readonly type: "image" | "file";
+  readonly name?: string;
+  readonly mimeType?: string;
+  readonly data?: string;
+}
+
 export interface DashboardMessage {
   readonly id: string;
   readonly role: "user" | "assistant" | "custom" | "summary" | "tool";
@@ -46,6 +53,7 @@ export interface DashboardMessage {
   readonly cost?: string;
   readonly error?: string;
   readonly tool?: DashboardToolDetails;
+  readonly timestamp?: number;
 }
 
 export interface ModelOption {
@@ -63,7 +71,7 @@ export interface SessionDashboardApi {
   renameSession(sessionId: string, name: string): Promise<SessionCardData>;
   deleteSession(sessionId: string): Promise<void>;
   getMessages(sessionId: string): Promise<readonly DashboardMessage[]>;
-  prompt(sessionId: string, text: string): Promise<readonly DashboardMessage[]>;
+  prompt(sessionId: string, text: string, attachments?: readonly PromptAttachment[]): Promise<readonly DashboardMessage[]>;
   bash(sessionId: string, command: string, includeInContext: boolean): Promise<readonly DashboardMessage[]>;
   abort(sessionId: string): Promise<void>;
   getSession?(sessionId: string): Promise<SessionCardData>;

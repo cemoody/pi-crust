@@ -243,7 +243,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     });
     setSessions((current) => current.map((session) => session.id === activeSession.id ? { ...session, status: "streaming" } : session));
     try {
-      const messages = await api.prompt(activeSession.id, text);
+      const messages = await api.prompt(activeSession.id, text, attachments.map(toPromptAttachment));
       if (Array.isArray(messages) && messages.length > 0) {
         setMessagesBySession((current) => ({ ...current, [activeSession.id]: messages.map(toTimelineMessage) }));
       }
@@ -748,6 +748,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function toPromptAttachment(attachment: ComposerAttachment): import("../api/session-api.js").PromptAttachment {
+  return {
+    type: attachment.type,
+    name: attachment.name,
+    ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
+    ...(attachment.data === undefined ? {} : { data: attachment.data }),
+  };
+}
+
 function basename(value: string): string {
   return value.split("/").filter(Boolean).at(-1) ?? value;
 }
@@ -819,6 +828,7 @@ function toTimelineMessage(message: import("../api/session-api.js").DashboardMes
     ...(message.cost === undefined ? {} : { cost: message.cost }),
     ...(message.error === undefined ? {} : { error: message.error }),
     ...(message.tool === undefined ? {} : { tool: message.tool }),
+    ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
   };
 }
 

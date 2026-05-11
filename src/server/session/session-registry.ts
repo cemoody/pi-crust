@@ -1,5 +1,5 @@
 import type { PathPolicy } from "../security/path-policy.js";
-import type { CreateSessionOptions, ModelInfo, PiAdapter, PiEventListener, PiSessionHandle, SessionListItem, SessionState } from "../pi/types.js";
+import type { CreateSessionOptions, ModelInfo, PiAdapter, PiEventListener, PiSessionHandle, PromptAttachment, SessionListItem, SessionState } from "../pi/types.js";
 
 export interface SessionRegistryOptions {
   readonly adapter: PiAdapter;
@@ -64,8 +64,8 @@ export class SessionRegistry {
     return session;
   }
 
-  async prompt(sessionId: string, message: string): Promise<void> {
-    await this.getSession(sessionId).handle.prompt(message);
+  async prompt(sessionId: string, message: string, attachments: readonly PromptAttachment[] = []): Promise<void> {
+    await this.getSession(sessionId).handle.prompt(message, attachments);
   }
 
   async abort(sessionId: string): Promise<void> {

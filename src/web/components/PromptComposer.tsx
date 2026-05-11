@@ -5,6 +5,8 @@ export interface ComposerAttachment {
   readonly id: string;
   readonly name: string;
   readonly type: "image" | "file";
+  readonly mimeType?: string;
+  readonly data?: string;
   readonly previewUrl?: string;
 }
 
@@ -108,17 +110,20 @@ export function PromptComposer(props: PromptComposerProps) {
     }
   }
 
-  function addFiles(files: FileList | null) {
+  async function addFiles(files: FileList | readonly File[] | null) {
     if (!files) return;
-    setAttachments((current) => [
-      ...current,
-      ...Array.from(files).map((file): ComposerAttachment => ({
+    const next = await Promise.all(Array.from(files).map(async (file): Promise<ComposerAttachment> => {
+      const isImage = file.type.startsWith("image/");
+      const data = isImage ? await fileToBase64(file) : undefined;
+      return {
         id: crypto.randomUUID(),
-        name: file.name,
-        type: file.type.startsWith("image/") ? "image" : "file",
-        ...(file.type.startsWith("image/") ? { previewUrl: URL.createObjectURL(file) } : {}),
-      })),
-    ]);
+        name: file.name || (isImage ? "pasted image" : "attachment"),
+        type: isImage ? "image" : "file",
+        ...(file.type ? { mimeType: file.type } : {}),
+        ...(data === undefined ? {} : { data, previewUrl: `data:${file.type};base64,${data}` }),
+      };
+    }));
+    setAttachments((current) => [...current, ...next]);
   }
 
   const placeholder = mode === "bash"
@@ -163,10 +168,16 @@ export function PromptComposer(props: PromptComposerProps) {
               setDraft(history[0]);
             }
           }}
-          onPaste={(event) => addFiles(event.clipboardData.files)}
+          onPaste={(event) => {
+            const files = clipboardFiles(event.clipboardData);
+            if (files.length > 0) {
+              event.preventDefault();
+              void addFiles(files);
+            }
+          }}
           onDrop={(event) => {
             event.preventDefault();
-            addFiles(event.dataTransfer.files);
+            void addFiles(event.dataTransfer.files);
           }}
           onDragOver={(event) => event.preventDefault()}
         />
@@ -191,7 +202,7 @@ export function PromptComposer(props: PromptComposerProps) {
         multiple
         hidden
         onChange={(event) => {
-          addFiles(event.target.files);
+          void addFiles(event.target.files);
           if (fileInputRef.current) fileInputRef.current.value = "";
         }}
       />
@@ -243,6 +254,22 @@ export function PromptComposer(props: PromptComposerProps) {
       ) : null}
     </section>
   );
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function clipboardFiles(data: DataTransfer): File[] {
+  const files = Array.from(data.files);
+  if (files.length > 0) return files;
+  return Array.from(data.items)
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
 }
 
 function shortPath(value: string): string {

@@ -55,6 +55,13 @@ export interface SessionMessage {
   readonly tool?: SessionToolDetails;
 }
 
+export interface PromptAttachment {
+  readonly type: "image" | "file";
+  readonly name?: string;
+  readonly mimeType?: string;
+  readonly data?: string;
+}
+
 export interface SessionToolDetails {
   readonly id: string;
   readonly name: string;
@@ -81,7 +88,7 @@ export interface PiSessionHandle {
   readonly sessionFile: string;
   getState(): Promise<SessionState>;
   getMessages(): Promise<readonly SessionMessage[]>;
-  prompt(message: string): Promise<void>;
+  prompt(message: string, attachments?: readonly PromptAttachment[]): Promise<void>;
   abort(): Promise<void>;
   setSessionName(name: string): Promise<SessionState>;
   setModel(provider: string, modelId: string): Promise<SessionState>;

@@ -104,13 +104,30 @@ describe("PromptComposer", () => {
     expect(draft).toHaveValue("/model");
   });
 
-  it("uploads/removes attachments", () => {
+  it("uploads/removes attachments", async () => {
     renderComposer();
     const file = new File(["abc"], "photo.png", { type: "image/png" });
     fireEvent.change(screen.getByLabelText("Attach files"), { target: { files: [file] } });
-    expect(screen.getByText("photo.png")).toBeInTheDocument();
+    expect(await screen.findByText("photo.png")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(screen.queryByText("photo.png")).not.toBeInTheDocument();
+  });
+
+  it("submits pasted image data with the prompt", async () => {
+    const handlers = renderComposer();
+    const file = new File(["abc"], "photo.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Attach files"), { target: { files: [file] } });
+    await screen.findByText("photo.png");
+
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "what is this?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(handlers.onPrompt).toHaveBeenCalledWith("what is this?", [expect.objectContaining({
+      name: "photo.png",
+      type: "image",
+      mimeType: "image/png",
+      data: "YWJj",
+    })]);
   });
 
   it("routes ! and !! shell commands", () => {

@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
-import type { SessionMessage } from "./pi/types.js";
+import type { PromptAttachment, SessionMessage } from "./pi/types.js";
 import { PathPolicy } from "./security/path-policy.js";
 import { SessionRegistry } from "./session/session-registry.js";
 
@@ -113,10 +113,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   }
 
   if (req.method === "POST" && action === "prompt") {
-    const body = await readJson(req) as { text?: string };
+    const body = await readJson(req) as { text?: string; attachments?: readonly PromptAttachment[] };
     if (!body.text) return sendJson(res, 400, { error: "text is required" });
     await getOrOpenSession(sessionId);
-    await registry.prompt(sessionId, body.text);
+    await registry.prompt(sessionId, body.text, normalizePromptAttachments(body.attachments));
     const session = await getOrOpenSession(sessionId);
     return sendJson(res, 200, toDashboardMessages(await session.handle.getMessages()));
   }
@@ -203,7 +203,13 @@ function toDashboardMessages(messages: readonly SessionMessage[]) {
     text: message.content,
     provider: message.role === "assistant" ? "pi" : undefined,
     tool: message.tool,
+    timestamp: message.timestamp,
   }));
+}
+
+function normalizePromptAttachments(attachments: readonly PromptAttachment[] | undefined): readonly PromptAttachment[] {
+  if (!Array.isArray(attachments)) return [];
+  return attachments.filter((attachment) => attachment.type === "image" && typeof attachment.data === "string" && attachment.data.length > 0);
 }
 
 function setCors(res: http.ServerResponse): void {

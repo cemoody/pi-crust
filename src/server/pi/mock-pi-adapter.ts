@@ -10,6 +10,7 @@ import type {
   PiEvent,
   PiEventListener,
   PiSessionHandle,
+  PromptAttachment,
   SessionListItem,
   SessionMessage,
   SessionState,
@@ -166,7 +167,7 @@ class MockPiSessionHandle implements PiSessionHandle {
     return [...this.messages];
   }
 
-  async prompt(message: string): Promise<void> {
+  async prompt(message: string, _attachments: readonly PromptAttachment[] = []): Promise<void> {
     this.status = "running";
     this.emit({ type: "agent_start" });
     const timestamp = Date.now();

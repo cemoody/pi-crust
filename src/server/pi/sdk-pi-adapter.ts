@@ -15,6 +15,7 @@ import type {
   PiAdapter,
   PiEventListener,
   PiSessionHandle,
+  PromptAttachment,
   SessionListItem,
   SessionMessage,
   SessionState,
@@ -243,8 +244,18 @@ class SdkPiSessionHandle implements PiSessionHandle {
     return result;
   }
 
-  async prompt(message: string): Promise<void> {
-    await this.session.prompt(message);
+  async prompt(message: string, attachments: readonly PromptAttachment[] = []): Promise<void> {
+    const images = attachments
+      .filter((attachment) => attachment.type === "image" && attachment.data)
+      .map((attachment) => ({
+        type: "image",
+        source: {
+          type: "base64",
+          mediaType: attachment.mimeType ?? "image/png",
+          data: attachment.data,
+        },
+      }));
+    await this.session.prompt(message, images.length > 0 ? { images } : undefined);
   }
 
   async abort(): Promise<void> {
