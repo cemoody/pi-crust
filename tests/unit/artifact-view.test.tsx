@@ -23,6 +23,37 @@ describe("<ArtifactView />", () => {
     expect(screen.getByText("Revenue by quarter")).toBeTruthy();
   });
 
+  it("renders an inline text/html representation in a sandboxed iframe", () => {
+    const artifact: ArtifactMessageDetails = {
+      version: ARTIFACT_SCHEMA_VERSION,
+      artifactGroupId: "g1",
+      artifacts: [
+        { mime: "text/html", html: "<p>inline-snippet</p>" },
+        { mime: "text/plain", text: "fallback" },
+      ],
+    };
+    const { container } = render(<ArtifactView artifact={artifact} />);
+    const iframe = container.querySelector("iframe");
+    expect(iframe).not.toBeNull();
+    expect(iframe?.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(iframe?.getAttribute("srcdoc")).toBe("<p>inline-snippet</p>");
+  });
+
+  it("prefers text/html over image when both representations are present", () => {
+    const artifact: ArtifactMessageDetails = {
+      version: ARTIFACT_SCHEMA_VERSION,
+      artifactGroupId: "g1",
+      artifacts: [
+        { mime: "text/html", html: "<div>html-wins</div>" },
+        { mime: "image/png", src: { kind: "url", url: "/foo.png" } },
+        { mime: "text/plain", text: "fallback" },
+      ],
+    };
+    const { container } = render(<ArtifactView artifact={artifact} />);
+    expect(container.querySelector("iframe")).not.toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   it("falls back to text/plain when no supported renderer matches", () => {
     const artifact: ArtifactMessageDetails = {
       version: ARTIFACT_SCHEMA_VERSION,

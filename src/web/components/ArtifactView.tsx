@@ -12,10 +12,12 @@
 import type {
   ArtifactMessageDetails,
   ArtifactRepresentation,
+  HtmlArtifactRepresentation,
   ImageArtifactRepresentation,
   TextArtifactRepresentation,
 } from "../../shared/artifact.js";
 import { pickRepresentation } from "../../shared/artifact.js";
+import { HtmlArtifactFrame } from "./HtmlArtifactFrame.js";
 import "./artifact-view.css";
 
 export interface ArtifactViewProps {
@@ -24,12 +26,12 @@ export interface ArtifactViewProps {
 }
 
 const SUPPORTED_MIMES: readonly string[] = [
+  // Phase C will add "application/vnd.vega-lite.v5+json", "application/vnd.plotly.v1+json"
+  "text/html",
   "image/png",
   "image/jpeg",
   "image/webp",
   "image/gif",
-  // Phase B will add "text/html"
-  // Phase C will add "application/vnd.vega-lite.v5+json", "application/vnd.plotly.v1+json"
   "text/plain",
 ];
 
@@ -38,16 +40,23 @@ export function ArtifactView({ artifact, apiBaseUrl }: ArtifactViewProps) {
   return (
     <figure className="artifact-message" aria-label={artifact.caption ?? "Artifact"}>
       {artifact.caption ? <figcaption className="artifact-caption">{artifact.caption}</figcaption> : null}
-      <ArtifactRepresentationView representation={pick} apiBaseUrl={apiBaseUrl} fallbackArtifacts={artifact.artifacts} />
+      <ArtifactRepresentationView
+        artifactGroupId={artifact.artifactGroupId}
+        representation={pick}
+        apiBaseUrl={apiBaseUrl}
+        fallbackArtifacts={artifact.artifacts}
+      />
     </figure>
   );
 }
 
 function ArtifactRepresentationView({
+  artifactGroupId,
   representation,
   apiBaseUrl,
   fallbackArtifacts,
 }: {
+  readonly artifactGroupId: string;
   readonly representation: ArtifactRepresentation | undefined;
   readonly apiBaseUrl?: string | undefined;
   readonly fallbackArtifacts: readonly ArtifactRepresentation[];
@@ -65,6 +74,15 @@ function ArtifactRepresentationView({
     representation.mime === "image/gif"
   ) {
     return <ImageRepresentationView representation={representation} apiBaseUrl={apiBaseUrl} />;
+  }
+  if (representation.mime === "text/html") {
+    return (
+      <HtmlArtifactFrame
+        artifactGroupId={artifactGroupId}
+        representation={representation as HtmlArtifactRepresentation}
+        apiBaseUrl={apiBaseUrl}
+      />
+    );
   }
   if (representation.mime === "text/plain") {
     return <pre className="artifact-fallback-text">{representation.text}</pre>;

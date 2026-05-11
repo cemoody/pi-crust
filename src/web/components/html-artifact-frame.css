@@ -1,0 +1,52 @@
+.html-artifact {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: 100%;
+}
+
+.html-artifact-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.html-artifact-fullscreen-toggle {
+  font: inherit;
+  font-size: 0.75rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface, #f8fafc);
+  border-radius: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  cursor: pointer;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.html-artifact-fullscreen-toggle:hover {
+  background: var(--color-surface-elevated, #ffffff);
+  color: var(--color-text, #111827);
+}
+
+.html-artifact-frame {
+  width: 100%;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--color-surface, #f8fafc);
+  display: block;
+}
+
+.html-artifact.fullscreen {
+  position: fixed;
+  inset: 32px 24px 24px 24px;
+  z-index: 1000;
+  padding: 12px;
+  background: var(--color-surface-elevated, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 0.75rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.html-artifact.fullscreen .html-artifact-frame {
+  height: calc(100vh - 80px);
+}
