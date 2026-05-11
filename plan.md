@@ -751,32 +751,32 @@ Make the web UI better than the TUI for parallel coding by adding project/file/d
 
 ## Todo
 
-- [ ] Project file explorer.
-- [ ] File search.
-- [ ] File viewer with syntax highlighting.
-- [ ] Markdown preview.
-- [ ] Image preview.
+- [x] Project file explorer.
+- [x] File search.
+- [x] File viewer with syntax highlighting.
+- [x] Markdown preview.
+- [x] Image preview.
 - [ ] Click file paths in tool results to open file.
-- [ ] Show files read by session.
-- [ ] Show files modified by session.
-- [ ] Git status panel.
-- [ ] Diff viewer.
+- [x] Show files read by session.
+- [x] Show files modified by session.
+- [x] Git status panel.
+- [x] Diff viewer.
 - [ ] Stage/unstage files.
 - [ ] Commit changes.
 - [ ] Optional: create session in new git branch.
-- [ ] Optional: create session in new git worktree.
+- [x] Optional: create session in new git worktree.
 - [ ] Optional: compare session output against base branch.
 - [ ] Optional: merge/cherry-pick winning session.
 
 ## TDD-style tests
 
-- [ ] File explorer lists mocked project files.
-- [ ] Opening file renders highlighted content.
-- [ ] Markdown file renders preview.
+- [x] File explorer lists mocked project files.
+- [x] Opening file renders highlighted content.
+- [x] Markdown file renders preview.
 - [ ] Tool result path click opens correct file.
-- [ ] Git status fixture renders changed files.
-- [ ] Diff fixture renders added/removed/context lines.
-- [ ] Create-worktree flow calls expected server API.
+- [x] Git status fixture renders changed files.
+- [x] Diff fixture renders added/removed/context lines.
+- [x] Create-worktree flow calls expected server API.
 - [ ] Session created in worktree uses worktree cwd.
 - [ ] Compare sessions shows distinct diffs.
 
