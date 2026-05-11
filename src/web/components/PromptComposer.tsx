@@ -270,10 +270,24 @@ export function PromptComposer(props: PromptComposerProps) {
         {mode !== "prompt" ? <span className="composer-mode">{mode === "bash" ? "shell" : "hidden shell"}</span> : null}
 
         <span className="composer-status">
-          {props.statusText ? <span>{props.statusText}</span> : null}
-          {props.statusCwd ? <><span className="sep">·</span><span title={props.statusCwd}>{shortPath(props.statusCwd)}</span></> : null}
-          <span className="sep">·</span><span>{props.statusModel ?? "no model selected"}</span>
-          <span className="sep">·</span><span>{props.statusTokens ?? "0 tokens"}</span>
+          {props.statusText ? <span className="chip">{props.statusText}</span> : null}
+          {props.statusCwd ? <><span className="sep">·</span><span className="chip" title={props.statusCwd}>{shortPath(props.statusCwd, 32)}</span></> : null}
+          <span className="sep">·</span>
+          {props.statusModel && props.onSlashCommand ? (
+            <button
+              type="button"
+              className="chip composer-status-model"
+              title={`${props.statusModel} — click to change`}
+              onClick={() => void props.onSlashCommand?.("model", "")}
+            >
+              {shortModel(props.statusModel, 24)}
+            </button>
+          ) : (
+            <span className="chip" title={props.statusModel ?? undefined}>
+              {props.statusModel ? shortModel(props.statusModel, 24) : "no model selected"}
+            </span>
+          )}
+          <span className="sep">·</span><span className="chip">{props.statusTokens ?? "0 tokens"}</span>
         </span>
       </div>
 
@@ -312,10 +326,22 @@ function looksLikeImageData(text: string): boolean {
   return false;
 }
 
-function shortPath(value: string): string {
+function shortPath(value: string, max?: number): string {
   const segments = value.split("/").filter(Boolean);
-  if (segments.length <= 2) return value;
-  return `…/${segments.slice(-2).join("/")}`;
+  const shortened = segments.length <= 2 ? value : `…/${segments.slice(-2).join("/")}`;
+  if (max === undefined || shortened.length <= max) return shortened;
+  return `…${shortened.slice(shortened.length - max + 1)}`;
+}
+
+function shortModel(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const slashIndex = value.lastIndexOf("/");
+  if (slashIndex !== -1) {
+    const tail = value.slice(slashIndex + 1);
+    if (tail.length + 2 <= max) return `…/${tail}`;
+    return `…${tail.slice(tail.length - max + 1)}`;
+  }
+  return `…${value.slice(value.length - max + 1)}`;
 }
 
 function SuggestionList({ label, items, onPick }: { readonly label: string; readonly items: readonly string[]; readonly onPick: (item: string) => void }) {

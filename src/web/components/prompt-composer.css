@@ -153,6 +153,7 @@
   font-family: var(--font-mono);
   min-height: 22px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .composer-status {
@@ -163,9 +164,40 @@
   font-family: var(--font-mono);
   font-size: 10.5px;
   margin-left: auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.composer-status .chip {
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .composer-status .sep { color: var(--gray-400); }
+
+.composer-status-model {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.composer-status-model:hover {
+  color: var(--blue-accent-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.composer-status-model:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--blue-focus);
+}
 
 .composer-spacer { flex: 1; }
 

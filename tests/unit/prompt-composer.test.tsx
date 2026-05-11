@@ -197,6 +197,28 @@ describe("PromptComposer", () => {
     expect(screen.getByText(/Clipboard looks like raw image data/i)).toBeInTheDocument();
   });
 
+  it("truncates a long cwd and model with leading ellipsis", () => {
+    renderComposer({
+      statusCwd: "/Users/chris/code/pi-remote-control-html-extension",
+      statusModel: "anthropic/claude-opus-4-7",
+      onSlashCommand: vi.fn(),
+    });
+    expect(screen.getByTitle("/Users/chris/code/pi-remote-control-html-extension")).toHaveTextContent(/^…/);
+    expect(screen.getByRole("button", { name: /claude-opus-4-7/ })).toBeInTheDocument();
+  });
+
+  it("opens the model picker when the status model chip is clicked", () => {
+    const onSlashCommand = vi.fn();
+    renderComposer({ statusModel: "anthropic/claude-opus-4-7", onSlashCommand });
+    fireEvent.click(screen.getByRole("button", { name: /claude-opus-4-7/ }));
+    expect(onSlashCommand).toHaveBeenCalledWith("model", "");
+  });
+
+  it("falls back to a non-clickable model chip when onSlashCommand is absent", () => {
+    renderComposer({ statusModel: "anthropic/claude-opus-4-7" });
+    expect(screen.queryByRole("button", { name: /claude-opus-4-7/ })).not.toBeInTheDocument();
+  });
+
   it("ignores Escape when idle (does not clear or abort)", () => {
     const handlers = renderComposer();
     const draft = screen.getByLabelText("Prompt draft");
