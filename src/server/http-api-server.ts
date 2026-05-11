@@ -48,9 +48,9 @@ function startDefaultServer(): void {
   const sessionRoot = path.resolve(process.env.PI_REMOTE_SESSION_ROOT ?? path.join(os.homedir(), ".pi", "agent", "sessions"));
   const adapterKind = process.env.PI_REMOTE_USE_MOCK === "1"
     ? "mock"
-    : process.env.PI_REMOTE_ADAPTER === "pirpc" || process.env.PI_REMOTE_USE_PIRPC === "1"
-      ? "pirpc"
-      : "pi-sdk";
+    : process.env.PI_REMOTE_ADAPTER === "pi-sdk"
+      ? "pi-sdk"
+      : "pirpc";
   const server = createHttpApiServer({
     registry: createDefaultRegistry(adapterKind, sessionRoot, projectRoot),
     adapterKind,
