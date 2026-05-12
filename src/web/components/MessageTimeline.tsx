@@ -90,20 +90,70 @@ export interface MessageTimelineProps {
   readonly streaming?: boolean;
 }
 
+// Pixels: if the user is within this many pixels of the bottom, treat as
+// "pinned" — new content should auto-scroll. Generous because content can
+// grow between scroll events while streaming.
+const SCROLL_PIN_THRESHOLD_PX = 80;
+
 export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false }: MessageTimelineProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLElement | null>(null);
+  const innerRef = useRef<HTMLDivElement | null>(null);
+  const [pinned, setPinned] = useState(true);
+  const pinnedRef = useRef(true);
 
-  useEffect(() => {
-    if (autoScroll && typeof endRef.current?.scrollIntoView === "function") {
-      endRef.current.scrollIntoView({ block: "end" });
+  useEffect(() => { pinnedRef.current = pinned; }, [pinned]);
+
+  function scrollToBottom() {
+    const el = containerRef.current;
+    if (!el) {
+      endRef.current?.scrollIntoView?.({ block: "end" });
+      return;
     }
-  }, [autoScroll, messages]);
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    // Also call scrollIntoView as a belt-and-braces fallback for environments
+    // where the container itself isn't the actual scroll port.
+    endRef.current?.scrollIntoView?.({ block: "end" });
+  }
+
+  // Initial mount: jump to bottom.
+  useEffect(() => {
+    if (!autoScroll) return;
+    scrollToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-scroll when content grows, but only if the user is currently pinned.
+  useEffect(() => {
+    if (!autoScroll) return;
+    const inner = innerRef.current;
+    if (!inner || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current) scrollToBottom();
+    });
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, [autoScroll]);
+
+  // Watch the user's scroll position. If they come back near the bottom we
+  // re-pin; if they leave, we unpin and surface the jump-to-latest button.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const nextPinned = distance <= SCROLL_PIN_THRESHOLD_PX;
+      if (nextPinned !== pinnedRef.current) setPinned(nextPinned);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
 
   const turns = groupTurns(messages);
 
   return (
-    <section className="message-timeline" aria-label="Message timeline">
-      <div className="message-timeline-inner">
+    <section className="message-timeline" aria-label="Message timeline" ref={containerRef as React.RefObject<HTMLElement>}>
+      <div className="message-timeline-inner" ref={innerRef}>
         {turns.map((turn, turnIndex) => {
           const isLatest = turnIndex === turns.length - 1;
           const showFooter = !isLatest || !streaming;
@@ -117,6 +167,16 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
         {streaming ? <TypingDots /> : null}
         <div ref={endRef} data-testid="timeline-end" />
       </div>
+      {autoScroll && !pinned ? (
+        <button
+          type="button"
+          className="jump-to-latest"
+          aria-label="Jump to latest"
+          onClick={() => { scrollToBottom(); setPinned(true); }}
+        >
+          ↓ Jump to latest
+        </button>
+      ) : null}
     </section>
   );
 }

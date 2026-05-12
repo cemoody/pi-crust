@@ -1,14 +1,43 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MessageTimeline } from "../../src/web/components/MessageTimeline.js";
+
+// jsdom has no layout engine, so we stub element size so the auto-scroll
+// math (`scrollHeight - scrollTop - clientHeight`) can be exercised.
+function stubScrollGeometry(el: HTMLElement, { scrollHeight, clientHeight }: { scrollHeight: number; clientHeight: number }) {
+  Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => scrollHeight });
+  Object.defineProperty(el, "clientHeight", { configurable: true, get: () => clientHeight });
+}
+
+// Capture ResizeObserver callbacks so tests can manually "fire" a resize when
+// content grows (e.g. simulating streaming tokens being appended).
+let resizeCallbacks: ResizeObserverCallback[] = [];
+class MockResizeObserver {
+  constructor(private readonly cb: ResizeObserverCallback) {
+    resizeCallbacks.push(cb);
+  }
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {
+    resizeCallbacks = resizeCallbacks.filter((c) => c !== this.cb);
+  }
+}
+
+function fireResize() {
+  act(() => {
+    for (const cb of [...resizeCallbacks]) cb([], {} as ResizeObserver);
+  });
+}
 
 beforeEach(() => {
   Object.assign(navigator, {
     clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
   });
   Element.prototype.scrollIntoView = vi.fn();
+  resizeCallbacks = [];
+  (globalThis as any).ResizeObserver = MockResizeObserver;
 });
 
 describe("MessageTimeline", () => {
@@ -150,6 +179,104 @@ describe("MessageTimeline", () => {
   it("auto-scrolls to the end when enabled", () => {
     render(<MessageTimeline autoScroll messages={[{ id: "a1", role: "assistant", text: "hi" }]} />);
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  describe("sticky auto-scroll", () => {
+    function getScrollContainer(): HTMLElement {
+      const el = document.querySelector(".message-timeline") as HTMLElement | null;
+      if (!el) throw new Error("message timeline container missing");
+      return el;
+    }
+
+    it("keeps scrolling to bottom while the user is pinned near the bottom", () => {
+      const { rerender } = render(
+        <MessageTimeline autoScroll streaming messages={[{ id: "a1", role: "assistant", text: "first" }]} />,
+      );
+      const container = getScrollContainer();
+      stubScrollGeometry(container, { scrollHeight: 1000, clientHeight: 500 });
+      // Simulate: user is at the very bottom (500 + 500 = 1000).
+      container.scrollTop = 500;
+
+      // New token streams in -> content grows.
+      stubScrollGeometry(container, { scrollHeight: 1200, clientHeight: 500 });
+      rerender(<MessageTimeline autoScroll streaming messages={[{ id: "a1", role: "assistant", text: "first second" }]} />);
+      fireResize();
+
+      expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight);
+      expect(screen.queryByRole("button", { name: /jump to latest/i })).not.toBeInTheDocument();
+    });
+
+    it("does not auto-scroll while the user has scrolled up to read history", () => {
+      const { rerender } = render(
+        <MessageTimeline autoScroll streaming messages={[{ id: "a1", role: "assistant", text: "first" }]} />,
+      );
+      const container = getScrollContainer();
+      stubScrollGeometry(container, { scrollHeight: 2000, clientHeight: 500 });
+      // User scrolls far away from the bottom.
+      container.scrollTop = 100;
+      act(() => { fireEvent.scroll(container); });
+
+      // Capture, then simulate streaming content growth.
+      const previousScrollTop = container.scrollTop;
+      stubScrollGeometry(container, { scrollHeight: 2400, clientHeight: 500 });
+      rerender(<MessageTimeline autoScroll streaming messages={[{ id: "a1", role: "assistant", text: "first lots more text" }]} />);
+      fireResize();
+
+      expect(container.scrollTop).toBe(previousScrollTop);
+    });
+
+    it("shows a 'jump to latest' button once the user scrolls away from the bottom", () => {
+      render(<MessageTimeline autoScroll streaming messages={[{ id: "a1", role: "assistant", text: "hi" }]} />);
+      const container = getScrollContainer();
+      stubScrollGeometry(container, { scrollHeight: 2000, clientHeight: 500 });
+      container.scrollTop = 50;
+      act(() => { fireEvent.scroll(container); });
+
+      expect(screen.getByRole("button", { name: /jump to latest/i })).toBeInTheDocument();
+    });
+
+    it("re-pins and scrolls to bottom when 'jump to latest' is clicked", () => {
+      const { rerender } = render(
+        <MessageTimeline autoScroll streaming messages={[{ id: "a1", role: "assistant", text: "hi" }]} />,
+      );
+      const container = getScrollContainer();
+      stubScrollGeometry(container, { scrollHeight: 2000, clientHeight: 500 });
+      container.scrollTop = 50;
+      act(() => { fireEvent.scroll(container); });
+
+      fireEvent.click(screen.getByRole("button", { name: /jump to latest/i }));
+
+      expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight);
+      expect(screen.queryByRole("button", { name: /jump to latest/i })).not.toBeInTheDocument();
+
+      // And subsequent streaming updates resume auto-scrolling.
+      stubScrollGeometry(container, { scrollHeight: 2200, clientHeight: 500 });
+      rerender(<MessageTimeline autoScroll streaming messages={[{ id: "a1", role: "assistant", text: "hi more" }]} />);
+      fireResize();
+      expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight);
+    });
+
+    it("re-pins when the user manually scrolls back near the bottom", () => {
+      const { rerender } = render(
+        <MessageTimeline autoScroll streaming messages={[{ id: "a1", role: "assistant", text: "hi" }]} />,
+      );
+      const container = getScrollContainer();
+      stubScrollGeometry(container, { scrollHeight: 2000, clientHeight: 500 });
+      container.scrollTop = 50;
+      act(() => { fireEvent.scroll(container); });
+      expect(screen.getByRole("button", { name: /jump to latest/i })).toBeInTheDocument();
+
+      // User scrolls back down within the pin threshold of the bottom.
+      container.scrollTop = 1490; // distance = 2000 - 1490 - 500 = 10
+      act(() => { fireEvent.scroll(container); });
+
+      expect(screen.queryByRole("button", { name: /jump to latest/i })).not.toBeInTheDocument();
+
+      stubScrollGeometry(container, { scrollHeight: 2200, clientHeight: 500 });
+      rerender(<MessageTimeline autoScroll streaming messages={[{ id: "a1", role: "assistant", text: "hi more" }]} />);
+      fireResize();
+      expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight);
+    });
   });
 
   it("renders typing dots while streaming", () => {
