@@ -1,6 +1,8 @@
 import http from "node:http";
 import path from "node:path";
 import os from "node:os";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
@@ -13,6 +15,7 @@ import { SessionRegistry } from "./session/session-registry.js";
 import { CronStore, type CronJob } from "./cron/cron-store.js";
 import { CronScheduler } from "./cron/cron-scheduler.js";
 import { parseCron, CronParseError, nextRun as cronNextRun } from "./cron/cron-expression.js";
+import { WorkerRegistry } from "./session/worker-registry.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -36,17 +39,19 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
 }
 
 function createDefaultRegistry(adapterKind: string, sessionRoot: string, projectRoot: string): SessionRegistry {
+  const workerRegistry = new WorkerRegistry();
   return new SessionRegistry({
     adapter: adapterKind === "mock"
       ? new MockPiAdapter({ sessionRoot })
       : adapterKind === "pirpc"
-        ? new PiRpcAdapter({ sessionDir: sessionRoot })
+        ? new PiRpcAdapter({ sessionDir: sessionRoot, runtimeDir: workerRegistry.runtimeDir })
         : new SdkPiAdapter({ sessionDir: sessionRoot }),
     pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
+    workerRegistry,
   });
 }
 
-function startDefaultServer(): void {
+async function startDefaultServer(): Promise<void> {
   const port = Number(process.env.PI_REMOTE_API_PORT ?? 8787);
   const host = process.env.PI_REMOTE_API_HOST ?? "127.0.0.1";
   const projectRoot = path.resolve(process.env.PI_REMOTE_PROJECT_ROOT ?? process.env.HOME ?? process.cwd());
@@ -70,16 +75,41 @@ function startDefaultServer(): void {
     cronStore,
     cronScheduler,
   });
+  // Reattach any detached Pi RPC workers that survived a previous API process.
+  try {
+    const reattached = await registry.reattachAll();
+    if (reattached.length > 0) console.log(`reattached ${reattached.length} detached session(s): ${reattached.join(", ")}`);
+  } catch (err) {
+    console.warn(`reattachAll failed: ${err instanceof Error ? err.message : err}`);
+  }
   server.listen(port, host, () => {
     console.log(`pi-remote-control API listening on http://${host}:${port}`);
     console.log(`adapter=${adapterKind}`);
     console.log(`projectRoot=${projectRoot}`);
     console.log(`sessionRoot=${sessionRoot}`);
   });
+
+  // On API shutdown, detach (don't kill) detached workers so sessions survive.
+  let shuttingDown = false;
+  const detachAndExit = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`received ${signal}, detaching workers...`);
+    const timer = setTimeout(() => { console.warn("detach timed out, exiting"); process.exit(0); }, 3000);
+    timer.unref();
+    void Promise.resolve()
+      .then(() => registry.detachAll())
+      .catch(() => undefined)
+      .then(() => new Promise<void>((resolve) => server.close(() => resolve())))
+      .catch(() => undefined)
+      .then(() => { clearTimeout(timer); process.exit(0); });
+  };
+  process.on("SIGTERM", () => detachAndExit("SIGTERM"));
+  process.on("SIGINT", () => detachAndExit("SIGINT"));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startDefaultServer();
+  void startDefaultServer();
 }
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, context: HttpApiServerContext): Promise<void> {
@@ -124,6 +154,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     return sendJson(res, 200, toSessionCard(state));
   }
 
+  // Artifact files live at <session.cwd>/.pi/artifacts/<sessionId>/<file>.
+  // Served by GET /api/sessions/:sessionId/artifacts/:file (no traversal,
+  // single file segment only) so the @cemoody/pi-artifact extension's
+  // image/HTML representations resolve in the browser.
+  const artifactMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/artifacts\/([^/]+)$/);
+  if (req.method === "GET" && artifactMatch) {
+    return handleArtifact(req, res, context, decodeURIComponent(artifactMatch[1]!), decodeURIComponent(artifactMatch[2]!));
+  }
+
   const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state|events|extension-ui-response|fork-messages|fork|clone))?$/);
   if (!match) return sendJson(res, 404, { error: "not found" });
   const sessionId = decodeURIComponent(match[1]!);
@@ -140,13 +179,30 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     });
     res.write(`event: ready\ndata: ${JSON.stringify({ sessionId })}\n\n`);
 
-    const unsubscribe = session.handle.subscribe((event) => {
+    // Honor Last-Event-ID for SSE resume so events emitted while the API
+    // was down (and now sitting in the registry's per-session ring) are
+    // replayed when the WUI reconnects.
+    const lastEventHeader = req.headers["last-event-id"];
+    const lastEventId = Array.isArray(lastEventHeader) ? lastEventHeader[0] : lastEventHeader;
+    const fromSeq = lastEventId && /^-?\d+$/.test(lastEventId) ? Number(lastEventId) : null;
+
+    const writeEvent = (event: unknown, seq: number) => {
       try {
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        const data = JSON.stringify(event);
+        // session_resync gets its own named event type so the WUI can refetch
+        // state without having to inspect every default-message payload.
+        const isResync = typeof event === "object" && event !== null && (event as { type?: unknown }).type === "session_resync";
+        if (isResync) {
+          res.write(`id: ${seq}\nevent: session_resync\ndata: ${data}\n\n`);
+        } else {
+          res.write(`id: ${seq}\ndata: ${data}\n\n`);
+        }
       } catch {
         // socket closed; cleanup below
       }
-    });
+    };
+
+    const unsubscribe = context.registry.subscribeFromSeq(session.id, fromSeq, writeEvent);
 
     const heartbeat = setInterval(() => {
       try { res.write(`: heartbeat\n\n`); } catch { /* socket closed */ }
@@ -254,6 +310,76 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   }
 
   return sendJson(res, 405, { error: "method not allowed" });
+}
+
+const ARTIFACT_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+async function handleArtifact(
+  _req: http.IncomingMessage,
+  res: http.ServerResponse,
+  context: HttpApiServerContext,
+  sessionId: string,
+  file: string,
+): Promise<void> {
+  setCors(res);
+  // Defense in depth: filename must be a single segment with no traversal.
+  if (file.includes("/") || file.includes("\\") || file === "." || file === ".." || file.includes("\0")) {
+    return sendJson(res, 400, { error: "invalid artifact filename" });
+  }
+  // The @cemoody/pi-artifact extension uses the full session-file ID
+  // ("<iso-timestamp>_<uuid>") in its emitted artifact URLs, but the session
+  // registry indexes sessions by the bare UUID. Accept both forms so the
+  // browser can fetch /api/sessions/<full-id>/artifacts/<file> directly.
+  const registryId = (() => {
+    if (context.registry.hasSession(sessionId)) return sessionId;
+    const underscoreIdx = sessionId.lastIndexOf("_");
+    if (underscoreIdx >= 0) {
+      const tail = sessionId.slice(underscoreIdx + 1);
+      if (context.registry.hasSession(tail) || context.coldSessionFiles.has(tail)) return tail;
+    }
+    return sessionId;
+  })();
+  let session;
+  try {
+    session = await getOrOpenSession(context, registryId);
+  } catch (error) {
+    return sendJson(res, 404, { error: error instanceof Error ? error.message : "unknown session" });
+  }
+  const state = await session.handle.getState();
+  const cwd = state.cwd;
+  if (typeof cwd !== "string" || !cwd) return sendJson(res, 500, { error: "session has no cwd" });
+  // The on-disk artifact directory uses the *URL's* sessionId, which matches
+  // what the extension wrote when it created the file.
+  const artifactsDir = path.resolve(cwd, ".pi/artifacts", sessionId);
+  const filePath = path.resolve(artifactsDir, file);
+  // Ensure the resolved path is still inside the per-session artifacts dir.
+  if (filePath !== path.join(artifactsDir, file)) {
+    return sendJson(res, 400, { error: "path escape rejected" });
+  }
+  let stat;
+  try {
+    stat = await fsp.stat(filePath);
+  } catch {
+    return sendJson(res, 404, { error: "artifact not found" });
+  }
+  if (!stat.isFile()) return sendJson(res, 404, { error: "not a file" });
+  const ext = path.extname(file).toLowerCase();
+  res.statusCode = 200;
+  res.setHeader("Content-Type", ARTIFACT_MIME[ext] ?? "application/octet-stream");
+  res.setHeader("Content-Length", String(stat.size));
+  res.setHeader("Cache-Control", "private, max-age=300");
+  fs.createReadStream(filePath).pipe(res);
 }
 
 async function getOrOpenSession(context: HttpApiServerContext, sessionId: string) {

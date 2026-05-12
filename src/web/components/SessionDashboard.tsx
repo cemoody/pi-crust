@@ -1127,9 +1127,17 @@ function formatStats(
     `w${compactNumber(stats.cacheWriteTokens)}`,
     `$${stats.cost.toFixed(4)}`,
   ];
-  if (stats.contextPercent !== null) parts.push(`${Math.max(0, Math.min(100, stats.contextPercent))}%`);
+  const contextPercent = formatPercent(stats.contextPercent);
+  if (contextPercent) parts.push(contextPercent);
   if (stats.contextWindow !== null) parts.push(compactNumber(stats.contextWindow));
   return parts.join(" ");
+}
+
+function formatPercent(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  const percent = Math.max(0, Math.min(100, value));
+  if (percent > 0 && percent < 1) return `${percent.toFixed(1)}%`;
+  return `${Math.round(percent)}%`;
 }
 
 function compactNumber(value: number): string {

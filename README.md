@@ -39,7 +39,7 @@ PI_REMOTE_ADAPTER=pirpc npm run dev:api
 npm run dev
 ```
 
-Then verify that a real session streams assistant text, streams tool output, renders a `show_artifact` result, and can answer an extension confirmation dialog. Pi RPC subprocesses are still children of the API process in this phase; detached workers/session-host restart survival is follow-up work.
+Then verify that a real session streams assistant text, streams tool output, renders a `show_artifact` result, and can answer an extension confirmation dialog. Pi RPC workers run as detached supervisor processes (see `scripts/pirpc-supervisor.mjs`) under `${XDG_RUNTIME_DIR:-/tmp/pi-remote-control}/sessions/`, so `kill <api-pid>` followed by `npm run dev:api` leaves every live session alive: the new API process reattaches automatically and replays any events that arrived while it was down (over SSE via `id:` / `Last-Event-ID`).
 
 ## Current status
 

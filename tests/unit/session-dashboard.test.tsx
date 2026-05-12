@@ -139,6 +139,34 @@ describe("SessionDashboard", () => {
     expect(status).toHaveTextContent("1.0M");
   });
 
+  it("rounds fractional context usage percent in the composer status row", async () => {
+    render(<SessionDashboard api={makeApi([{
+      id: "stats",
+      cwd: "/repo/stats",
+      sessionName: "Stats",
+      status: "idle",
+      model: "mock/model",
+      lastActivity: 1,
+      stats: {
+        inputTokens: 1,
+        outputTokens: 2,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 4,
+        cost: 0.01,
+        contextTokens: 12_345,
+        contextPercent: 12.3456789012345,
+        contextWindow: 1_000_000,
+      },
+    }])} />);
+
+    await screen.findByText("Stats");
+    fireEvent.click(screen.getByRole("button", { name: /Stats/ }));
+
+    const status = await screen.findByLabelText("Session status");
+    expect(status).toHaveTextContent("12%");
+    expect(status).not.toHaveTextContent("12.3456789012345%");
+  });
+
   it("does not reorder the session list just because a session was selected", async () => {
     const initial: SessionCardData[] = [
       { id: "newer", cwd: "/repo/newer", sessionName: "Newer", status: "idle", model: "m", lastActivity: 20 },
