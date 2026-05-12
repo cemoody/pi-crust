@@ -365,8 +365,11 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12.5px;
-  font-weight: 500;
+  /* Hierarchy comes from size + color contrast rather than weight: name is
+     larger and darker than the cwd line below, but not bold. */
+  font-size: 13.5px;
+  font-weight: 400;
+  color: var(--text-primary);
 }
 
 .session-row-status {

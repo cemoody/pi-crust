@@ -571,10 +571,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 onClick={() => setActiveSessionId(session.id)}
               >
                 <span className="session-row-name">{session.sessionName ?? "Untitled session"}</span>
-                <span className="session-row-status">{session.status}</span>
+                {session.status && session.status !== "idle" ? (
+                  <span className="session-row-status">{session.status}</span>
+                ) : null}
                 <span className="session-row-id">
-                  <code>{shortSessionId(session.id)}</code>
-                  {showPaths ? <> · <span>{session.cwd}</span></> : <> · <span>{basename(session.cwd)}</span></>}
+                  {showPaths ? <span>{session.cwd}</span> : <span>{basename(session.cwd)}</span>}
                 </span>
               </button>
             </li>
