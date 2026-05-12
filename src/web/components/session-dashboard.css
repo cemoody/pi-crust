@@ -86,6 +86,39 @@
   margin-bottom: 4px;
 }
 
+.sidebar-menu {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 4px 8px;
+  margin-bottom: 4px;
+  gap: 1px;
+}
+
+.sidebar-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  letter-spacing: -0.005em;
+}
+
+.sidebar-menu-item:hover {
+  background: var(--gray-080);
+}
+
+.sidebar-menu-item.active {
+  background: var(--gray-080);
+  color: var(--black-900);
+}
+
 .session-create label,
 .session-controls label {
   display: flex;

@@ -9,7 +9,10 @@ import { ModelPicker } from "./ModelPicker.js";
 import { PromptComposer, type ComposerAttachment } from "./PromptComposer.js";
 import { ShortcutHelp } from "./ShortcutHelp.js";
 import { ExtensionUiHost } from "./ExtensionUiHost.js";
+import { CronPanel } from "./CronPanel.js";
 import "./session-dashboard.css";
+
+type DashboardView = "sessions" | "cron";
 
 export interface SessionDashboardProps {
   readonly api: SessionDashboardApi;
@@ -33,6 +36,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [view, setView] = useState<DashboardView>("sessions");
   const [renaming, setRenaming] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -478,9 +482,23 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
           </button>
         </header>
 
-        <section aria-label="Create session" className="session-create">
-          <button type="button" onClick={() => setNewSessionOpen(true)}>New session</button>
-        </section>
+        <nav aria-label="Workspace" className="sidebar-menu">
+          <button
+            type="button"
+            className="sidebar-menu-item"
+            onClick={() => { setView("sessions"); setNewSessionOpen(true); }}
+          >
+            New session
+          </button>
+          <button
+            type="button"
+            className={`sidebar-menu-item ${view === "cron" ? "active" : ""}`}
+            aria-pressed={view === "cron"}
+            onClick={() => setView(view === "cron" ? "sessions" : "cron")}
+          >
+            Cron
+          </button>
+        </nav>
 
         <section aria-label="Session browser controls" className="session-controls">
           <div className="session-search" ref={filterRef}>
@@ -539,8 +557,24 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         </ul>
       </aside>
 
-      <section className="active-session" aria-label="Active session">
-        {activeSession ? (
+      <section className="active-session" aria-label={view === "cron" ? "Cron jobs" : "Active session"}>
+        {view === "cron" && api.cron ? (
+          <CronPanel
+            api={api.cron}
+            defaultCwd={defaultCwd}
+            onOpenSession={(sessionId) => {
+              setView("sessions");
+              setActiveSessionId(sessionId);
+              void (async () => {
+                try {
+                  setSessions(await api.listSessions(defaultCwd));
+                } catch (caught) {
+                  setError(errorMessage(caught));
+                }
+              })();
+            }}
+          />
+        ) : activeSession ? (
           <>
             <header>
               {renaming ? (

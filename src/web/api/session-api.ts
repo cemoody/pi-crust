@@ -104,6 +104,54 @@ export interface ModelOption {
   readonly reason?: string;
 }
 
+export interface CronJobView {
+  readonly id: string;
+  readonly name: string;
+  readonly schedule: string;
+  readonly prompt: string;
+  readonly cwd: string;
+  readonly enabled: boolean;
+  readonly lastRun: number | null;
+  readonly nextRun: number | null;
+  readonly lastSessionId: string | null;
+  readonly scheduleError: string | null;
+}
+
+export interface CronJobInput {
+  readonly name: string;
+  readonly schedule: string;
+  readonly prompt: string;
+  readonly cwd: string;
+  readonly enabled?: boolean;
+}
+
+export interface CronJobPatch {
+  readonly name?: string;
+  readonly schedule?: string;
+  readonly prompt?: string;
+  readonly cwd?: string;
+  readonly enabled?: boolean;
+}
+
+export interface CronListResponse {
+  readonly jobs: readonly CronJobView[];
+  readonly filePath: string;
+}
+
+export interface CronRunResponse {
+  readonly job: CronJobView;
+  readonly sessionId: string;
+  readonly sessionFile: string;
+}
+
+export interface CronApi {
+  list(): Promise<CronListResponse>;
+  create(input: CronJobInput): Promise<CronJobView>;
+  update(id: string, patch: CronJobPatch): Promise<CronJobView>;
+  delete(id: string): Promise<void>;
+  runNow(id: string): Promise<CronRunResponse>;
+}
+
 export interface SessionDashboardApi {
   getDefaultCwd?(): Promise<string>;
   listSessions(cwd?: string): Promise<readonly SessionCardData[]>;
@@ -122,4 +170,5 @@ export interface SessionDashboardApi {
   respondToExtensionUi?(sessionId: string, response: ExtensionUiResponse): Promise<void>;
   listModels?(): Promise<readonly ModelOption[]>;
   setModel?(sessionId: string, provider: string, modelId: string): Promise<SessionCardData>;
+  cron?: CronApi;
 }

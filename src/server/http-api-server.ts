@@ -10,6 +10,9 @@ import type { ExtensionUiResponse } from "../shared/protocol.js";
 import type { PromptAttachment, SessionMessage } from "./pi/types.js";
 import { PathPolicy } from "./security/path-policy.js";
 import { SessionRegistry } from "./session/session-registry.js";
+import { CronStore, type CronJob } from "./cron/cron-store.js";
+import { CronScheduler } from "./cron/cron-scheduler.js";
+import { parseCron, CronParseError, nextRun as cronNextRun } from "./cron/cron-expression.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -17,6 +20,8 @@ export interface HttpApiServerOptions {
   readonly projectRoot: string;
   readonly sessionRoot: string;
   readonly defaultCwd?: string;
+  readonly cronStore?: CronStore;
+  readonly cronScheduler?: CronScheduler;
 }
 
 interface HttpApiServerContext extends HttpApiServerOptions {
@@ -51,12 +56,19 @@ function startDefaultServer(): void {
     : process.env.PI_REMOTE_ADAPTER === "pi-sdk"
       ? "pi-sdk"
       : "pirpc";
+  const registry = createDefaultRegistry(adapterKind, sessionRoot, projectRoot);
+  const cronFile = path.resolve(process.env.PI_REMOTE_CRON_FILE ?? path.join(os.homedir(), ".pi", "agent", "cron-jobs.json"));
+  const cronStore = new CronStore(cronFile);
+  const cronScheduler = new CronScheduler({ store: cronStore, registry });
+  void cronScheduler.start().catch((error) => console.error("[cron] failed to start scheduler", error));
   const server = createHttpApiServer({
-    registry: createDefaultRegistry(adapterKind, sessionRoot, projectRoot),
+    registry,
     adapterKind,
     projectRoot,
     sessionRoot,
     defaultCwd: process.cwd(),
+    cronStore,
+    cronScheduler,
   });
   server.listen(port, host, () => {
     console.log(`pi-remote-control API listening on http://${host}:${port}`);
@@ -81,6 +93,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && url.pathname === "/api/health") {
     return sendJson(res, 200, { ok: true, adapter: context.adapterKind, projectRoot: context.projectRoot, sessionRoot: context.sessionRoot, defaultCwd: context.defaultCwd ?? process.cwd() });
+  }
+
+  if (url.pathname.startsWith("/api/cron")) {
+    return handleCron(req, res, url, context);
   }
 
   if (req.method === "GET" && url.pathname === "/api/sessions") {
@@ -325,4 +341,117 @@ function sendJson(res: http.ServerResponse, status: number, data: unknown): void
   }
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(data));
+}
+
+async function handleCron(req: http.IncomingMessage, res: http.ServerResponse, url: URL, context: HttpApiServerContext): Promise<void> {
+  const store = context.cronStore;
+  const scheduler = context.cronScheduler;
+  if (!store || !scheduler) return sendJson(res, 503, { error: "cron not configured" });
+
+  if (req.method === "GET" && url.pathname === "/api/cron") {
+    const jobs = await store.list();
+    return sendJson(res, 200, { jobs: jobs.map(toCronJobView), filePath: store.filePath });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/cron") {
+    const body = await readJson(req) as { name?: string; schedule?: string; prompt?: string; cwd?: string; enabled?: boolean };
+    const validation = validateCronInput(body);
+    if (validation) return sendJson(res, 400, { error: validation });
+    const job = await store.create({
+      name: body.name!.trim(),
+      schedule: body.schedule!.trim(),
+      prompt: body.prompt ?? "",
+      cwd: body.cwd!,
+      enabled: body.enabled !== false,
+    });
+    // Compute first nextRun.
+    try {
+      const parsed = parseCron(job.schedule);
+      const n = cronNextRun(parsed, new Date());
+      if (n) await store.update(job.id, { nextRun: n.getTime() });
+    } catch { /* ignored */ }
+    const fresh = (await store.get(job.id))!;
+    return sendJson(res, 200, toCronJobView(fresh));
+  }
+
+  const jobMatch = url.pathname.match(/^\/api\/cron\/([^/]+)(?:\/(run|delete))?$/);
+  if (!jobMatch) return sendJson(res, 404, { error: "not found" });
+  const jobId = decodeURIComponent(jobMatch[1]!);
+  const action = jobMatch[2];
+
+  if (req.method === "POST" && action === "delete") {
+    const ok = await store.delete(jobId);
+    if (!ok) return sendJson(res, 404, { error: "cron job not found" });
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (req.method === "POST" && action === "run") {
+    try {
+      const result = await scheduler.runJobNow(jobId);
+      const fresh = (await store.get(jobId))!;
+      return sendJson(res, 200, { job: toCronJobView(fresh), sessionId: result.sessionId, sessionFile: result.sessionFile });
+    } catch (error) {
+      return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  if (req.method === "POST" && !action) {
+    const body = await readJson(req) as { name?: string; schedule?: string; prompt?: string; cwd?: string; enabled?: boolean };
+    if (body.schedule !== undefined) {
+      try { parseCron(body.schedule); } catch (error) {
+        return sendJson(res, 400, { error: error instanceof CronParseError ? `Invalid schedule: ${error.message}` : "Invalid schedule" });
+      }
+    }
+    const updated = await store.update(jobId, {
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.schedule !== undefined ? { schedule: body.schedule } : {}),
+      ...(body.prompt !== undefined ? { prompt: body.prompt } : {}),
+      ...(body.cwd !== undefined ? { cwd: body.cwd } : {}),
+      ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+    });
+    if (!updated) return sendJson(res, 404, { error: "cron job not found" });
+    // Recompute nextRun on schedule/enabled change.
+    if (body.schedule !== undefined || body.enabled !== undefined) {
+      if (updated.enabled) {
+        try {
+          const parsed = parseCron(updated.schedule);
+          const n = cronNextRun(parsed, new Date());
+          if (n) await store.update(jobId, { nextRun: n.getTime() });
+        } catch { /* ignored */ }
+      }
+    }
+    const fresh = (await store.get(jobId))!;
+    return sendJson(res, 200, toCronJobView(fresh));
+  }
+
+  return sendJson(res, 405, { error: "method not allowed" });
+}
+
+function toCronJobView(job: CronJob) {
+  let scheduleError: string | undefined;
+  try { parseCron(job.schedule); } catch (error) {
+    scheduleError = error instanceof Error ? error.message : String(error);
+  }
+  return {
+    id: job.id,
+    name: job.name,
+    schedule: job.schedule,
+    prompt: job.prompt,
+    cwd: job.cwd,
+    enabled: job.enabled,
+    lastRun: job.lastRun ?? null,
+    nextRun: job.nextRun ?? null,
+    lastSessionId: job.lastSessionId ?? null,
+    scheduleError: scheduleError ?? null,
+  };
+}
+
+function validateCronInput(body: { name?: string; schedule?: string; cwd?: string }): string | null {
+  if (!body.name || !body.name.trim()) return "name is required";
+  if (!body.schedule || !body.schedule.trim()) return "schedule is required";
+  if (!body.cwd || !body.cwd.trim()) return "cwd is required";
+  try { parseCron(body.schedule); } catch (error) {
+    return error instanceof CronParseError ? `Invalid schedule: ${error.message}` : "Invalid schedule";
+  }
+  return null;
 }

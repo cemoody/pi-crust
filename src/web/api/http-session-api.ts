@@ -1,5 +1,5 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
-import type { CloneSessionResult, DashboardMessage, ForkMessageOption, ForkSessionResult, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import type { CloneSessionResult, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ForkMessageOption, ForkSessionResult, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi } from "./session-api.js";
 
 const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "";
 
@@ -81,6 +81,14 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
   async respondToExtensionUi(sessionId: string, response: ExtensionUiResponse): Promise<void> {
     await request(`/api/sessions/${encodeURIComponent(sessionId)}/extension-ui-response`, { method: "POST", body: response });
   }
+
+  cron: CronApi = {
+    list: () => request<CronListResponse>("/api/cron"),
+    create: (input: CronJobInput) => request<CronJobView>("/api/cron", { method: "POST", body: input }),
+    update: (id: string, patch: CronJobPatch) => request<CronJobView>(`/api/cron/${encodeURIComponent(id)}`, { method: "POST", body: patch }),
+    delete: async (id: string) => { await request(`/api/cron/${encodeURIComponent(id)}/delete`, { method: "POST", body: {} }); },
+    runNow: (id: string) => request<CronRunResponse>(`/api/cron/${encodeURIComponent(id)}/run`, { method: "POST", body: {} }),
+  };
 }
 
 async function request<T>(path: string, options: { readonly method?: string; readonly body?: unknown } = {}): Promise<T> {
