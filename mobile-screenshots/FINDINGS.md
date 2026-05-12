@@ -1,5 +1,10 @@
 # Mobile UX Screenshot Audit
 
+> **Update (after fixes):** see the *Post-fix verification* section at the
+> bottom. All P0 / P1 / P2 items have been addressed and re-verified with the
+> same screenshot spec.
+
+
 Generated via `tests/playwright/mobile-screenshots.spec.ts`. Each viewport / state
 combination is at `mobile-screenshots/<viewport>/<state>.png`.
 
@@ -160,3 +165,59 @@ Each P0 / P1 item has clear pass/fail criteria the spec can encode (e.g.
 sidebar toggle", "active session region height ≥ 60 % of viewport at 375 ×
 667"). A follow-up pass should convert the screenshot spec into asserting
 specs once the fixes land.
+
+---
+
+## Post-fix verification
+
+All fixes landed in two commits on this branch and the screenshot spec was
+re-run after each change. New scorecard:
+
+| Element                              | 344 | 375 | 390 | 412 | 768 |
+| ------------------------------------ | --- | --- | --- | --- | --- |
+| Sidebar drawer opens / closes        | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Active session chat (above the fold) | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Composer textarea                    | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Send / submit affordance             | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Session action row (fork/edit/del)   | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Status bar (cwd / model / stats)     | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Hamburger / expand button            | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Modal: new session (CWD start visible)| ✅ | ✅  | ✅  | ✅  | ✅  |
+| Modal: model picker                  | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Modal: fork                          | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Modal: shortcut help                 | ✅  | ✅  | ✅  | ✅  | ✅  |
+
+### What changed
+
+1. **P0-1 + P0-3 sidebar drawer + mobile top bar** — below 720px the sidebar
+   becomes a `position: fixed` slide-over with a backdrop. Auto-closes when a
+   session is selected. The floating expand button is now a 36 px pill that
+   does not overlap the session title.
+2. **P0-2 sub-420px breakpoint** — disabled action icons (Compact / Tree /
+   Clone) and the session-id subtitle hide, action row tightens. No more
+   right-edge clipping on a 344 px Galaxy Fold viewport.
+3. **P1-4 composer pinned to bottom** — implicitly resolved: with the drawer
+   pattern, `.active-session-workspace` (grid `1fr auto auto`) fills the full
+   100dvh viewport so the composer + status sit at the bottom.
+4. **P1-5 iOS auto-zoom** — global `@media (pointer: coarse)` rule sets all
+   `<input>` / `<textarea>` / `<select>` to 16 px. Verified visually in
+   `iphone-se/03-composer-focused.png` (large readable composer).
+5. **P1-6 touch targets** — `.active-actions button.action-icon` and
+   `.sidebar-toggle` are 40 × 40 px on phones.
+6. **P1-7 status bar** — horizontal scroll under 720 px with `overflow-x:
+   auto`; with the wider mobile viewport it no longer overflows in practice.
+7. **P2-8 CWD caret** — `onFocus` sets `selectionRange(0,0)` + `scrollLeft=0`.
+   `iphone-se/05-new-session-dialog.png` now shows the start of the path.
+8. **P2-9 safe-area** — modal backdrop and dashboard shell pad with
+   `env(safe-area-inset-*)` on all four sides.
+9. **P2-10 overflow** — disabled icons are hidden under 420 px (instead of
+   filling space with grey).
+10. **P2-11 100dvh + viewport-fit=cover** — applied to `index.html` and
+    `.session-dashboard` (with `100vh` fallback first).
+
+### Tests
+
+- `tests/playwright/mobile-screenshots.spec.ts`: 50 screenshots, all pass.
+- `tests/playwright/session-chat.spec.ts`: 19/19 pass (no regressions).
+- `tests/unit/*`: 175/175 pass (added `matchMedia` guard for JSDOM).
+- `npm run typecheck`: clean.
