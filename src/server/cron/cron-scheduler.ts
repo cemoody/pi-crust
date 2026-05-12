@@ -120,11 +120,17 @@ export class CronScheduler {
   private async runJob(job: CronJob): Promise<CronRunResult> {
     const sessionName = `cron: ${job.name}`;
     const created = await this.registry.createSession({ cwd: job.cwd, sessionName });
-    try {
-      await this.registry.prompt(created.id, job.prompt);
-    } catch (error) {
-      this.logger(`Job "${job.name}" prompt failed`, error);
-    }
+
+    // Fire-and-forget: kick off the prompt, but do NOT await it. The pi RPC
+    // adapter's prompt() blocks until the agent_end event fires, which for
+    // a cron job (e.g. dependabot sweep) can be many minutes. If we awaited
+    // it here the WUI's POST /api/cron/<id>/run would hang for the entire
+    // agent run, never updating lastRun/lastSessionId and never returning
+    // a sessionId to the user — from their POV the "Run now" click did
+    // nothing.
+    void this.registry.prompt(created.id, job.prompt)
+      .catch((error) => this.logger(`Job "${job.name}" prompt failed`, error));
+
     const now = Date.now();
     let nextRunTs: number | undefined;
     try {

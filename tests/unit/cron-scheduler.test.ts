@@ -69,6 +69,50 @@ describe("CronScheduler.runJobNow", () => {
     const created = sessions.find((s) => s.id === result.sessionId);
     expect(created?.sessionName).toBe("cron: Nightly summary");
   });
+
+  // Production repro: PiRpcSessionHandle.prompt() awaits the agent_end event
+  // and therefore doesn't resolve until the LLM finishes the entire turn
+  // (often many minutes). The previous CronScheduler.runJob awaited that
+  // prompt promise, so the HTTP request from the WUI's "Run now" button
+  // hung for the duration of the agent run, and cron-jobs.json wasn't
+  // updated with lastRun/lastSessionId until the very end. From the user's
+  // perspective the click did nothing.
+  it("is fire-and-forget: returns and persists lastRun before the prompt resolves", async () => {
+    const { projectA, store, scheduler, registry } = await setup();
+    const job = await store.create({ name: "slow", schedule: "0 0 * * *", prompt: "do stuff", cwd: projectA });
+
+    // Make the adapter's prompt block until we explicitly release it.
+    let releasePrompt: (() => void) | null = null;
+    const promptStarted: Promise<void> = new Promise((resolve) => {
+      const original = registry.prompt.bind(registry);
+      (registry as unknown as { prompt: typeof registry.prompt }).prompt = async (sessionId: string, message: string) => {
+        // Kick off the real prompt without awaiting it.
+        const slow = new Promise<void>((release) => { releasePrompt = release; }).then(() => original(sessionId, message));
+        resolve();
+        await slow;
+      };
+    });
+
+    const t0 = Date.now();
+    const runPromise = scheduler.runJobNow(job.id);
+    // Race: if scheduler awaits the prompt, this will time out instead of resolving.
+    const result = await Promise.race([
+      runPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("runJobNow blocked on prompt")), 1000)),
+    ]) as Awaited<typeof runPromise>;
+
+    expect(result.sessionId).toBeTruthy();
+    expect(Date.now() - t0).toBeLessThan(1000);
+
+    // lastRun + lastSessionId must be persisted before the prompt completes.
+    await promptStarted;
+    const fresh = await store.get(job.id);
+    expect(fresh?.lastSessionId).toBe(result.sessionId);
+    expect(fresh?.lastRun).toBeGreaterThanOrEqual(t0);
+
+    // Finally, release the prompt so the worker can finish (cleanup).
+    releasePrompt!();
+  });
 });
 
 describe("CronScheduler.refreshNextRuns", () => {
