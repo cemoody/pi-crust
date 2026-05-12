@@ -444,6 +444,83 @@ describe("SessionDashboard", () => {
     expect(screen.getByRole("heading", { name: "Alpha" })).toBeInTheDocument();
   });
 
+  it("shows the spawned session after 'Run now' even when its cwd is outside defaultCwd", async () => {
+    // Repro: cron jobs commonly run with a cwd different from the project
+    // root the dashboard was loaded with (e.g. cron cwd is /home/coder but the
+    // dashboard's defaultCwd is /home/coder/code/pi-remote-control). The cron
+    // 'Run now' flow then calls onOpenSession(spawnedId), but listSessions
+    // (which is filtered by defaultCwd server-side) won't include that
+    // spawned session, leaving the user stuck on the cron page with an empty
+    // active-session pane.
+    const cron = {
+      list: vi.fn(async () => ({
+        jobs: [{
+          id: "j1",
+          name: "dependabot",
+          schedule: "0 13 * * *",
+          prompt: "do stuff",
+          cwd: "/elsewhere",
+          enabled: true,
+          lastRun: null,
+          nextRun: Date.now() + 60_000,
+          lastSessionId: null,
+          scheduleError: null,
+        }],
+        filePath: "/cron.json",
+      })),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      runNow: vi.fn(async () => ({
+        job: {
+          id: "j1",
+          name: "dependabot",
+          schedule: "0 13 * * *",
+          prompt: "do stuff",
+          cwd: "/elsewhere",
+          enabled: true,
+          lastRun: Date.now(),
+          nextRun: Date.now() + 60_000,
+          lastSessionId: "spawned-z",
+          scheduleError: null,
+        },
+        sessionId: "spawned-z",
+        sessionFile: "/elsewhere/.pi/spawned-z.jsonl",
+      })),
+    };
+    const base = makeApi([
+      { id: "a", cwd: "/repo/main", sessionName: "Alpha", status: "idle", model: "m", lastActivity: 1 },
+    ]);
+    const api: SessionDashboardApi = {
+      ...base,
+      // Dashboard's defaultCwd in this test is "/tmp/project" (the fallback),
+      // and listSessions does not know about /elsewhere sessions — just like
+      // production filters by defaultCwd. The dashboard must still navigate
+      // to the spawned session by fetching it explicitly.
+      async getSession(sessionId) {
+        if (sessionId === "spawned-z") {
+          return { id: "spawned-z", cwd: "/elsewhere", sessionName: "cron: dependabot", status: "idle", model: "m", lastActivity: 2 };
+        }
+        return base.getSession ? base.getSession(sessionId) : Promise.reject(new Error("missing"));
+      },
+      cron,
+    };
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Alpha");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cron" }));
+    await screen.findByRole("heading", { name: "Cron jobs" });
+    await screen.findByText("dependabot");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run now" }));
+
+    // After the run-now resolves, the dashboard should switch to the sessions
+    // view AND surface the spawned session as the active session, even though
+    // it isn't in the filtered listSessions response.
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Cron jobs" })).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "cron: dependabot" })).toBeInTheDocument();
+  });
+
   it("requires explicit confirmation before deleting and supports cancel", async () => {
     render(<SessionDashboard api={makeApi([
       { id: "a", cwd: "/repo/a", sessionName: "Doomed", status: "idle", model: "m", lastActivity: 1 },

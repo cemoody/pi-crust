@@ -595,7 +595,24 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
               setActiveSessionId(sessionId);
               void (async () => {
                 try {
-                  setSessions(await api.listSessions(defaultCwd));
+                  const refreshed = await api.listSessions(defaultCwd);
+                  // The spawned session may live outside defaultCwd (cron
+                  // jobs commonly run with a different cwd than the
+                  // dashboard was loaded with), in which case listSessions
+                  // — filtered server-side — won't include it. Fetch it
+                  // explicitly so the active-session pane has data to render.
+                  let merged: readonly SessionCardData[] = refreshed;
+                  if (!refreshed.some((session) => session.id === sessionId) && api.getSession) {
+                    try {
+                      const spawned = await api.getSession(sessionId);
+                      merged = [spawned, ...refreshed];
+                    } catch {
+                      // If getSession fails we still set the activeSessionId;
+                      // the user will see the empty-state message but can
+                      // recover via the URL or sidebar.
+                    }
+                  }
+                  setSessions(merged);
                 } catch (caught) {
                   setError(errorMessage(caught));
                 }
