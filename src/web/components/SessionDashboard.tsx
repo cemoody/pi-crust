@@ -36,7 +36,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window === "undefined") return false;
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
     return window.matchMedia("(max-width: 720px)").matches;
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -55,7 +55,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const streamDraftIdsRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     const mq = window.matchMedia("(max-width: 720px)");
     const update = () => setIsMobile(mq.matches);
     update();
@@ -824,7 +824,24 @@ function NewSessionDialog(props: {
         <div className="new-session-fields">
           <label>
             CWD
-            <input autoFocus value={cwd} onChange={(event) => setCwd(event.target.value)} aria-label="New session cwd" />
+            <input
+              autoFocus
+              value={cwd}
+              onChange={(event) => setCwd(event.target.value)}
+              aria-label="New session cwd"
+              ref={(node) => {
+                // Place caret at the start so the path's leading characters are
+                // visible on narrow phones rather than the tail.
+                if (node && document.activeElement === node) {
+                  node.setSelectionRange(0, 0);
+                  node.scrollLeft = 0;
+                }
+              }}
+              onFocus={(event) => {
+                event.currentTarget.setSelectionRange(0, 0);
+                event.currentTarget.scrollLeft = 0;
+              }}
+            />
           </label>
           <label>
             Name <span>optional</span>

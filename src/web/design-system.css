@@ -68,3 +68,18 @@ code, pre, .mono { font-family: var(--font-mono); font-size: 13px; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--gray-200); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: var(--gray-300); border: 2px solid transparent; background-clip: content-box; }
+
+/* On coarse-pointer (touch) devices, ensure focusable text inputs are ≥16px so
+   iOS Safari does not auto-zoom the viewport when they gain focus. */
+@media (pointer: coarse) {
+  input[type="text"],
+  input[type="search"],
+  input[type="url"],
+  input[type="email"],
+  input[type="password"],
+  input:not([type]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}

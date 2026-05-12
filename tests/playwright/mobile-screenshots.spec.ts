@@ -34,12 +34,20 @@ async function selectSeeded(page: Page) {
 }
 
 test.beforeAll(async () => {
-  await fs.rm(OUT_ROOT, { recursive: true, force: true });
+  // Wipe only the per-viewport screenshot directories, keep FINDINGS.md etc.
+  for (const vp of VIEWPORTS) {
+    await fs.rm(path.join(OUT_ROOT, vp.name), { recursive: true, force: true });
+  }
 });
 
 for (const vp of VIEWPORTS) {
   test.describe(`mobile @ ${vp.name} (${vp.width}x${vp.height})`, () => {
-    test.use({ viewport: { width: vp.width, height: vp.height } });
+    test.use({
+      viewport: { width: vp.width, height: vp.height },
+      hasTouch: true,
+      isMobile: true,
+      deviceScaleFactor: 2,
+    });
 
     test('01 session list (cold landing)', async ({ page }) => {
       await page.goto('/');
