@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ExtensionUiRequest, ExtensionUiResponse, WireMessage } from "../../shared/protocol.js";
 import type { DashboardArtifact, DashboardMessage, DashboardToolDetails, ForkMessageOption, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
-import iconBlack from "../assets-icon-black.svg";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
 import { MessageTimeline, type TimelineMessage } from "./MessageTimeline.js";
 import { ModelPicker } from "./ModelPicker.js";
@@ -494,7 +493,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
 
       <aside className="session-sidebar" aria-label="Sessions" aria-hidden={!sidebarOpen}>
         <header>
-          <img src={iconBlack} alt="" aria-hidden="true" />
           <h1>pi remote</h1>
           <button
             type="button"
@@ -570,8 +568,12 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 className={session.id === activeSessionId ? "active" : ""}
                 onClick={() => { setActiveSessionId(session.id); setView("sessions"); }}
               >
+                <span
+                  className={`session-row-dot ${session.status === "streaming" ? "streaming" : ""}`}
+                  aria-hidden="true"
+                />
                 <span className="session-row-name">{session.sessionName ?? "Untitled session"}</span>
-                {session.status && session.status !== "idle" ? (
+                {session.status && session.status !== "idle" && session.status !== "streaming" ? (
                   <span className="session-row-status">{session.status}</span>
                 ) : null}
                 <span className="session-row-id">
