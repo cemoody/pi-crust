@@ -135,8 +135,12 @@ export function PromptComposer(props: PromptComposerProps) {
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
     if (next.length > 0) {
-      const status = next.length === 1 ? "Attached pasted image." : `Attached ${next.length} pasted files.`;
-      addAttachments(next, failures.length > 0 ? `${status} Could not read ${failures.length} other pasted item${failures.length === 1 ? "" : "s"}.` : status);
+      addAttachments(next);
+      if (failures.length > 0) {
+        setPasteWarning(`Attached ${next.length} item${next.length === 1 ? "" : "s"}, but could not read ${failures.length} other pasted item${failures.length === 1 ? "" : "s"}.`);
+      } else {
+        setPasteWarning(null);
+      }
       return;
     }
 
@@ -161,10 +165,10 @@ export function PromptComposer(props: PromptComposerProps) {
     };
   }
 
-  function addAttachments(next: readonly ComposerAttachment[], status: string) {
+  function addAttachments(next: readonly ComposerAttachment[]) {
     if (next.length === 0) return;
     setAttachments((current) => [...current, ...next]);
-    setPasteWarning(status);
+    setPasteWarning(null);
   }
 
   async function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
@@ -182,7 +186,7 @@ export function PromptComposer(props: PromptComposerProps) {
     const htmlAttachments = imageAttachmentsFromHtml(data.getData("text/html"));
     if (htmlAttachments.length > 0) {
       preventDefault();
-      addAttachments(htmlAttachments, htmlAttachments.length === 1 ? "Attached pasted image." : `Attached ${htmlAttachments.length} pasted images.`);
+      addAttachments(htmlAttachments);
       return;
     }
 
@@ -190,7 +194,7 @@ export function PromptComposer(props: PromptComposerProps) {
     const textAttachment = imageAttachmentFromText(text);
     if (textAttachment) {
       preventDefault();
-      addAttachments([textAttachment], "Attached pasted image.");
+      addAttachments([textAttachment]);
       return;
     }
 

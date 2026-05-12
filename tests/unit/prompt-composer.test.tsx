@@ -180,7 +180,7 @@ describe("PromptComposer", () => {
 
     expect(draft).toHaveValue("");
     expect(await screen.findByText("pasted image")).toBeInTheDocument();
-    expect(screen.getByText("Attached pasted image.")).toBeInTheDocument();
+    expect(screen.queryByText("Attached pasted image.")).not.toBeInTheDocument();
   });
 
   it("handles screenshot paste even when the prompt textarea is not focused", async () => {
@@ -196,7 +196,7 @@ describe("PromptComposer", () => {
     fireEvent.paste(document, { clipboardData });
 
     expect(await screen.findByText("screenshot.png")).toBeInTheDocument();
-    expect(screen.getByText("Attached pasted image.")).toBeInTheDocument();
+    expect(screen.queryByText("Attached pasted image.")).not.toBeInTheDocument();
   });
 
   it("pastes text into the prompt when no editable element is focused", () => {

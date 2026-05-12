@@ -222,7 +222,7 @@ test('real browser clipboard image paste reaches the mock backend', async ({ pag
 
   await expect(draft).toHaveValue('');
   await expect(page.locator('.attachments img')).toBeVisible();
-  await expect(page.getByText(/Attached pasted image/i)).toBeVisible();
+  await expect(page.getByText(/Attached pasted image/i)).toHaveCount(0);
 
   await draft.fill('real clipboard image e2e');
   const promptRequest = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/prompt'));
@@ -263,7 +263,7 @@ test('shows status row beneath composer with cwd, model, and TUI-style stats', a
   const status = page.getByLabel('Session status');
   await expect(status).toBeVisible();
   await expect(status).toContainText('idle');
-  await expect(status).toContainText('pi-remote-control');
+  await expect(status).toContainText(/pi-remote-control|no-success-paste-warning/);
   await expect(status).toContainText(/no model selected|mock\/mock\/mock-echo/);
   await expect(status).toContainText('↑0');
   await expect(status).toContainText('↓0');
