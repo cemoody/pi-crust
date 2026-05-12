@@ -1,0 +1,35 @@
+{
+  "docScrollW": 412,
+  "clientW": 412,
+  "pageScrolls": false,
+  "offendersInView": [
+    {
+      "tag": "code",
+      "cls": "language-ts",
+      "left": 43,
+      "right": 1921,
+      "text": "const veryLongVariableName = someFunctionThatReturnsAValue({"
+    },
+    {
+      "tag": "code",
+      "cls": "language-bash",
+      "left": 43,
+      "right": 2232,
+      "text": "curl -X POST https://api.example.com/v1/some/very/long/endpo"
+    }
+  ],
+  "codeBlocks": [
+    {
+      "clientWidth": 354,
+      "scrollWidth": 1906,
+      "isScrollable": true,
+      "right": 383
+    },
+    {
+      "clientWidth": 354,
+      "scrollWidth": 2217,
+      "isScrollable": true,
+      "right": 383
+    }
+  ]
+}

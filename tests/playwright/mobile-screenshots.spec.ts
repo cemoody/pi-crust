@@ -120,6 +120,67 @@ for (const vp of VIEWPORTS) {
       await shot(page, vp, '09-after-send');
     });
 
+    test('11 long code block (horizontal scroll repro)', async ({ page }, testInfo) => {
+      await page.goto('/');
+      await page.getByRole('button', { name: /^Long code session\b/ }).click();
+      await page.getByRole('heading', { name: 'Long output sample' }).waitFor();
+      // Let the mobile drawer slide-out transition complete.
+      await page.waitForTimeout(280);
+      await shot(page, vp, '11-long-code');
+
+      // Diagnostic: page-level horizontal scroll + per-code-block scrollability.
+      const overflow = await page.evaluate((vw) => {
+        const root = document.documentElement;
+        const docScrollW = root.scrollWidth;
+        const clientW = root.clientWidth;
+        // Skip the off-screen mobile sidebar drawer and anything inside it.
+        const isHiddenDrawer = (el: Element) =>
+          !!(el.closest('.session-dashboard.collapsed') && el.closest('.session-sidebar'));
+        const offenders: Array<{ tag: string; cls: string; left: number; right: number; text: string }> = [];
+        for (const el of Array.from(document.body.querySelectorAll('*'))) {
+          if (isHiddenDrawer(el)) continue;
+          const rect = (el as HTMLElement).getBoundingClientRect();
+          if (rect.right > vw + 1 || rect.left < -1) {
+            offenders.push({
+              tag: el.tagName.toLowerCase(),
+              cls: (el as HTMLElement).className?.toString().slice(0, 60) ?? '',
+              left: Math.round(rect.left),
+              right: Math.round(rect.right),
+              text: (el.textContent ?? '').trim().slice(0, 60),
+            });
+          }
+        }
+        const codeBlocks = Array.from(document.querySelectorAll('.code-block pre')).map((pre) => ({
+          clientWidth: (pre as HTMLElement).clientWidth,
+          scrollWidth: (pre as HTMLElement).scrollWidth,
+          isScrollable: (pre as HTMLElement).scrollWidth > (pre as HTMLElement).clientWidth,
+          right: Math.round((pre as HTMLElement).getBoundingClientRect().right),
+        }));
+        return {
+          docScrollW,
+          clientW,
+          pageScrolls: docScrollW > clientW,
+          offendersInView: offenders.slice(0, 10),
+          codeBlocks,
+        };
+      }, vp.width);
+      await testInfo.attach(`overflow-${vp.name}.json`, {
+        body: JSON.stringify(overflow, null, 2),
+        contentType: 'application/json',
+      });
+      await fs.writeFile(
+        path.join(OUT_ROOT, vp.name, '11-long-code-overflow.json'),
+        JSON.stringify(overflow, null, 2),
+      );
+      // Don't fail the test — this is a repro spec. We just record findings.
+      const scrollableCount = overflow.codeBlocks.filter((b) => b.isScrollable).length;
+      console.log(
+        `[overflow @ ${vp.name}] pageScrolls=${overflow.pageScrolls} ` +
+          `inViewOffenders=${overflow.offendersInView.length} ` +
+          `codeBlocks=${overflow.codeBlocks.length} scrollable=${scrollableCount}`,
+      );
+    });
+
     test('10 status bar visible', async ({ page }) => {
       await page.goto('/');
       await selectSeeded(page);

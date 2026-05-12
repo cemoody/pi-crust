@@ -35,13 +35,20 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Without min-width: 0, flex children can be wider than the parent if their
+     content is intrinsically wide (long code lines, URLs, etc.). */
+  min-width: 0;
+  width: 100%;
 }
 
 .timeline-turn {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
 }
+
+.message-card { min-width: 0; }
 
 .turn-footer {
   display: flex;
@@ -280,22 +287,49 @@
 }
 .markdown-lite th { background: var(--gray-060); font-weight: 500; }
 
+.markdown-lite { min-width: 0; overflow-wrap: anywhere; }
+.markdown-lite a { overflow-wrap: anywhere; word-break: break-word; }
+
 .markdown-lite code {
   background: var(--gray-080);
   border-radius: 4px;
   padding: 1px 5px;
   font-size: 12.5px;
   font-family: var(--font-mono);
-  white-space: nowrap;
+  /* Allow inline code to wrap at any character on narrow viewports rather than
+     overflowing horizontally. Falls back gracefully on wider screens. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .code-block {
   border: 1px solid var(--hairline);
   border-radius: 10px;
   background: var(--gray-060);
+  /* overflow:hidden previously clipped the inner <pre>'s horizontal scrollbar
+     so long code lines were invisible. We let the pre scroll instead. */
   overflow: hidden;
   margin: 10px 0;
   position: relative;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* Right-edge fade hint to indicate horizontal scrollability of the inner pre.
+   Overlay scrollbars on iOS/Android are invisible until the user scrolls, so
+   this gives an at-a-glance affordance that more code is hidden to the right. */
+.code-block::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 24px;
+  background: linear-gradient(to right, rgba(241, 238, 230, 0), var(--gray-060) 70%);
+  pointer-events: none;
+  border-top-right-radius: 9px;
+  border-bottom-right-radius: 9px;
 }
 
 .code-block button {
@@ -322,12 +356,32 @@
 .code-block pre {
   margin: 0;
   padding: 10px 14px;
-  overflow: auto;
+  /* scroll (not auto) so the affordance is always visible on overflow even if
+     overlay scrollbars would otherwise hide it. */
+  overflow-x: auto;
+  overflow-y: hidden;
   font-size: 12px;
   line-height: 1.5;
   background: transparent;
   white-space: pre;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  /* Reserve space for an always-visible horizontal scrollbar so users can see
+     that the block is scrollable when content overflows. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-300) transparent;
 }
+.code-block pre::-webkit-scrollbar {
+  height: 8px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.code-block pre::-webkit-scrollbar-track { background: transparent; }
+.code-block pre::-webkit-scrollbar-thumb {
+  background: var(--gray-300);
+  border-radius: 999px;
+}
+.code-block pre::-webkit-scrollbar-thumb:hover { background: var(--gray-400); }
 
 .code-block pre code,
 .markdown-lite pre code {
