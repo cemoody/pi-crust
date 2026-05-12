@@ -35,7 +35,10 @@
 
 .sidebar-toggle--floating {
   position: fixed;
-  top: 16px;
+  /* Vertically center on the active-session header h2 (title row). Matches:
+     dashboard pad 10 + active-session header margin-top 8 + pad-top 8 +
+     half of the ~26px action-icon content row, minus half the 24px toggle. */
+  top: 27px;
   left: 18px;
   z-index: 50;
   margin-left: 0;
