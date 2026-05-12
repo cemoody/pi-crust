@@ -733,7 +733,7 @@ async function resolveArtifactExtension(configured: false | string | undefined):
   return undefined;
 }
 
-function toSessionMessages(messages: readonly unknown[]): SessionMessage[] {
+export function toSessionMessages(messages: readonly unknown[]): SessionMessage[] {
   const result: SessionMessage[] = [];
   const toolCallIndexes = new Map<string, number>();
 
@@ -758,7 +758,21 @@ function toSessionMessages(messages: readonly unknown[]): SessionMessage[] {
 
     if (role === "assistant") {
       const text = contentText(message.content).trim();
-      if (text) result.push({ role: "assistant", content: text, timestamp });
+      const stopReason = typeof message.stopReason === "string" ? message.stopReason : undefined;
+      const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage : undefined;
+      // Emit an assistant entry whenever we have visible text OR when the
+      // turn ended in an error / non-trivial stopReason. Without this the
+      // WUI sees nothing for failed turns and looks "frozen".
+      const shouldEmit = text.length > 0 || stopReason === "error" || errorMessage !== undefined;
+      if (shouldEmit) {
+        result.push({
+          role: "assistant",
+          content: text,
+          timestamp,
+          ...(stopReason ? { stopReason } : {}),
+          ...(errorMessage ? { errorMessage } : {}),
+        });
+      }
 
       const blocks = Array.isArray(message.content) ? message.content : [];
       for (const block of blocks) {

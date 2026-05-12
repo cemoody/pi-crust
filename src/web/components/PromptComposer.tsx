@@ -1,5 +1,6 @@
 import { type ClipboardEvent as ReactClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
+import { downscaleImageIfNeeded } from "../utils/image-downscale.js";
 import "./prompt-composer.css";
 
 export interface ComposerAttachment {
@@ -135,7 +136,7 @@ export function PromptComposer(props: PromptComposerProps) {
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
     if (next.length > 0) {
-      addAttachments(next);
+      void addAttachments(next);
       if (failures.length > 0) {
         setPasteWarning(`Attached ${next.length} item${next.length === 1 ? "" : "s"}, but could not read ${failures.length} other pasted item${failures.length === 1 ? "" : "s"}.`);
       } else {
@@ -154,8 +155,13 @@ export function PromptComposer(props: PromptComposerProps) {
 
   async function fileToAttachment(file: File): Promise<ComposerAttachment> {
     const isImage = file.type.startsWith("image/");
-    const data = isImage ? await fileToBase64(file) : undefined;
-    const mimeType = file.type || (isImage ? "image/png" : undefined);
+    let data = isImage ? await fileToBase64(file) : undefined;
+    let mimeType = file.type || (isImage ? "image/png" : undefined);
+    if (isImage && data && mimeType) {
+      const shrunk = await downscaleImageIfNeeded({ data, mimeType });
+      data = shrunk.data;
+      mimeType = shrunk.mimeType;
+    }
     return {
       id: attachmentId(),
       name: file.name || (isImage ? "pasted image" : "attachment"),
@@ -165,10 +171,23 @@ export function PromptComposer(props: PromptComposerProps) {
     };
   }
 
-  function addAttachments(next: readonly ComposerAttachment[]) {
+  async function addAttachments(next: readonly ComposerAttachment[]) {
     if (next.length === 0) return;
-    setAttachments((current) => [...current, ...next]);
+    const shrunk = await Promise.all(next.map(maybeShrinkAttachment));
+    setAttachments((current) => [...current, ...shrunk]);
     setPasteWarning(null);
+  }
+
+  async function maybeShrinkAttachment(attachment: ComposerAttachment): Promise<ComposerAttachment> {
+    if (attachment.type !== "image" || !attachment.data || !attachment.mimeType) return attachment;
+    const result = await downscaleImageIfNeeded({ data: attachment.data, mimeType: attachment.mimeType });
+    if (!result.downscaled) return attachment;
+    return {
+      ...attachment,
+      data: result.data,
+      mimeType: result.mimeType,
+      previewUrl: `data:${result.mimeType};base64,${result.data}`,
+    };
   }
 
   async function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
@@ -186,7 +205,7 @@ export function PromptComposer(props: PromptComposerProps) {
     const htmlAttachments = imageAttachmentsFromHtml(data.getData("text/html"));
     if (htmlAttachments.length > 0) {
       preventDefault();
-      addAttachments(htmlAttachments);
+      void addAttachments(htmlAttachments);
       return;
     }
 
@@ -194,7 +213,7 @@ export function PromptComposer(props: PromptComposerProps) {
     const textAttachment = imageAttachmentFromText(text);
     if (textAttachment) {
       preventDefault();
-      addAttachments([textAttachment]);
+      void addAttachments([textAttachment]);
       return;
     }
 

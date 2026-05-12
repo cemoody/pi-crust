@@ -62,6 +62,10 @@ export interface SessionMessage {
   readonly customType?: string;
   /** Opaque per-customType payload. Schema is defined by the producing extension. */
   readonly details?: Record<string, unknown>;
+  /** Assistant-turn stop reason, e.g. "endTurn", "toolUse", "error". */
+  readonly stopReason?: string;
+  /** Provider error message captured when stopReason === "error". */
+  readonly errorMessage?: string;
 }
 
 export interface SessionMessageImage {

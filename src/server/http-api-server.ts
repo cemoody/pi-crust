@@ -410,7 +410,7 @@ function formatTokens(value: number): string {
   return `${(value / 1_000_000).toFixed(1)}M`;
 }
 
-function toDashboardMessages(messages: readonly SessionMessage[]) {
+export function toDashboardMessages(messages: readonly SessionMessage[]) {
   return messages.map((message, index) => ({
     id: `${message.timestamp}-${index}`,
     role: message.role === "assistant"
@@ -427,6 +427,8 @@ function toDashboardMessages(messages: readonly SessionMessage[]) {
     timestamp: message.timestamp,
     ...(message.customType ? { customType: message.customType } : {}),
     ...(message.details ? { details: message.details } : {}),
+    ...(message.stopReason ? { stopReason: message.stopReason } : {}),
+    ...(message.errorMessage ? { error: message.errorMessage } : {}),
   }));
 }
 
