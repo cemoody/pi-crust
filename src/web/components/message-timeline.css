@@ -448,3 +448,38 @@
   0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
   40% { opacity: 1; transform: translateY(-2px); }
 }
+
+/* ---- Rich artifacts (customType: "artifact") ---- */
+.message-card.custom.artifact .message-header { display: none; }
+
+.artifact-view {
+  margin: 4px 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.artifact-caption {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.artifact-vega-lite,
+.artifact-image,
+.artifact-html {
+  margin: 0;
+  display: block;
+  max-width: 100%;
+}
+
+.artifact-image { max-height: 480px; object-fit: contain; }
+
+.artifact-loading,
+.artifact-fallback,
+.artifact-error {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 8px 4px;
+}

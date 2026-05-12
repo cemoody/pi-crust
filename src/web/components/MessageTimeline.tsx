@@ -1,8 +1,36 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { copyTextToClipboard } from "../utils/clipboard.js";
 import "./message-timeline.css";
+
+// Lazy-loaded so vega/vega-lite (~600KB gzipped) is only fetched once a chart
+// actually appears in the timeline. The placeholder shell is rendered
+// synchronously so tests and screen readers see the artifact even before the
+// chart paints.
+const LazyVegaLiteChart = lazy(() => import("./VegaLiteChart.js"));
+
+export const VEGA_LITE_MIME = "application/vnd.vega-lite.v5+json";
+
+export interface TimelineArtifactRepresentation {
+  readonly mime: string;
+  readonly text?: string;
+  readonly html?: string;
+  readonly spec?: unknown;
+  readonly figure?: unknown;
+  readonly src?: { readonly kind: "url"; readonly url: string } | { readonly kind: "inline"; readonly svg: string };
+  readonly alt?: string;
+  readonly bytes?: number;
+  readonly width?: number;
+  readonly height?: number;
+}
+
+export interface TimelineArtifactDetails {
+  readonly version?: number;
+  readonly artifactGroupId: string;
+  readonly artifacts: readonly TimelineArtifactRepresentation[];
+  readonly caption?: string;
+}
 
 export interface TimelineImage {
   readonly id: string;
@@ -48,6 +76,8 @@ export interface TimelineMessage {
   readonly error?: string;
   readonly aborted?: boolean;
   readonly customLabel?: string;
+  readonly customType?: string;
+  readonly artifact?: TimelineArtifactDetails;
   readonly summaryKind?: "branch" | "compaction";
   readonly tool?: TimelineToolDetails;
   readonly timestamp?: number;
@@ -98,8 +128,9 @@ function renderMessage(message: TimelineMessage, hideThinking: boolean) {
       : <OrphanToolResult key={message.id} text={message.text} />;
   }
   const showLabel = message.role === "custom" || message.role === "summary";
+  const isArtifact = message.role === "custom" && message.customType === "artifact" && message.artifact;
   return (
-    <article key={message.id} className={`message-card ${message.role}`} aria-label={`${message.role} message`}>
+    <article key={message.id} className={`message-card ${message.role}${isArtifact ? " artifact" : ""}`} aria-label={`${message.role} message`}>
       <header className={`message-header ${showLabel ? "" : "is-hidden"}`}>
         <strong>{messageTitle(message)}</strong>
         {message.aborted ? <span className="badge warning">aborted</span> : null}
@@ -119,9 +150,13 @@ function renderMessage(message: TimelineMessage, hideThinking: boolean) {
         </details>
       ) : null}
 
-      <div className="message-bubble">
-        <MarkdownLite text={message.text} />
-      </div>
+      {isArtifact ? (
+        <ArtifactView artifact={message.artifact!} fallbackText={message.text} />
+      ) : (
+        <div className="message-bubble">
+          <MarkdownLite text={message.text} />
+        </div>
+      )}
 
       {message.error ? <p role="alert" className="message-error">{message.error}</p> : null}
 
@@ -384,6 +419,93 @@ function ArtifactFallback({ artifact }: { readonly artifact: TimelineArtifact })
       <strong>{artifact.title ?? `${artifact.kind} artifact`}</strong>
       <pre>{JSON.stringify(artifact.data ?? artifact, null, 2)}</pre>
     </section>
+  );
+}
+
+/**
+ * Renders a `customType: "artifact"` message from the @cemoody/pi-artifact extension.
+ * Walks the multi-MIME representations array in order and renders the first
+ * recognized format inline; always falls back to text/plain for unknown MIMEs.
+ */
+function ArtifactView({
+  artifact,
+  fallbackText,
+}: {
+  readonly artifact: TimelineArtifactDetails;
+  readonly fallbackText: string;
+}) {
+  const caption = artifact.caption;
+  const rendered = pickRenderableRepresentation(artifact.artifacts);
+
+  return (
+    <figure className="artifact-view" aria-label={caption ?? "Artifact"}>
+      {caption ? <figcaption className="artifact-caption">{caption}</figcaption> : null}
+      {rendered ?? <ArtifactPlainFallback artifacts={artifact.artifacts} message={fallbackText} />}
+    </figure>
+  );
+}
+
+function pickRenderableRepresentation(
+  reps: readonly TimelineArtifactRepresentation[],
+): React.ReactNode | null {
+  for (const rep of reps) {
+    const mime = rep.mime;
+    if (mime === VEGA_LITE_MIME && rep.spec !== undefined) {
+      return (
+        <figure
+          className="artifact-vega-lite"
+          data-testid="artifact-vega-lite"
+          data-spec={JSON.stringify(rep.spec)}
+        >
+          <Suspense fallback={<div className="artifact-loading">Loading chart…</div>}>
+            <LazyVegaLiteChart spec={rep.spec} />
+          </Suspense>
+        </figure>
+      );
+    }
+    if (typeof mime === "string" && mime.startsWith("image/")) {
+      const src = rep.src && rep.src.kind === "url" ? rep.src.url : undefined;
+      if (src) {
+        return (
+          <img
+            className="artifact-image"
+            data-testid="artifact-image"
+            src={src}
+            alt={rep.alt ?? ""}
+            loading="lazy"
+          />
+        );
+      }
+    }
+    if (mime === "text/html" && typeof rep.html === "string") {
+      return (
+        <iframe
+          className="artifact-html"
+          data-testid="artifact-html"
+          // SECURITY: never include allow-same-origin. The artifact ships in the
+          // host page's bundle, so an iframe with same-origin access could read
+          // app cookies and DOM.
+          sandbox="allow-scripts"
+          srcDoc={rep.html}
+          style={{ width: "100%", height: rep.height ?? 320, border: 0 }}
+          title="Artifact"
+        />
+      );
+    }
+  }
+  return null;
+}
+
+function ArtifactPlainFallback({
+  artifacts,
+  message,
+}: {
+  readonly artifacts: readonly TimelineArtifactRepresentation[];
+  readonly message: string;
+}) {
+  const text = artifacts.find((rep) => rep.mime === "text/plain")?.text ?? message;
+  return (
+    <div className="artifact-fallback" data-testid="artifact-fallback">{text}</div>
   );
 }
 

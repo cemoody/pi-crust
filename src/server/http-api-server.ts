@@ -260,6 +260,8 @@ function toDashboardMessages(messages: readonly SessionMessage[]) {
     tool: message.tool,
     images: message.images,
     timestamp: message.timestamp,
+    ...(message.customType ? { customType: message.customType } : {}),
+    ...(message.details ? { details: message.details } : {}),
   }));
 }
 

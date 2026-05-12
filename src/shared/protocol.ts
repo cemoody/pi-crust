@@ -83,6 +83,8 @@ export interface WireMessage {
   readonly role: string;
   readonly content?: unknown;
   readonly timestamp?: number;
+  readonly customType?: string;
+  readonly details?: Record<string, unknown>;
 }
 
 export interface ToolResultLike {

@@ -798,6 +798,26 @@ function wireMessageToTimeline(id: string, message: WireMessage, forceAssistantP
     role,
     text: contentText(message.content),
     ...(forceAssistantProvider || role === "assistant" ? { provider: "pi" } : {}),
+    ...(message.customType === undefined ? {} : { customType: message.customType }),
+    ...extractArtifactTimeline(message.customType, message.details),
+  };
+}
+
+function extractArtifactTimeline(
+  customType: string | undefined,
+  details: Record<string, unknown> | undefined,
+): { readonly artifact?: import("./MessageTimeline.js").TimelineArtifactDetails } {
+  if (customType !== "artifact" || !isRecord(details)) return {};
+  const artifacts = Array.isArray(details.artifacts) ? details.artifacts : undefined;
+  const artifactGroupId = typeof details.artifactGroupId === "string" ? details.artifactGroupId : undefined;
+  if (!artifacts || !artifactGroupId) return {};
+  return {
+    artifact: {
+      artifactGroupId,
+      artifacts: artifacts as unknown as readonly import("./MessageTimeline.js").TimelineArtifactRepresentation[],
+      ...(typeof details.version === "number" ? { version: details.version } : {}),
+      ...(typeof details.caption === "string" ? { caption: details.caption } : {}),
+    },
   };
 }
 
@@ -1016,6 +1036,8 @@ function toTimelineMessage(message: import("../api/session-api.js").DashboardMes
     ...(message.error === undefined ? {} : { error: message.error }),
     ...(message.tool === undefined ? {} : { tool: message.tool }),
     ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
+    ...(message.customType === undefined ? {} : { customType: message.customType }),
+    ...extractArtifactTimeline(message.customType, message.details),
     ...(message.images && message.images.length > 0
       ? {
           images: message.images.map((image, index) => ({

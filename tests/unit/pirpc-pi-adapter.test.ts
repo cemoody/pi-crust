@@ -44,7 +44,8 @@ function handle(message) {
       { type: "text", text: "hello from rpc" },
       { type: "toolCall", id: "call_hist", name: "bash", arguments: { command: "npm test" } }
     ] },
-    { role: "toolResult", timestamp: 1001, toolCallId: "call_hist", isError: false, content: [{ type: "text", text: "> pi-remote-control@0.0.0 test\\nPASS tests/unit/foo.test.ts" }] }
+    { role: "toolResult", timestamp: 1001, toolCallId: "call_hist", isError: false, content: [{ type: "text", text: "> pi-remote-control@0.0.0 test\\nPASS tests/unit/foo.test.ts" }] },
+    { role: "custom", timestamp: 1002, customType: "artifact", content: "Small bar chart (Vega-Lite spec, 170 B)", display: true, details: { version: 1, artifactGroupId: "abc123", caption: "Small bar chart", artifacts: [ { mime: "application/vnd.vega-lite.v5+json", spec: { mark: "bar", data: { values: [{ x: "a", y: 3 }, { x: "b", y: 5 }] }, encoding: { x: { field: "x", type: "nominal" }, y: { field: "y", type: "quantitative" } } } }, { mime: "text/plain", text: "Small bar chart" } ] } }
   ] } });
   if (message.type === "prompt") {
     send({ id: message.id, type: "response", command: "prompt", success: true });
@@ -84,6 +85,19 @@ describe("PiRpcAdapter", () => {
 
     const messages = await session.handle.getMessages();
     expect(messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "custom",
+        customType: "artifact",
+        content: "Small bar chart (Vega-Lite spec, 170 B)",
+        details: expect.objectContaining({
+          artifactGroupId: "abc123",
+          caption: "Small bar chart",
+          artifacts: expect.arrayContaining([
+            expect.objectContaining({ mime: "application/vnd.vega-lite.v5+json" }),
+            expect.objectContaining({ mime: "text/plain", text: "Small bar chart" }),
+          ]),
+        }),
+      }),
       expect.objectContaining({ role: "assistant", content: "hello from rpc" }),
       expect.objectContaining({
         role: "tool",

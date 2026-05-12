@@ -204,6 +204,58 @@ describe("MessageTimeline", () => {
     expect(orphan.querySelector("blockquote")).toBeNull();
   });
 
+  it("renders an inline Vega-Lite chart from a custom artifact message", () => {
+    const spec = {
+      mark: "bar",
+      data: { values: [{ x: "a", y: 3 }, { x: "b", y: 5 }, { x: "c", y: 2 }] },
+      encoding: {
+        x: { field: "x", type: "nominal" },
+        y: { field: "y", type: "quantitative" },
+      },
+    };
+    render(<MessageTimeline messages={[{
+      id: "art-1",
+      role: "custom",
+      customType: "artifact",
+      text: "Small bar chart (Vega-Lite spec, 170 B)",
+      artifact: {
+        version: 1,
+        artifactGroupId: "abc123",
+        caption: "Small bar chart",
+        artifacts: [
+          { mime: "application/vnd.vega-lite.v5+json", spec },
+          { mime: "text/plain", text: "Small bar chart" },
+        ],
+      },
+    }]} />);
+
+    const figure = screen.getByTestId("artifact-vega-lite");
+    expect(figure).toBeInTheDocument();
+    // The spec is exposed on a data attribute so we can verify the right payload
+    // reached the renderer, even though the chart itself paints asynchronously.
+    expect(JSON.parse(figure.getAttribute("data-spec") ?? "null")).toEqual(spec);
+    expect(screen.getByText("Small bar chart")).toBeInTheDocument();
+  });
+
+  it("falls back to text/plain when no recognized artifact representation is present", () => {
+    render(<MessageTimeline messages={[{
+      id: "art-2",
+      role: "custom",
+      customType: "artifact",
+      text: "Mystery artifact",
+      artifact: {
+        version: 1,
+        artifactGroupId: "def456",
+        artifacts: [
+          { mime: "application/x-unknown", data: "opaque" } as any,
+          { mime: "text/plain", text: "Mystery artifact fallback" },
+        ],
+      },
+    }]} />);
+
+    expect(screen.getByTestId("artifact-fallback")).toHaveTextContent("Mystery artifact fallback");
+  });
+
   it("renders Pi Remote Control artifact metadata from tool results", () => {
     render(<MessageTimeline messages={[{
       id: "t1",

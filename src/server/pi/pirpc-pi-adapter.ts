@@ -430,6 +430,20 @@ function toSessionMessages(messages: readonly unknown[]): SessionMessage[] {
     const role = String(message.role ?? "");
     const timestamp = typeof message.timestamp === "number" ? message.timestamp : Date.now();
 
+    if (role === "custom" || (typeof message.customType === "string" && message.customType.length > 0)) {
+      const customType = String(message.customType ?? "");
+      const content = typeof message.content === "string" ? message.content : contentText(message.content);
+      const details = isRecord(message.details) ? (message.details as Record<string, unknown>) : undefined;
+      result.push({
+        role: "custom",
+        content,
+        timestamp,
+        ...(customType ? { customType } : {}),
+        ...(details ? { details } : {}),
+      });
+      continue;
+    }
+
     if (role === "assistant") {
       const text = contentText(message.content).trim();
       if (text) result.push({ role: "assistant", content: text, timestamp });
