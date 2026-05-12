@@ -35,6 +35,10 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 720px)").matches;
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [view, setView] = useState<DashboardView>("sessions");
   const [renaming, setRenaming] = useState(false);
@@ -49,6 +53,20 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [forkError, setForkError] = useState<string | null>(null);
   const [draftSeedBySession, setDraftSeedBySession] = useState<Record<string, { readonly id: string; readonly value: string }>>({});
   const streamDraftIdsRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 720px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  // Auto-close the sidebar drawer on mobile whenever the active session changes.
+  useEffect(() => {
+    if (isMobile && activeSessionId) setSidebarOpen(false);
+  }, [isMobile, activeSessionId]);
 
   useEffect(() => {
     if (!filtersOpen) return;
@@ -454,7 +472,14 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   }
 
   return (
-    <main className={`session-dashboard ${sidebarOpen ? "" : "collapsed"}`}>
+    <main className={`session-dashboard ${sidebarOpen ? "" : "collapsed"} ${isMobile ? "is-mobile" : ""}`}>
+      {sidebarOpen && isMobile ? (
+        <div
+          className="sidebar-backdrop"
+          aria-hidden="true"
+          onClick={() => setSidebarOpen(false)}
+        />
+      ) : null}
       {sidebarOpen ? null : (
         <button
           type="button"

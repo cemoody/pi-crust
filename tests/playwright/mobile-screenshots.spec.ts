@@ -29,6 +29,8 @@ async function shot(page: Page, vp: { name: string }, name: string) {
 async function selectSeeded(page: Page) {
   await page.getByRole('button', { name: /^Seeded session\b/ }).click();
   await page.getByText('previously sent hello').waitFor();
+  // Let the mobile drawer slide-out transition complete before screenshotting.
+  await page.waitForTimeout(280);
 }
 
 test.beforeAll(async () => {

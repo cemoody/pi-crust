@@ -767,8 +767,103 @@
   font-size: 12px;
 }
 
+/* ---------- Mobile (≤720px): sidebar becomes a slide-over drawer ---------- */
+.sidebar-backdrop {
+  display: none;
+}
+
 @media (max-width: 720px) {
-  .session-dashboard { grid-template-columns: 1fr; grid-template-rows: auto 1fr; padding: 6px; }
-  .session-sidebar { max-height: 42vh; }
-  .session-status-bar { flex-wrap: wrap; padding-left: 12px; padding-right: 12px; }
+  .session-dashboard {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    padding: 6px;
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+  .session-dashboard.collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  /* Drawer styling: fixed, slides in from the left, overlays content. */
+  .session-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(320px, 86vw);
+    max-height: none;
+    margin: 0;
+    border-radius: 0 16px 16px 0;
+    z-index: 70;
+    transform: translateX(0);
+    transition: transform 200ms ease, opacity 160ms ease;
+  }
+  .session-dashboard.collapsed .session-sidebar {
+    transform: translateX(-100%);
+    opacity: 1;
+    pointer-events: none;
+    border-color: var(--hairline);
+    box-shadow: none;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 22, 6, 0.36);
+    z-index: 65;
+    animation: sidebar-backdrop-in 160ms ease;
+  }
+  @keyframes sidebar-backdrop-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* Floating expand button: small pill in the top-left of the active session. */
+  .sidebar-toggle--floating {
+    top: 10px;
+    left: 10px;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    box-shadow: var(--shadow-1);
+  }
+
+  /* Active session takes the full viewport; the floating button needs room. */
+  .active-session > header {
+    padding: 8px 12px 8px 56px;
+    gap: 6px;
+  }
+  .session-dashboard:not(.collapsed) .active-session > header {
+    padding-left: 56px;
+  }
+
+  .session-status-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-left: 12px;
+    padding-right: 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ---------- Very narrow phones (≤420px): tighten everything ---------- */
+@media (max-width: 420px) {
+  .session-dashboard { padding: 4px; }
+  .active-session > header {
+    padding: 6px 8px 6px 52px;
+    gap: 4px;
+  }
+  .session-dashboard:not(.collapsed) .active-session > header {
+    padding-left: 52px;
+  }
+  /* Hide the inline subtitle id; it crowds the action row. */
+  .active-subtitle { display: none; }
+  /* Drop the disabled icon buttons (Compact, Tree, Clone) to free space. */
+  .active-actions button.action-icon:disabled { display: none; }
+  .active-actions-sep { display: none; }
+  .active-actions { gap: 0; }
+  .active-actions button.action-icon { width: 32px; height: 32px; }
 }
