@@ -1,8 +1,10 @@
 import { EventEmitter } from "node:events";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
+import net from "node:net";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   AuthStorage,
@@ -22,17 +24,22 @@ import type {
   PiEventListener,
   PiSessionHandle,
   PromptAttachment,
+  ReattachSessionOptions,
   SessionListItem,
   SessionMessage,
   SessionState,
+  SeqEventListener,
   Unsubscribe,
 } from "./types.js";
+import { WorkerRegistry } from "../session/worker-registry.js";
 
 export interface PiRpcAdapterOptions {
   readonly sessionDir?: string;
   readonly piCommand?: string;
   readonly extraArgs?: readonly string[];
   readonly artifactExtension?: false | string;
+  readonly runtimeDir?: string;
+  readonly supervisorScript?: string;
 }
 
 interface RpcResponse {
@@ -50,25 +57,33 @@ interface PendingRequest {
 }
 
 /**
- * Pi adapter backed by `pi --mode rpc` subprocesses.
+ * Pi adapter backed by detached `pi --mode rpc` workers.
  *
- * Each hot session owns one RPC process. This keeps the app-level Pi boundary on
- * Pi's public JSONL protocol and lets the web UI consume the richer RPC event
- * stream, including tool_execution_* and extension_ui_request events.
+ * Each hot session corresponds to a long-lived `scripts/pirpc-supervisor.mjs`
+ * subprocess (spawned detached, stdio="ignore", unref()) that owns the real
+ * pi child's stdio and exposes a Unix-domain-socket JSONL transport. When
+ * the API server restarts the workers keep running; the new API instance
+ * reads ${runtimeDir}/sessions/*.json (via WorkerRegistry) and reattaches.
  */
 export class PiRpcAdapter implements PiAdapter {
   private readonly authStorage = AuthStorage.create();
   private readonly modelRegistry = ModelRegistry.create(this.authStorage);
   private readonly piCommand: string;
+  private readonly workerRegistry: WorkerRegistry;
+  private readonly supervisorScript: string;
 
   constructor(private readonly options: PiRpcAdapterOptions = {}) {
     this.piCommand = options.piCommand ?? resolvePiCommand();
+    this.workerRegistry = new WorkerRegistry(options.runtimeDir === undefined ? {} : { runtimeDir: options.runtimeDir });
+    this.supervisorScript = options.supervisorScript ?? resolveSupervisorScript();
   }
 
   async createSession(options: CreateSessionOptions): Promise<PiSessionHandle> {
-    const handle = await PiRpcSessionHandle.start({
+    const handle = await PiRpcSessionHandle.spawn({
       cwd: path.resolve(options.cwd),
       piCommand: this.piCommand,
+      supervisorScript: this.supervisorScript,
+      workerRegistry: this.workerRegistry,
       ...(this.options.sessionDir === undefined ? {} : { sessionDir: this.options.sessionDir }),
       ...(this.options.extraArgs === undefined ? {} : { extraArgs: this.options.extraArgs }),
       ...(this.options.artifactExtension === undefined ? {} : { artifactExtension: this.options.artifactExtension }),
@@ -80,13 +95,25 @@ export class PiRpcAdapter implements PiAdapter {
   async openSession(options: OpenSessionOptions): Promise<PiSessionHandle> {
     const sessionFile = path.resolve(options.sessionFile);
     const cwd = await findSessionCwd(sessionFile, this.options.sessionDir) ?? process.cwd();
-    return PiRpcSessionHandle.start({
+    return PiRpcSessionHandle.spawn({
       cwd,
       sessionFile,
       piCommand: this.piCommand,
+      supervisorScript: this.supervisorScript,
+      workerRegistry: this.workerRegistry,
       ...(this.options.sessionDir === undefined ? {} : { sessionDir: this.options.sessionDir }),
       ...(this.options.extraArgs === undefined ? {} : { extraArgs: this.options.extraArgs }),
       ...(this.options.artifactExtension === undefined ? {} : { artifactExtension: this.options.artifactExtension }),
+    });
+  }
+
+  async reattachSession(options: ReattachSessionOptions): Promise<PiSessionHandle> {
+    return PiRpcSessionHandle.reattach({
+      sessionId: options.sessionId,
+      socketPath: options.socketPath,
+      sessionFile: options.sessionFile,
+      cwd: options.cwd,
+      workerRegistry: this.workerRegistry,
     });
   }
 
@@ -115,13 +142,23 @@ export class PiRpcAdapter implements PiAdapter {
   }
 }
 
-interface StartRpcSessionOptions {
+interface SpawnSessionOptions {
   readonly cwd: string;
   readonly sessionFile?: string;
   readonly sessionDir?: string;
   readonly piCommand: string;
+  readonly supervisorScript: string;
+  readonly workerRegistry: WorkerRegistry;
   readonly extraArgs?: readonly string[];
   readonly artifactExtension?: false | string;
+}
+
+interface ReattachInternalOptions {
+  readonly sessionId: string;
+  readonly socketPath: string;
+  readonly sessionFile: string;
+  readonly cwd: string;
+  readonly workerRegistry: WorkerRegistry;
 }
 
 class PiRpcSessionHandle implements PiSessionHandle {
@@ -129,12 +166,14 @@ class PiRpcSessionHandle implements PiSessionHandle {
   cwd: string;
   sessionFile: string;
 
-  private readonly rpc: JsonlRpcProcess;
+  private readonly rpc: SupervisedRpcProcess;
   private readonly emitter = new EventEmitter();
+  private readonly seqEmitter = new EventEmitter();
   private latestState: Record<string, unknown>;
   private disposed = false;
+  private detached = false;
 
-  private constructor(rpc: JsonlRpcProcess, cwd: string, state: Record<string, unknown>) {
+  private constructor(rpc: SupervisedRpcProcess, cwd: string, state: Record<string, unknown>) {
     this.rpc = rpc;
     this.cwd = cwd;
     this.latestState = state;
@@ -143,16 +182,13 @@ class PiRpcSessionHandle implements PiSessionHandle {
     if (!this.id) throw new Error("Pi RPC session did not report a sessionId");
     if (!this.sessionFile) throw new Error("Pi RPC session did not report a sessionFile");
 
-    this.rpc.onEvent((event) => {
-      if (isRecord(event) && event.type === "extension_ui_request") {
-        this.emitter.emit("event", event);
-        return;
-      }
+    this.rpc.onEvent((event, seq) => {
       this.emitter.emit("event", event as PiEvent);
+      this.seqEmitter.emit("event", event as PiEvent, seq);
     });
   }
 
-  static async start(options: StartRpcSessionOptions): Promise<PiRpcSessionHandle> {
+  static async spawn(options: SpawnSessionOptions): Promise<PiRpcSessionHandle> {
     const args = ["--mode", "rpc"];
     if (options.sessionDir) args.push("--session-dir", options.sessionDir);
     if (options.sessionFile) args.push("--session", options.sessionFile);
@@ -160,7 +196,13 @@ class PiRpcSessionHandle implements PiSessionHandle {
     if (extension) args.push("--extension", extension);
     args.push(...(options.extraArgs ?? []));
 
-    const rpc = new JsonlRpcProcess(options.piCommand, args, options.cwd);
+    const rpc = await SupervisedRpcProcess.spawnDetached({
+      piCommand: options.piCommand,
+      args,
+      cwd: options.cwd,
+      supervisorScript: options.supervisorScript,
+      workerRegistry: options.workerRegistry,
+    });
     try {
       const state = await rpc.request("get_state");
       if (!isRecord(state)) throw new Error("Pi RPC get_state returned invalid data");
@@ -169,6 +211,21 @@ class PiRpcSessionHandle implements PiSessionHandle {
       await rpc.dispose();
       throw error;
     }
+  }
+
+  static async reattach(options: ReattachInternalOptions): Promise<PiRpcSessionHandle> {
+    const rpc = await SupervisedRpcProcess.connect({
+      socketPath: options.socketPath,
+      // After API restart we want the supervisor to replay its full ring so
+      // SSE clients reconnecting to the new API process can be backfilled.
+      resumeFromSeq: 0,
+    });
+    const state = await rpc.request("get_state");
+    if (!isRecord(state)) {
+      await rpc.detach();
+      throw new Error("Pi RPC get_state returned invalid data during reattach");
+    }
+    return new PiRpcSessionHandle(rpc, options.cwd, state);
   }
 
   async getState(): Promise<SessionState> {
@@ -246,11 +303,25 @@ class PiRpcSessionHandle implements PiSessionHandle {
     return () => this.emitter.off("event", listener);
   }
 
+  subscribeWithSeq(listener: SeqEventListener): Unsubscribe {
+    this.seqEmitter.on("event", listener);
+    return () => this.seqEmitter.off("event", listener);
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
     this.emitter.removeAllListeners();
+    this.seqEmitter.removeAllListeners();
     await this.rpc.dispose();
+  }
+
+  async detach(): Promise<void> {
+    if (this.disposed || this.detached) return;
+    this.detached = true;
+    this.emitter.removeAllListeners();
+    this.seqEmitter.removeAllListeners();
+    await this.rpc.detach();
   }
 
   private async refreshIdentity(): Promise<void> {
@@ -333,47 +404,105 @@ class PiRpcSessionHandle implements PiSessionHandle {
   }
 }
 
-class JsonlRpcProcess {
-  private readonly child: ChildProcessWithoutNullStreams;
+interface SupervisedSpawnOptions {
+  readonly piCommand: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly supervisorScript: string;
+  readonly workerRegistry: WorkerRegistry;
+}
+
+interface SupervisedConnectOptions {
+  readonly socketPath: string;
+  readonly resumeFromSeq: number | null;
+}
+
+interface SupervisorHelloAck {
+  readonly t: "hello";
+  readonly sessionId?: string;
+  readonly sessionFile?: string;
+  readonly cwd?: string;
+  readonly pid?: number;
+  readonly lastSeq?: number;
+  readonly ringLowSeq?: number | null;
+}
+
+/**
+ * Client side of the supervisor wire protocol. Owns a single Unix-socket
+ * connection at a time, but the supervisor process itself outlives any
+ * particular adapter connection.
+ */
+class SupervisedRpcProcess {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly eventEmitter = new EventEmitter();
+  private socket: net.Socket;
   private buffer = "";
-  private stderr = "";
   private nextId = 1;
   private closed = false;
+  private disposeRequested = false;
+  private lastSeq = 0;
 
-  constructor(command: string, args: readonly string[], cwd: string) {
-    this.child = spawn(command, args, { cwd, stdio: "pipe", env: process.env });
-    this.child.stdout.setEncoding("utf8");
-    this.child.stderr.setEncoding("utf8");
-    this.child.stdout.on("data", (chunk: string) => this.receive(chunk));
-    this.child.stderr.on("data", (chunk: string) => {
-      this.stderr = `${this.stderr}${chunk}`.slice(-16_000);
-    });
-    this.child.on("error", (error) => this.failAll(error));
-    this.child.on("exit", (code, signal) => {
-      this.closed = true;
-      this.failAll(new Error(`Pi RPC process exited (${signal ?? code ?? "unknown"})${this.stderr ? `: ${this.stderr.trim()}` : ""}`));
-    });
+  private constructor(socket: net.Socket) {
+    this.socket = socket;
+    this.attachSocketHandlers();
   }
 
-  onEvent(listener: (event: unknown) => void): Unsubscribe {
+  static async spawnDetached(options: SupervisedSpawnOptions): Promise<SupervisedRpcProcess> {
+    await options.workerRegistry.ensureDirs();
+    const workerToken = crypto.randomUUID();
+    const readyPath = options.workerRegistry.workerReadyPath(workerToken);
+    // Defensively clear any stale ready file (shouldn't exist; token is fresh).
+    try { await fs.unlink(readyPath); } catch { /* ignore */ }
+
+    const child = spawn(process.execPath, [
+      options.supervisorScript,
+      "--command", options.piCommand,
+      "--cwd", options.cwd,
+      "--args", JSON.stringify(options.args),
+      "--runtime-dir", options.workerRegistry.runtimeDir,
+      "--worker-token", workerToken,
+    ], {
+      cwd: options.cwd,
+      env: process.env,
+      stdio: "ignore",
+      detached: true,
+    });
+    child.unref();
+    child.on("error", () => { /* surfaced via ready timeout below */ });
+
+    const ready = await waitForReadyFile(readyPath, 15_000);
+    const socket = await connectSocket(ready.socketPath);
+    const process_ = new SupervisedRpcProcess(socket);
+    await process_.handshake(null);
+    // Best-effort cleanup of the transient ready file.
+    fs.unlink(readyPath).catch(() => {});
+    return process_;
+  }
+
+  static async connect(options: SupervisedConnectOptions): Promise<SupervisedRpcProcess> {
+    const socket = await connectSocket(options.socketPath);
+    const process_ = new SupervisedRpcProcess(socket);
+    await process_.handshake(options.resumeFromSeq);
+    return process_;
+  }
+
+  onEvent(listener: (event: unknown, seq: number) => void): Unsubscribe {
     this.eventEmitter.on("event", listener);
     return () => this.eventEmitter.off("event", listener);
   }
 
   send(payload: Record<string, unknown>): void {
-    if (this.closed) throw new Error("Pi RPC process is closed");
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`, "utf8");
+    if (this.closed) throw new Error("Pi RPC supervisor connection is closed");
+    this.socket.write(JSON.stringify({ t: "rpc", data: payload }) + "\n");
   }
 
   async request(type: string, payload: Record<string, unknown> = {}): Promise<unknown> {
-    if (this.closed) throw new Error("Pi RPC process is closed");
+    if (this.closed) throw new Error("Pi RPC supervisor connection is closed");
     const id = `pirpc-${this.nextId++}`;
     const message = { id, type, ...payload };
     const response = await new Promise<RpcResponse>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.child.stdin.write(`${JSON.stringify(message)}\n`, "utf8", (error) => {
+      this.socket.write(JSON.stringify({ t: "rpc", data: message }) + "\n", (error) => {
         if (!error) return;
         this.pending.delete(id);
         reject(error);
@@ -383,52 +512,131 @@ class JsonlRpcProcess {
     return response.data;
   }
 
+  /** Tell the supervisor to shut its pi child down. Used for explicit deletes. */
   async dispose(): Promise<void> {
+    if (this.disposeRequested) return;
+    this.disposeRequested = true;
+    if (!this.closed) {
+      try { this.socket.write(JSON.stringify({ t: "shutdown" }) + "\n"); } catch {}
+    }
+    this.failAll(new Error("Pi RPC supervisor disposed"));
+    await this.closeSocket();
+  }
+
+  /** Close the socket without shutting the supervisor down (API SIGTERM path). */
+  async detach(): Promise<void> {
+    this.failAll(new Error("Pi RPC supervisor detached"));
+    await this.closeSocket();
+  }
+
+  private async handshake(resumeFromSeq: number | null): Promise<SupervisorHelloAck> {
+    const helloWritten = new Promise<void>((resolve, reject) => {
+      this.socket.write(JSON.stringify({ t: "hello", resumeFromSeq }) + "\n", (err) => err ? reject(err) : resolve());
+    });
+    await helloWritten;
+    const ack = await this.waitForFrame((frame) => isRecord(frame) && frame.t === "hello");
+    return ack as SupervisorHelloAck;
+  }
+
+  private waitForFrame(predicate: (frame: unknown) => boolean): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => {
+        this.off("frame", onFrame);
+        this.off("close", onClose);
+        reject(new Error("Timed out waiting for supervisor frame"));
+      }, 10_000);
+      const onFrame = (frame: unknown) => {
+        if (!predicate(frame)) return;
+        clearTimeout(deadline);
+        this.off("frame", onFrame);
+        this.off("close", onClose);
+        resolve(frame);
+      };
+      const onClose = () => {
+        clearTimeout(deadline);
+        this.off("frame", onFrame);
+        this.off("close", onClose);
+        reject(new Error("Supervisor connection closed before frame arrived"));
+      };
+      this.on("frame", onFrame);
+      this.on("close", onClose);
+    });
+  }
+
+  // Tiny internal event bus.
+  private internal = new EventEmitter();
+  private on(event: "frame" | "close", listener: (...args: any[]) => void) { this.internal.on(event, listener); }
+  private off(event: "frame" | "close", listener: (...args: any[]) => void) { this.internal.off(event, listener); }
+  private emitInternal(event: "frame" | "close", ...args: unknown[]) { this.internal.emit(event, ...args); }
+
+  private attachSocketHandlers(): void {
+    this.socket.setEncoding("utf8");
+    this.socket.on("data", (chunk: string) => this.receive(chunk));
+    this.socket.on("error", (error) => this.failAll(error));
+    this.socket.on("close", () => {
+      this.closed = true;
+      this.emitInternal("close");
+      this.failAll(new Error("Pi RPC supervisor connection closed"));
+    });
+  }
+
+  private async closeSocket(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    for (const pending of this.pending.values()) pending.reject(new Error("Pi RPC process disposed"));
-    this.pending.clear();
-    this.child.kill("SIGTERM");
     await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        this.child.kill("SIGKILL");
-        resolve();
-      }, 1_000);
-      this.child.once("exit", () => {
-        clearTimeout(timeout);
-        resolve();
-      });
+      let settled = false;
+      const done = () => { if (settled) return; settled = true; resolve(); };
+      this.socket.once("close", done);
+      try { this.socket.end(); } catch { /* ignore */ }
+      // Don't wait for the supervisor's FIN — destroy promptly so detach is bounded.
+      setTimeout(() => { try { this.socket.destroy(); } catch {} done(); }, 100).unref();
     });
   }
 
   private receive(chunk: string): void {
     this.buffer += chunk;
-    for (;;) {
+    while (true) {
       const index = this.buffer.indexOf("\n");
       if (index === -1) return;
       const line = this.buffer.slice(0, index).replace(/\r$/, "");
       this.buffer = this.buffer.slice(index + 1);
       if (!line.trim()) continue;
-      this.receiveLine(line);
+      let parsed: unknown;
+      try { parsed = JSON.parse(line); } catch { continue; }
+      this.emitInternal("frame", parsed);
+      this.dispatchFrame(parsed);
     }
   }
 
-  private receiveLine(line: string): void {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      this.stderr = `${this.stderr}\n${line}`.slice(-16_000);
+  private dispatchFrame(frame: unknown): void {
+    if (!isRecord(frame)) return;
+    if (frame.t === "hello") return; // handled by handshake
+    if (frame.t === "resync") {
+      // Inform consumers that they should refetch state. We surface as a
+      // synthetic event so the registry-level ring can mark the resync point.
+      this.eventEmitter.emit("event", {
+        type: "session_resync",
+        fromSeq: frame.fromSeq,
+        ringLowSeq: frame.ringLowSeq,
+        lastSeq: frame.lastSeq,
+      }, typeof frame.lastSeq === "number" ? frame.lastSeq : this.lastSeq);
       return;
     }
-    if (isRecord(parsed) && parsed.type === "response" && typeof parsed.id === "string") {
-      const pending = this.pending.get(parsed.id);
-      if (!pending) return;
-      this.pending.delete(parsed.id);
-      pending.resolve(parsed as unknown as RpcResponse);
-      return;
+    if (frame.t === "event") {
+      const seq = typeof frame.seq === "number" ? frame.seq : this.lastSeq + 1;
+      this.lastSeq = seq;
+      const data = frame.data;
+      if (isRecord(data) && data.type === "response" && typeof data.id === "string") {
+        const pending = this.pending.get(data.id);
+        if (pending) {
+          this.pending.delete(data.id);
+          pending.resolve(data as unknown as RpcResponse);
+        }
+        // Don't surface responses as events to consumers; matches old behavior.
+        return;
+      }
+      this.eventEmitter.emit("event", data, seq);
     }
-    this.eventEmitter.emit("event", parsed);
   }
 
   private failAll(error: Error): void {
@@ -437,7 +645,45 @@ class JsonlRpcProcess {
   }
 }
 
-async function findSessionCwd(sessionFile: string, sessionDir?: string): Promise<string | undefined> {
+async function waitForReadyFile(file: string, timeoutMs: number): Promise<{ sessionId: string; socketPath: string; pid: number }> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const text = await fs.readFile(file, "utf8");
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed.sessionId === "string" && typeof parsed.socketPath === "string") {
+        return parsed;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+    await sleep(50);
+  }
+  throw lastError instanceof Error
+    ? new Error(`Pi RPC supervisor did not become ready: ${lastError.message}`)
+    : new Error("Pi RPC supervisor did not become ready");
+}
+
+function connectSocket(socketPath: string): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ path: socketPath });
+    const onError = (err: Error) => { cleanup(); reject(err); };
+    const onConnect = () => { cleanup(); resolve(socket); };
+    const cleanup = () => {
+      socket.off("error", onError);
+      socket.off("connect", onConnect);
+    };
+    socket.once("error", onError);
+    socket.once("connect", onConnect);
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function findSessionCwd(sessionFile: string, _sessionDir?: string): Promise<string | undefined> {
   try {
     const sessions = await SessionManager.listAll();
     const match = sessions.find((item: any) => path.resolve(String(item.path)) === path.resolve(sessionFile));
@@ -450,6 +696,21 @@ async function findSessionCwd(sessionFile: string, sessionDir?: string): Promise
 function resolvePiCommand(): string {
   const local = path.resolve(process.cwd(), "node_modules", ".bin", process.platform === "win32" ? "pi.cmd" : "pi");
   return existsSync(local) ? local : "pi";
+}
+
+function resolveSupervisorScript(): string {
+  // src/server/pi/pirpc-pi-adapter.ts -> scripts/pirpc-supervisor.mjs (top-level)
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(here, "../../../scripts/pirpc-supervisor.mjs"),
+    path.resolve(process.cwd(), "scripts/pirpc-supervisor.mjs"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  // Fall back to project-root resolution; the supervisor will fail with a
+  // clear error if this is wrong.
+  return path.resolve(process.cwd(), "scripts/pirpc-supervisor.mjs");
 }
 
 async function resolveArtifactExtension(configured: false | string | undefined): Promise<string | undefined> {

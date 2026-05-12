@@ -107,8 +107,16 @@ export interface OpenSessionOptions {
   readonly sessionFile: string;
 }
 
+export interface ReattachSessionOptions {
+  readonly sessionId: string;
+  readonly socketPath: string;
+  readonly sessionFile: string;
+  readonly cwd: string;
+}
+
 export type Unsubscribe = () => void;
 export type PiEventListener = (event: PiEvent) => void;
+export type SeqEventListener = (event: PiEvent, seq: number) => void;
 
 export interface PiSessionHandle {
   readonly id: string;
@@ -125,7 +133,12 @@ export interface PiSessionHandle {
   clone?(): Promise<CloneSessionResult>;
   respondToExtensionUi?(response: ExtensionUiResponse): Promise<void>;
   subscribe(listener: PiEventListener): Unsubscribe;
+  /** Optional: subscribe and receive the supervisor-assigned monotonic seq alongside each event. */
+  subscribeWithSeq?(listener: SeqEventListener): Unsubscribe;
+  /** RPC-shutdown the worker process. Used on explicit session delete. */
   dispose(): Promise<void>;
+  /** Close the worker connection without killing it (used on API SIGTERM/SIGINT). */
+  detach?(): Promise<void>;
 }
 
 export interface PiAdapter {
@@ -133,4 +146,6 @@ export interface PiAdapter {
   openSession(options: OpenSessionOptions): Promise<PiSessionHandle>;
   listSessions(cwd?: string): Promise<readonly SessionListItem[]>;
   listModels(): Promise<readonly ModelInfo[]>;
+  /** Reattach to a detached worker the API server discovered at boot. */
+  reattachSession?(options: ReattachSessionOptions): Promise<PiSessionHandle>;
 }
