@@ -277,8 +277,7 @@ Update README with:
 
 ## Follow-up work
 
-1. Detached Pi RPC worker/session-host so API restarts do not kill live sessions.
-2. Historical artifact replay from persisted Pi session files.
-3. Artifact file serving/copying into a controlled per-session artifact directory.
-4. Optional named SSE event types instead of only default `message` events.
-5. WebSocket parity for extension UI requests/responses if the WebSocket protocol becomes the primary transport.
+1. Historical artifact replay from persisted Pi session files.
+2. Artifact file serving/copying into a controlled per-session artifact directory.
+3. Optional named SSE event types instead of only default `message` events.
+4. WebSocket parity for extension UI requests/responses if the WebSocket protocol becomes the primary transport.
