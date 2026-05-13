@@ -24,7 +24,7 @@
 
   --background-1: #FBFAF7;
   --background-2: var(--gray-060);
-  --surface-1: rgba(255, 255, 255, 0.75);
+  --surface-1: #FFFFFF;
   --hairline: var(--gray-100);
   --text-primary: var(--black-900);
   --text-secondary: var(--gray-700);
