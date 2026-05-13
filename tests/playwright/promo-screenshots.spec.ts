@@ -33,6 +33,49 @@ async function selectSession(page: Page, name: RegExp) {
   await page.waitForTimeout(500);
 }
 
+/**
+ * Vega-Lite is React.lazy + dynamic-imported, then renders an <svg> into a
+ * div. waitFor({state:'attached'}) on the wrapper isn't enough — the wrapper
+ * exists immediately, but the chart paints seconds later (download + parse +
+ * compile of vega-embed, plus a layout pass before the spec's width:'container'
+ * picks up the real width). Wait for the actual svg with non-zero width.
+ */
+async function waitForVegaPaint(page: Page) {
+  // Listen for chart-side console errors so failures are diagnosable.
+  page.on("console", (m) => {
+    if (m.type() === "error") console.log("[browser-error]", m.text());
+  });
+  page.on("pageerror", (err) => console.log("[browser-pageerror]", err.message));
+
+  await page.locator('[data-testid="artifact-vega-lite"]').first().waitFor({ state: "attached", timeout: 20_000 });
+  // Vega-embed is dynamically imported AND its parent uses width:"container"
+  // which only resolves after the first layout pass. Poll for the svg with
+  // non-zero dimensions; give it a long-ish budget on slow CI / cold caches.
+  await page.waitForFunction(() => {
+    const svg = document.querySelector('[data-testid="artifact-vega-lite"] svg');
+    if (!svg) return false;
+    const rect = (svg as SVGElement).getBoundingClientRect();
+    return rect.width > 100 && rect.height > 50;
+  }, undefined, { timeout: 25_000, polling: 150 });
+  // Final paint settle so axis labels finish.
+  await page.waitForTimeout(400);
+}
+
+async function waitForHtmlArtifact(page: Page) {
+  await page.locator('[data-testid="artifact-html"]').first().waitFor({ state: "attached", timeout: 10_000 });
+  // The iframe uses sandbox="allow-scripts" *without* allow-same-origin, so
+  // contentDocument is null to the parent (intentional, for safety). Wait for
+  // a non-empty srcdoc + non-zero rect instead, then give the iframe time to
+  // actually paint its own document.
+  await page.waitForFunction(() => {
+    const ifr = document.querySelector('[data-testid="artifact-html"]') as HTMLIFrameElement | null;
+    if (!ifr) return false;
+    const rect = ifr.getBoundingClientRect();
+    return (ifr.getAttribute("srcdoc")?.length ?? 0) > 50 && rect.width > 100 && rect.height > 100;
+  }, undefined, { timeout: 10_000, polling: 100 });
+  await page.waitForTimeout(700);
+}
+
 test.beforeAll(async () => {
   for (const vp of [MOBILE, TABLET, DESKTOP]) {
     await fs.rm(path.join(OUT_ROOT, vp.name), { recursive: true, force: true });
@@ -63,17 +106,14 @@ for (const vp of [MOBILE, TABLET]) {
     test("03 vega-lite artifact", async ({ page }) => {
       await page.goto("/");
       await selectSession(page, /Latency investigation/);
-      // Wait for the chart to actually paint.
-      await page.locator('[data-testid="artifact-vega-lite"]').first().waitFor({ state: "attached" });
-      await page.waitForTimeout(900);
+      await waitForVegaPaint(page);
       await shot(page, vp.name, "03-vega-lite-artifact");
     });
 
     test("04 html dashboard artifact", async ({ page }) => {
       await page.goto("/");
       await selectSession(page, /Cluster sweep/);
-      await page.locator('[data-testid="artifact-html"]').first().waitFor();
-      await page.waitForTimeout(600);
+      await waitForHtmlArtifact(page);
       await shot(page, vp.name, "04-html-artifact");
     });
 
@@ -104,16 +144,14 @@ test.describe(`promo @ ${DESKTOP.name} (${DESKTOP.width}x${DESKTOP.height})`, ()
   test("01 desktop overview with vega-lite", async ({ page }) => {
     await page.goto("/");
     await selectSession(page, /Latency investigation/);
-    await page.locator('[data-testid="artifact-vega-lite"]').first().waitFor({ state: "attached" });
-    await page.waitForTimeout(900);
+    await waitForVegaPaint(page);
     await shot(page, DESKTOP.name, "01-overview-vega-lite");
   });
 
   test("02 desktop overview with html dashboard", async ({ page }) => {
     await page.goto("/");
     await selectSession(page, /Cluster sweep/);
-    await page.locator('[data-testid="artifact-html"]').first().waitFor();
-    await page.waitForTimeout(600);
+    await waitForHtmlArtifact(page);
     await shot(page, DESKTOP.name, "02-overview-html");
   });
 
