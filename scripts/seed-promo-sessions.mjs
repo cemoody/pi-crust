@@ -13,10 +13,18 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(process.env.PI_REMOTE_SESSION_ROOT ?? ".tmp/playwright-sessions");
 const cwd = path.resolve(process.env.PI_REMOTE_PROJECT_ROOT ?? process.cwd());
 await fs.mkdir(root, { recursive: true });
+
+async function loadAsDataUrl(relPath, mime) {
+  const abs = path.resolve(here, "..", relPath);
+  const buf = await fs.readFile(abs);
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
 
 async function writeSession({ id, name, messages, order }) {
   const sessionFile = path.join(root, `${String(order).padStart(13, "0")}_${id}.mock-session.json`);
@@ -432,6 +440,301 @@ await writeSession({
       },
     },
     { role: "assistant", content: "Inception complete — the markdown above was rendered inline by `show_artifact`. That's the whole pitch.", timestamp: 1700000050400 },
+  ],
+});
+
+// ───────────────────────────────────────────────────────────────────────
+// Session 7: Showcase tour. One session, multiple artifact kinds stacked so
+// the promo GIF can scroll through them: markdown pitch → always-animating
+// D3 waveform → seaborn statistical figure (image) → interactive widget with
+// click-targetable controls. Used by scripts/record-showcase-gif.mjs.
+// ───────────────────────────────────────────────────────────────────────
+
+// Always-running D3 animation: three streaming sparklines + pulsing dots.
+// Uses requestAnimationFrame so it visibly "plays" the whole time the
+// recorder is parked on it.
+const d3StreamHtml = `<!doctype html>
+<html><head><meta charset="utf-8" /><style>
+  html, body { margin: 0; padding: 12px 14px; height: 100%; box-sizing: border-box; background: #fbf7ec; font: 12px/1.3 -apple-system, system-ui, sans-serif; color: #0f172a; }
+  h2 { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: #475569; }
+  .row { display: grid; grid-template-columns: 90px 1fr 70px; gap: 8px 12px; align-items: center; margin-bottom: 6px; }
+  .label { font-weight: 600; color: #1e293b; }
+  .value { font-feature-settings: "tnum"; text-align: right; color: #0f172a; }
+  svg { width: 100%; height: 38px; display: block; background: white; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(15,23,42,0.06); }
+  .stat { stroke-width: 1.6; fill: none; }
+  .stat-fill { opacity: 0.18; stroke: none; }
+  .pulse { stroke: rgba(15,23,42,0.22); stroke-width: 1; }
+</style></head><body>
+<h2>Live service metrics · streaming</h2>
+<div class="row">
+  <span class="label" style="color:#7c5cff">qps</span>
+  <svg id="chart-qps" viewBox="0 0 240 38" preserveAspectRatio="none"></svg>
+  <span class="value" id="val-qps">—</span>
+</div>
+<div class="row">
+  <span class="label" style="color:#06b6d4">p99 ms</span>
+  <svg id="chart-p99" viewBox="0 0 240 38" preserveAspectRatio="none"></svg>
+  <span class="value" id="val-p99">—</span>
+</div>
+<div class="row">
+  <span class="label" style="color:#22c55e">cpu %</span>
+  <svg id="chart-cpu" viewBox="0 0 240 38" preserveAspectRatio="none"></svg>
+  <span class="value" id="val-cpu">—</span>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script>
+  const W = 240, H = 38, N = 60;
+  const series = {
+    qps:  { color: "#7c5cff", base: 820, spread: 40, data: [], fmt: v => v.toFixed(0) },
+    p99:  { color: "#06b6d4", base: 170, spread: 25, data: [], fmt: v => v.toFixed(0) + "ms" },
+    cpu:  { color: "#22c55e", base: 0.52, spread: 0.07, data: [], fmt: v => (v*100).toFixed(1) + "%" },
+  };
+  for (const [k, s] of Object.entries(series)) {
+    for (let i = 0; i < N; i++) s.data.push(s.base + (Math.sin(i * 0.3) + Math.cos(i * 0.5)) * s.spread * 0.5);
+    const svg = d3.select("#chart-" + k);
+    s.line = d3.line().x((_, i) => (i / (N - 1)) * W).y(v => H - 2 - ((v - (s.base - s.spread*1.8)) / (s.spread*3.6)) * (H - 4)).curve(d3.curveMonotoneX);
+    s.area = d3.area().x((_, i) => (i / (N - 1)) * W).y0(H).y1(v => H - 2 - ((v - (s.base - s.spread*1.8)) / (s.spread*3.6)) * (H - 4)).curve(d3.curveMonotoneX);
+    s.pathArea = svg.append("path").attr("class", "stat-fill").attr("fill", s.color);
+    s.pathLine = svg.append("path").attr("class", "stat").attr("stroke", s.color);
+    s.dot = svg.append("circle").attr("r", 2.6).attr("fill", s.color);
+    s.ring = svg.append("circle").attr("r", 2.6).attr("class", "pulse").attr("fill", "none").attr("stroke", s.color);
+  }
+  let t = 0;
+  function tick() {
+    t += 1;
+    for (const [k, s] of Object.entries(series)) {
+      const noise = (Math.random() - 0.5) * s.spread * 0.55;
+      const drift = Math.sin(t * 0.05 + (k === "p99" ? 1.4 : k === "cpu" ? 2.8 : 0)) * s.spread * 0.6;
+      const next = s.base + drift + noise;
+      s.data.push(next); if (s.data.length > N) s.data.shift();
+      s.pathLine.datum(s.data).attr("d", s.line);
+      s.pathArea.datum(s.data).attr("d", s.area);
+      const lastY = (() => { const arr = s.line(s.data); return null; })();
+      const lx = W, ly = H - 2 - ((next - (s.base - s.spread*1.8)) / (s.spread*3.6)) * (H - 4);
+      s.dot.attr("cx", lx).attr("cy", ly);
+      const pulse = (t % 30) / 30;
+      s.ring.attr("cx", lx).attr("cy", ly).attr("r", 2.6 + pulse * 7).attr("opacity", 1 - pulse);
+      document.getElementById("val-" + k).textContent = s.fmt(next);
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+  document.body.setAttribute("data-d3-stream-ready", "1");
+<\/script></body></html>`;
+
+// Interactive widget: signal generator with click-targetable buttons +
+// sliders. The recorder will press Play, swap waveform type, etc. Buttons
+// expose data-control IDs so the host can postMessage(getControls) to learn
+// their iframe-relative positions and aim real mouse clicks at them.
+const widgetHtml = `<!doctype html>
+<html><head><meta charset="utf-8" /><style>
+  :root { color-scheme: light; }
+  html, body { margin: 0; padding: 14px 16px; height: 100%; box-sizing: border-box; background: #fbf7ec; font: 13px/1.4 -apple-system, system-ui, sans-serif; color: #0f172a; }
+  h2 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: #475569; }
+  .wrap { display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px; height: 100%; }
+  canvas { width: 100%; height: 100%; display: block; background: #0f172a; border-radius: 10px; box-shadow: inset 0 0 0 1px rgba(15,23,42,0.2); }
+  .group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .group .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; margin-right: 4px; }
+  button { font: inherit; font-size: 12px; padding: 6px 10px; border: 1px solid #cbd5e1; background: white; color: #0f172a; border-radius: 999px; cursor: pointer; transition: background 80ms, color 80ms, border-color 80ms; }
+  button:hover { border-color: #7c5cff; }
+  button.active { background: #7c5cff; color: white; border-color: #7c5cff; }
+  button.play { background: #22c55e; color: white; border-color: #22c55e; min-width: 80px; }
+  button.play.paused { background: white; color: #0f172a; border-color: #cbd5e1; }
+  .slider { display: flex; align-items: center; gap: 6px; }
+  input[type=range] { accent-color: #7c5cff; }
+  .readout { font-feature-settings: "tnum"; color: #475569; min-width: 56px; text-align: right; }
+</style></head><body>
+<div class="wrap">
+  <h2>Signal generator · interactive widget</h2>
+  <div class="group">
+    <span class="lbl">wave</span>
+    <button data-control="wave-sine"     class="wave active">sine</button>
+    <button data-control="wave-square"   class="wave">square</button>
+    <button data-control="wave-saw"      class="wave">saw</button>
+    <button data-control="wave-noise"    class="wave">noise</button>
+    <button data-control="playpause" class="play">Pause</button>
+  </div>
+  <canvas id="scope" width="800" height="260"></canvas>
+  <div class="group">
+    <span class="lbl">freq</span>
+    <div class="slider">
+      <input data-control="freq" id="freq" type="range" min="1" max="20" step="1" value="4" />
+      <span id="freq-out" class="readout">4 Hz</span>
+    </div>
+    <span class="lbl" style="margin-left:14px">amp</span>
+    <div class="slider">
+      <input data-control="amp" id="amp" type="range" min="10" max="100" step="5" value="70" />
+      <span id="amp-out" class="readout">0.70</span>
+    </div>
+  </div>
+</div>
+<script>
+  const canvas = document.getElementById("scope");
+  const ctx = canvas.getContext("2d");
+  function fit() {
+    const r = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", fit); fit();
+
+  let wave = "sine";
+  let playing = true;
+  let freq = 4, amp = 0.70;
+  let t = 0;
+
+  function sample(x) {
+    const phase = x * freq * Math.PI * 2 + t;
+    if (wave === "sine")   return Math.sin(phase) * amp;
+    if (wave === "square") return Math.sign(Math.sin(phase)) * amp * 0.95;
+    if (wave === "saw")    return ((((phase / Math.PI) % 2) + 2) % 2 - 1) * amp;
+    return (Math.random() * 2 - 1) * amp;
+  }
+
+  function draw() {
+    const r = canvas.getBoundingClientRect();
+    const W = r.width, H = r.height;
+    ctx.fillStyle = "#0f172a"; ctx.fillRect(0, 0, W, H);
+    // grid
+    ctx.strokeStyle = "rgba(148,163,184,0.18)"; ctx.lineWidth = 1;
+    for (let i = 0; i <= 8; i++) { const y = i / 8 * H; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    for (let i = 0; i <= 12; i++) { const x = i / 12 * W; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    // baseline
+    ctx.strokeStyle = "rgba(148,163,184,0.5)"; ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke();
+    // waveform
+    ctx.lineWidth = 2.4;
+    const grad = ctx.createLinearGradient(0, 0, W, 0);
+    grad.addColorStop(0, "#7c5cff"); grad.addColorStop(0.5, "#06b6d4"); grad.addColorStop(1, "#22c55e");
+    ctx.strokeStyle = grad;
+    ctx.beginPath();
+    const steps = 480;
+    for (let i = 0; i <= steps; i++) {
+      const x = i / steps * W;
+      const v = sample(i / steps);
+      const y = H/2 - v * (H/2 - 8);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  function loop() {
+    if (playing) { t += 0.06; }
+    draw();
+    requestAnimationFrame(loop);
+  }
+  loop();
+
+  function setWave(w) {
+    wave = w;
+    document.querySelectorAll("button.wave").forEach((b) => b.classList.toggle("active", b.dataset.control === "wave-" + w));
+  }
+  document.querySelectorAll("button.wave").forEach((b) => b.addEventListener("click", () => setWave(b.dataset.control.replace("wave-", ""))));
+
+  const pp = document.querySelector('[data-control="playpause"]');
+  pp.addEventListener("click", () => {
+    playing = !playing;
+    pp.textContent = playing ? "Pause" : "Play";
+    pp.classList.toggle("paused", !playing);
+  });
+
+  const freqEl = document.getElementById("freq"); const freqOut = document.getElementById("freq-out");
+  freqEl.addEventListener("input", () => { freq = +freqEl.value; freqOut.textContent = freq + " Hz"; });
+  const ampEl = document.getElementById("amp"); const ampOut = document.getElementById("amp-out");
+  ampEl.addEventListener("input", () => { amp = +ampEl.value / 100; ampOut.textContent = amp.toFixed(2); });
+
+  // postMessage bridge: parent recorder asks for control positions; we reply
+  // with each control's bounding rect in iframe-local coords. Parent maps
+  // them to screen coords and clicks them with real OS mouse events.
+  window.addEventListener("message", (event) => {
+    if (!event.data || event.data.type !== "getControls" || !event.source) return;
+    const out = [];
+    document.querySelectorAll("[data-control]").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      out.push({ id: el.dataset.control, x: r.x, y: r.y, w: r.width, h: r.height });
+    });
+    event.source.postMessage({ type: "controls", payload: out }, "*");
+  });
+
+  document.body.setAttribute("data-widget-ready", "1");
+<\/script></body></html>`;
+
+const seabornDataUrl = await loadAsDataUrl(
+  "promo-screenshots/static/seaborn-latency.png",
+  "image/png",
+);
+
+await writeSession({
+  order: 7,
+  id: "promo-showcase-tour",
+  name: "Showcase tour",
+  messages: [
+    { role: "user", content: "Give me a quick guided tour of what the WUI can render — markdown, a live D3 animation, a real statistical plot, and an interactive widget. Stack them in one session so I can scroll through.", timestamp: 1700000060100 },
+    { role: "assistant", content: "Coming up — four artifacts in this conversation, one of each kind.", timestamp: 1700000060200 },
+    {
+      role: "custom",
+      content: "Why pi-remote-control?",
+      timestamp: 1700000060300,
+      customType: "artifact",
+      details: {
+        version: 1,
+        artifactGroupId: "tour-md-group",
+        caption: "Why pi-remote-control?",
+        artifacts: [
+          { mime: "text/markdown", text: inceptionMarkdown },
+          { mime: "text/plain", text: inceptionMarkdown },
+        ],
+      },
+    },
+    { role: "assistant", content: "Now a live D3 animation — three streaming sparklines updating every frame:", timestamp: 1700000060400 },
+    {
+      role: "custom",
+      content: "Live service metrics · streaming D3",
+      timestamp: 1700000060500,
+      customType: "artifact",
+      details: {
+        version: 1,
+        artifactGroupId: "tour-d3-group",
+        caption: "Live service metrics · streaming sparklines (D3 v7, requestAnimationFrame)",
+        artifacts: [
+          { mime: "text/html", html: d3StreamHtml, height: 200 },
+          { mime: "text/plain", text: "Streaming D3 sparklines." },
+        ],
+      },
+    },
+    { role: "assistant", content: "Next, a proper statistical figure — generated server-side with seaborn (violin + regression + correlation heatmap + KDE) and returned as a PNG artifact:", timestamp: 1700000060600 },
+    {
+      role: "custom",
+      content: "Seaborn latency posthoc",
+      timestamp: 1700000060700,
+      customType: "artifact",
+      details: {
+        version: 1,
+        artifactGroupId: "tour-seaborn-group",
+        caption: "Service-latency posthoc · seaborn (violin + regression + corr heatmap + KDE)",
+        artifacts: [
+          { mime: "image/png", src: { kind: "url", url: seabornDataUrl }, alt: "Seaborn statistical figure with violin plot, regression scatter, correlation heatmap, and KDE" },
+          { mime: "text/plain", text: "Seaborn statistical figure (PNG)." },
+        ],
+      },
+    },
+    { role: "assistant", content: "And finally an interactive widget — a real signal generator with clickable controls. Try Sine / Square / Saw, and the sliders:", timestamp: 1700000060800 },
+    {
+      role: "custom",
+      content: "Signal generator widget",
+      timestamp: 1700000060900,
+      customType: "artifact",
+      details: {
+        version: 1,
+        artifactGroupId: "tour-widget-group",
+        caption: "Signal generator · click the waveform buttons to swap mode",
+        artifacts: [
+          { mime: "text/html", html: widgetHtml, height: 380 },
+          { mime: "text/plain", text: "Interactive signal generator widget." },
+        ],
+      },
+    },
+    { role: "assistant", content: "End of tour — one session, four artifact kinds, all rendered inline. Same `show_artifact` extension all the way down.", timestamp: 1700000061000 },
   ],
 });
 

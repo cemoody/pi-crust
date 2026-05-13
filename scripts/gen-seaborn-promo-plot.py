@@ -1,0 +1,137 @@
+"""
+Generates the seaborn plot used in the showcase-tour promo session.
+
+A multi-facet seaborn figure that looks legitimately statistical:
+  - violin + strip overlay of latency by deploy ring (top-left)
+  - regression scatter with marginal hists (top-right, JointGrid)
+  - heatmap of correlation matrix (bottom-left)
+  - KDE ridge-style plot of p99 by service (bottom-right)
+
+Output: promo-screenshots/static/seaborn-latency.png
+"""
+from __future__ import annotations
+import os, math
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+
+rng = np.random.default_rng(7)
+
+# ---- synthetic data: per-request samples across deploy rings + services
+rings = ["canary", "staging", "prod-us", "prod-eu"]
+services = ["checkout", "payments", "search", "feed", "auth"]
+rows = []
+for ring in rings:
+    base = {"canary": 150, "staging": 130, "prod-us": 120, "prod-eu": 140}[ring]
+    spread = {"canary": 45, "staging": 30, "prod-us": 22, "prod-eu": 28}[ring]
+    n = 220
+    samples = rng.normal(base, spread, n).clip(40, None)
+    # occasional outliers in canary
+    if ring == "canary":
+        samples = np.concatenate([samples, rng.normal(260, 30, 25).clip(40, None)])
+    for s in samples:
+        rows.append({"ring": ring, "latency_ms": float(s)})
+df_ring = pd.DataFrame(rows)
+
+# scatter: cpu vs latency, colored by ring
+n2 = 320
+cpu = rng.uniform(0.15, 0.95, n2)
+ring_idx = rng.integers(0, len(rings), n2)
+latency = 70 + cpu * 120 + rng.normal(0, 18, n2) + ring_idx * 6
+df_scatter = pd.DataFrame({
+    "cpu": cpu,
+    "latency_ms": latency,
+    "ring": [rings[i] for i in ring_idx],
+})
+
+# correlation matrix
+features = ["cpu", "rss_mb", "qps", "p50_ms", "p99_ms", "err_rate"]
+m = rng.normal(0, 1, (400, len(features)))
+# induce some structure
+m[:, 1] += 0.6 * m[:, 0]
+m[:, 3] += 0.7 * m[:, 0] + 0.3 * m[:, 2]
+m[:, 4] += 0.85 * m[:, 3] + 0.4 * m[:, 0]
+m[:, 5] += 0.55 * m[:, 4] - 0.2 * m[:, 2]
+corr = pd.DataFrame(m, columns=features).corr()
+
+# kde by service
+kde_rows = []
+for s in services:
+    base = {"checkout": 180, "payments": 210, "search": 95, "feed": 130, "auth": 80}[s]
+    samples = rng.normal(base, 22, 350).clip(30, None)
+    for v in samples:
+        kde_rows.append({"service": s, "p99_ms": float(v)})
+df_kde = pd.DataFrame(kde_rows)
+
+# ---- theme
+sns.set_theme(style="whitegrid", context="talk", palette="viridis")
+plt.rcParams.update({
+    "figure.facecolor": "#fbf7ec",
+    "axes.facecolor":   "#fbf7ec",
+    "savefig.facecolor": "#fbf7ec",
+    "axes.edgecolor":   "#1e293b",
+    "axes.labelcolor":  "#1e293b",
+    "xtick.color":      "#334155",
+    "ytick.color":      "#334155",
+    "text.color":       "#0f172a",
+    "axes.titleweight": "bold",
+    "axes.titlesize":   13,
+    "axes.labelsize":   11,
+    "xtick.labelsize":  10,
+    "ytick.labelsize":  10,
+    "font.family":      "DejaVu Sans",
+})
+
+fig = plt.figure(figsize=(11, 7), dpi=140)
+gs = GridSpec(2, 2, figure=fig, hspace=0.42, wspace=0.30)
+
+# (0,0) violin + strip
+ax1 = fig.add_subplot(gs[0, 0])
+sns.violinplot(data=df_ring, x="ring", y="latency_ms", hue="ring",
+               inner=None, ax=ax1, palette="viridis", linewidth=0.8,
+               cut=0, density_norm="width", legend=False)
+sns.stripplot(data=df_ring.sample(220, random_state=3), x="ring", y="latency_ms",
+              ax=ax1, color="#0f172a", alpha=0.35, size=2.4, jitter=0.18)
+ax1.set_title("Latency distribution by deploy ring")
+ax1.set_xlabel(""); ax1.set_ylabel("latency (ms)")
+
+# (0,1) regression scatter
+ax2 = fig.add_subplot(gs[0, 1])
+sns.scatterplot(data=df_scatter, x="cpu", y="latency_ms", hue="ring",
+                ax=ax2, palette="viridis", s=22, alpha=0.75, edgecolor="none")
+sns.regplot(data=df_scatter, x="cpu", y="latency_ms", scatter=False,
+            ax=ax2, color="#0f172a", line_kws={"lw": 1.6, "alpha": 0.85})
+ax2.set_title("CPU vs latency  ·  pooled regression")
+ax2.set_xlabel("CPU utilization"); ax2.set_ylabel("latency (ms)")
+ax2.legend(title=None, fontsize=8, loc="upper left", frameon=False, ncol=2)
+
+# (1,0) heatmap
+ax3 = fig.add_subplot(gs[1, 0])
+mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
+sns.heatmap(corr, mask=mask, ax=ax3, cmap="rocket_r", vmin=-1, vmax=1,
+            annot=True, fmt=".2f", annot_kws={"size": 9},
+            cbar_kws={"shrink": 0.7, "label": "ρ"}, square=True, linewidths=0.4,
+            linecolor="#fbf7ec")
+ax3.set_title("Feature correlation matrix")
+
+# (1,1) kde ridges
+ax4 = fig.add_subplot(gs[1, 1])
+sns.kdeplot(data=df_kde, x="p99_ms", hue="service", fill=True, alpha=0.35,
+            ax=ax4, common_norm=False, palette="viridis", linewidth=1.2)
+ax4.set_title("P99 latency density per service")
+ax4.set_xlabel("p99 (ms)"); ax4.set_ylabel("density")
+ax4.legend_.set_title(None) if ax4.get_legend() else None
+
+fig.suptitle("Service-latency posthoc · 7-day rollup",
+             fontsize=15, fontweight="bold", y=0.995, color="#0f172a")
+fig.text(0.5, 0.005, "generated by ops-skill seaborn-report · 2026-05-13",
+         ha="center", fontsize=9, color="#64748b")
+
+out = os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
+                                   "promo-screenshots", "static",
+                                   "seaborn-latency.png"))
+os.makedirs(os.path.dirname(out), exist_ok=True)
+fig.savefig(out, bbox_inches="tight", pad_inches=0.25)
+print(f"wrote {out}")
