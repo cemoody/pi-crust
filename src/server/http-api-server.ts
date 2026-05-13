@@ -25,14 +25,48 @@ export interface HttpApiServerOptions {
   readonly defaultCwd?: string;
   readonly cronStore?: CronStore;
   readonly cronScheduler?: CronScheduler;
+  /**
+   * Where to append client-side telemetry events (one JSON line per event).
+   * Used to investigate spurious browser refreshes. Omit to disable logging.
+   */
+  readonly clientEventLogPath?: string;
 }
 
 interface HttpApiServerContext extends HttpApiServerOptions {
   readonly coldSessionFiles: Map<string, string>;
+  readonly clientEventLog?: ClientEventLog;
+}
+
+const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
+
+/** Append-only JSON-lines logger used for client telemetry. Lazy-creates the file. */
+interface ClientEventLog {
+  append(payload: Record<string, unknown>): Promise<void>;
+}
+
+function createClientEventLog(filePath: string): ClientEventLog {
+  let queue: Promise<void> = Promise.resolve();
+  return {
+    append(payload) {
+      queue = queue.then(async () => {
+        try {
+          await fsp.mkdir(path.dirname(filePath), { recursive: true });
+          await fsp.appendFile(filePath, `${JSON.stringify(payload)}\n`, "utf8");
+        } catch (error) {
+          console.warn(`client-event log append failed: ${error instanceof Error ? error.message : error}`);
+        }
+      });
+      return queue;
+    },
+  };
 }
 
 export function createHttpApiServer(options: HttpApiServerOptions): http.Server {
-  const context: HttpApiServerContext = { ...options, coldSessionFiles: new Map() };
+  const context: HttpApiServerContext = {
+    ...options,
+    coldSessionFiles: new Map(),
+    ...(options.clientEventLogPath ? { clientEventLog: createClientEventLog(options.clientEventLogPath) } : {}),
+  };
   return http.createServer((req, res) => {
     void handle(req, res, context).catch((error) => sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) }));
   });
@@ -66,6 +100,8 @@ async function startDefaultServer(): Promise<void> {
   const cronStore = new CronStore(cronFile);
   const cronScheduler = new CronScheduler({ store: cronStore, registry });
   void cronScheduler.start().catch((error) => console.error("[cron] failed to start scheduler", error));
+  const clientEventLogPath = process.env.PI_REMOTE_CLIENT_EVENT_LOG
+    ?? path.resolve(process.cwd(), "logs", "client-events.jsonl");
   const server = createHttpApiServer({
     registry,
     adapterKind,
@@ -74,6 +110,7 @@ async function startDefaultServer(): Promise<void> {
     defaultCwd: process.cwd(),
     cronStore,
     cronScheduler,
+    clientEventLogPath,
   });
   // Reattach any detached Pi RPC workers that survived a previous API process.
   try {
@@ -123,6 +160,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && url.pathname === "/api/health") {
     return sendJson(res, 200, { ok: true, adapter: context.adapterKind, projectRoot: context.projectRoot, sessionRoot: context.sessionRoot, defaultCwd: context.defaultCwd ?? process.cwd() });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/client-event") {
+    return handleClientEvent(req, res, context);
   }
 
   if (url.pathname.startsWith("/api/cron")) {
@@ -179,6 +220,20 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     });
     res.write(`event: ready\ndata: ${JSON.stringify({ sessionId })}\n\n`);
 
+    // Telemetry: record the SSE lifecycle so we can correlate it with
+    // client-reported boots and visibility changes. A fresh sse-open within
+    // a few seconds of a previous sse-close is a strong signal of a tab
+    // reload (vs. a clean route change which would have only one lifecycle).
+    const sseOpenedAt = Date.now();
+    void context.clientEventLog?.append({
+      serverTs: sseOpenedAt,
+      kind: "sse-open",
+      sessionId,
+      remoteAddress: req.socket.remoteAddress ?? null,
+      ua: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
+      fromSeq: typeof req.headers["last-event-id"] === "string" ? req.headers["last-event-id"] : null,
+    });
+
     // Honor Last-Event-ID for SSE resume so events emitted while the API
     // was down (and now sitting in the registry's per-session ring) are
     // replayed when the WUI reconnects.
@@ -211,6 +266,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     req.on("close", () => {
       clearInterval(heartbeat);
       unsubscribe();
+      void context.clientEventLog?.append({
+        serverTs: Date.now(),
+        kind: "sse-close",
+        sessionId,
+        lifetimeMs: Date.now() - sseOpenedAt,
+        remoteAddress: req.socket.remoteAddress ?? null,
+      });
     });
     return;
   }
@@ -324,6 +386,44 @@ const ARTIFACT_MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
 };
+
+async function handleClientEvent(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  context: HttpApiServerContext,
+): Promise<void> {
+  // Collect the body up to CLIENT_EVENT_MAX_BYTES. Anything beyond gets 413.
+  const chunks: Buffer[] = [];
+  let received = 0;
+  for await (const chunk of req) {
+    const buf = Buffer.from(chunk);
+    received += buf.length;
+    if (received > CLIENT_EVENT_MAX_BYTES) {
+      return sendJson(res, 413, { error: "client-event payload too large" });
+    }
+    chunks.push(buf);
+  }
+  const text = Buffer.concat(chunks).toString("utf8");
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    return sendJson(res, 400, { error: "client-event payload was not JSON" });
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return sendJson(res, 400, { error: "client-event payload must be a JSON object" });
+  }
+
+  // Stamp every entry with server-side context the client can't fake.
+  const enriched = {
+    serverTs: Date.now(),
+    remoteAddress: req.socket.remoteAddress ?? null,
+    ua: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
+    ...(parsed as Record<string, unknown>),
+  };
+  await context.clientEventLog?.append(enriched);
+  return sendJson(res, 204, undefined);
+}
 
 async function handleArtifact(
   _req: http.IncomingMessage,

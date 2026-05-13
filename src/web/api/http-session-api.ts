@@ -1,5 +1,6 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import type { CloneSessionResult, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ForkMessageOption, ForkSessionResult, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import { recordClientEvent, getTabSessionId } from "../utils/client-telemetry.js";
 
 const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "";
 
@@ -59,6 +60,7 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
   }
 
   streamEvents(sessionId: string, onEvent: (event: unknown) => void): () => void {
+    const openedAt = Date.now();
     const source = new EventSource(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/events`);
     source.onmessage = (event) => {
       try {
@@ -67,7 +69,31 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
         // ignore malformed payloads
       }
     };
-    return () => source.close();
+    source.onopen = () => {
+      recordClientEvent({
+        kind: "sse-client-open",
+        sessionId,
+        tabSessionId: getTabSessionId(),
+      });
+    };
+    source.onerror = () => {
+      recordClientEvent({
+        kind: "sse-client-error",
+        sessionId,
+        readyState: source.readyState,
+        ageMs: Date.now() - openedAt,
+        tabSessionId: getTabSessionId(),
+      });
+    };
+    return () => {
+      source.close();
+      recordClientEvent({
+        kind: "sse-client-close",
+        sessionId,
+        ageMs: Date.now() - openedAt,
+        tabSessionId: getTabSessionId(),
+      });
+    };
   }
 
   async listModels(): Promise<readonly ModelOption[]> {
