@@ -126,7 +126,7 @@ for (const vp of [MOBILE, TABLET]) {
 
     test("06 cron jobs admin", async ({ page }) => {
       await page.goto("/");
-      const cron = page.getByRole("button", { name: "Cron" });
+      const cron = page.getByRole("button", { name: "Cron", exact: true });
       if (await cron.isVisible().catch(() => false)) {
         await cron.click();
         await page.waitForTimeout(400);
@@ -188,7 +188,7 @@ test.describe(`promo @ ${DESKTOP.name} (${DESKTOP.width}x${DESKTOP.height})`, ()
 
   test("03 desktop cron admin", async ({ page }) => {
     await page.goto("/");
-    const cron = page.getByRole("button", { name: "Cron" });
+    const cron = page.getByRole("button", { name: "Cron", exact: true });
     if (await cron.isVisible().catch(() => false)) {
       await cron.click();
       await page.waitForTimeout(400);
