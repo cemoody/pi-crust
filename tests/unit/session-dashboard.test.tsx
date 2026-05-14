@@ -539,6 +539,127 @@ describe("SessionDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
     await waitFor(() => expect(screen.queryByText("Doomed")).not.toBeInTheDocument());
   });
+  it("drains queued follow-up messages when the session goes idle", async () => {
+    // Production repro: user clicks Send while the agent is streaming, the
+    // composer routes that text into onFollowUp (the 'queue for later'
+    // bucket), the queue chip appears in the composer footer — but when
+    // the session finishes and goes idle, nothing ever submits the queued
+    // text. The user is left staring at a 'Follow-up: …' chip forever.
+    //
+    // This test gates the prompt() promise so we can enqueue while the
+    // session is streaming, then asserts that releasing the prompt (→ idle)
+    // automatically fires api.prompt(...) for the queued message.
+
+    let resolveFirst: ((value: readonly unknown[]) => void) | null = null;
+    const promptCalls: Array<{ text: string }> = [];
+    const base = makeApi([
+      { id: "a", cwd: "/repo/a", sessionName: "Worker", status: "idle", model: "m", lastActivity: 1 },
+    ]);
+    const api: SessionDashboardApi = {
+      ...base,
+      async prompt(_sessionId, text) {
+        promptCalls.push({ text });
+        if (promptCalls.length === 1) {
+          // Gate the first prompt so we can enqueue a follow-up while
+          // the session is still streaming.
+          return new Promise((resolve) => {
+            resolveFirst = (v) => resolve(v as never);
+          }) as Promise<never>;
+        }
+        return [
+          { id: `u-${promptCalls.length}`, role: "user", text },
+          { id: `a-${promptCalls.length}`, role: "assistant", text: `Mock response to: ${text}` },
+        ];
+      },
+    };
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Worker");
+    fireEvent.click(screen.getByRole("button", { name: /Worker/ }));
+    await screen.findByRole("heading", { name: "Worker" });
+
+    // First prompt: send 'work on it' — this stays in flight.
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "work on it" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(promptCalls).toHaveLength(1));
+
+    // While streaming, queue a follow-up via the composer (clicking Send
+    // during streaming routes the text into onFollowUp).
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "then test it" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByLabelText("Message queues")).toHaveTextContent("Follow-up: then test it");
+
+    // Release the first prompt → session goes idle. The queued follow-up
+    // should now flush automatically, producing a second api.prompt call.
+    expect(resolveFirst).not.toBeNull();
+    await act(async () => {
+      resolveFirst!([
+        { id: "u-1", role: "user", text: "work on it" },
+        { id: "a-1", role: "assistant", text: "Mock response to: work on it" },
+      ]);
+    });
+
+    await waitFor(() => expect(promptCalls).toHaveLength(2));
+    expect(promptCalls[1]!.text).toBe("then test it");
+    // The queue chip disappears once empty (the <ul aria-label='Message
+    // queues'> only renders when there's something in the queues), so the
+    // post-drain assertion checks the label is gone entirely.
+    await waitFor(() => expect(screen.queryByLabelText("Message queues")).toBeNull());
+  });
+
+  it("drains multiple queued follow-up messages in order across successive idles", async () => {
+    let resolveCurrent: ((value: readonly unknown[]) => void) | null = null;
+    const promptCalls: Array<{ text: string }> = [];
+    const base = makeApi([
+      { id: "a", cwd: "/repo/a", sessionName: "Worker", status: "idle", model: "m", lastActivity: 1 },
+    ]);
+    const api: SessionDashboardApi = {
+      ...base,
+      async prompt(_sessionId, text) {
+        promptCalls.push({ text });
+        return new Promise((resolve) => {
+          resolveCurrent = (v) => resolve(v as never);
+        }) as Promise<never>;
+      },
+    };
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Worker");
+    fireEvent.click(screen.getByRole("button", { name: /Worker/ }));
+    await screen.findByRole("heading", { name: "Worker" });
+
+    // Start the first prompt.
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "step 1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(promptCalls).toHaveLength(1));
+
+    // Queue two follow-ups in order.
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "step 2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "step 3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByLabelText("Message queues")).toHaveTextContent("Follow-up: step 2");
+    expect(screen.getByLabelText("Message queues")).toHaveTextContent("Follow-up: step 3");
+
+    // Each prompt() captures a *new* deferred resolver (the closure-on-let
+    // pattern below), so the drained follow-up replaces the gated promise.
+    // Drive the idle->drain cycle one step at a time and snapshot the
+    // resolver before releasing.
+    async function releaseAndFlush() {
+      const release = resolveCurrent!;
+      await act(async () => { release([]); });
+    }
+
+    // Idle the first prompt → step 2 should fire.
+    await releaseAndFlush();
+    await waitFor(() => expect(promptCalls.map((c) => c.text)).toEqual(["step 1", "step 2"]));
+
+    // Idle the second prompt → step 3 should fire.
+    await releaseAndFlush();
+    await waitFor(() => expect(promptCalls.map((c) => c.text)).toEqual(["step 1", "step 2", "step 3"]));
+
+    // After step 3 resolves the queue is empty and the chip disappears.
+    await releaseAndFlush();
+    await waitFor(() => expect(screen.queryByLabelText("Message queues")).toBeNull());
+  });
 });
 
 function sessionListButtonNames(): string[] {

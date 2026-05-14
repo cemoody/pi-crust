@@ -314,6 +314,29 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     setFollowUpBySession((current) => ({ ...current, [activeSession.id]: [...(current[activeSession.id] ?? []), text] }));
   }
 
+  // Auto-drain queued follow-ups whenever the active session is idle. The
+  // composer routes Send-while-streaming into onFollowUp, so without this
+  // effect the queued text never actually fires — it just sits in the
+  // "Follow-up: …" chip forever.
+  //
+  // Re-entry is prevented by two synchronously-batched state updates:
+  //   (1) the optimistic shift below removes the head from the queue, and
+  //   (2) handlePrompt synchronously sets status="streaming" at the top.
+  // So the next render this effect sees either a shorter queue or a
+  // non-idle session and bails. On the following idle the effect picks up
+  // the next queued item.
+  useEffect(() => {
+    if (!activeSession) return;
+    if (activeSession.status !== "idle") return;
+    const queue = followUpBySession[activeSession.id] ?? [];
+    if (queue.length === 0) return;
+    const [head, ...rest] = queue;
+    if (typeof head !== "string") return;
+    setFollowUpBySession((current) => ({ ...current, [activeSession.id]: rest }));
+    void handlePrompt(head, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSession?.id, activeSession?.status, followUpBySession]);
+
   async function openForkDialog(argv = "") {
     if (!activeSession) return;
     if (!api.getForkMessages || !api.forkSession) {
