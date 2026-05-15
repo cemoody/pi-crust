@@ -627,19 +627,32 @@
 
 .new-session-dialog header {
   display: flex;
-  align-items: center;
-  padding: 14px 18px;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 20px 14px;
   border-bottom: 1px solid var(--hairline);
 }
 
+.new-session-title { display: grid; gap: 2px; min-width: 0; }
+
 .new-session-dialog header h2 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 500;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.new-session-title p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  letter-spacing: 0;
 }
 
 .new-session-dialog header button {
   margin-left: auto;
+  flex: 0 0 auto;
   width: 28px;
   height: 28px;
   padding: 0;
@@ -651,37 +664,54 @@
   font-size: 16px;
   line-height: 1;
   color: var(--text-secondary);
+  cursor: pointer;
 }
 
-.new-session-dialog header button:hover { background: var(--gray-080); color: var(--black-900); }
+.new-session-dialog header button:hover:not(:disabled) { background: var(--gray-080); color: var(--black-900); }
+.new-session-dialog header button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .new-session-fields {
   display: grid;
-  gap: 12px;
-  padding: 16px 18px;
+  gap: 14px;
+  padding: 16px 20px 18px;
 }
 
 .new-session-fields label {
   display: grid;
-  gap: 5px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  letter-spacing: 0.02em;
+  gap: 6px;
 }
 
-.new-session-fields label span {
-  font-weight: 400;
+.new-session-fields .field-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
   letter-spacing: 0;
-  text-transform: none;
+}
+
+.new-session-fields .field-tag {
+  font-weight: 400;
+  font-size: 10.5px;
   color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.new-session-fields .field-hint {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  letter-spacing: 0;
 }
 
 .new-session-fields input {
-  height: 32px;
+  height: 34px;
   border: 1px solid var(--hairline);
   border-radius: 8px;
-  padding: 0 10px;
-  font-size: 13px;
+  padding: 0 11px;
+  font-size: 13.5px;
+  font-family: var(--font-mono);
   outline: none;
   color: var(--text-primary);
   background: var(--white-000);
@@ -692,31 +722,73 @@
   box-shadow: 0 0 0 3px var(--blue-focus);
 }
 
+.new-session-fields input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--gray-040, var(--surface-1));
+}
+
+.new-session-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(209, 74, 37, 0.08);
+  color: var(--red-600);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .new-session-dialog footer {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
-  padding: 12px 18px 16px;
+  padding: 12px 20px 16px;
   border-top: 1px solid var(--hairline);
 }
 
 .new-session-dialog footer button {
-  height: 30px;
-  padding: 0 12px;
+  height: 34px;
+  padding: 0 14px;
   border-radius: 8px;
   border: 1px solid var(--hairline);
   background: var(--white-000);
   color: var(--text-primary);
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.new-session-dialog footer button:hover { background: var(--gray-080); }
+.new-session-dialog footer button:hover:not(:disabled) { background: var(--gray-080); }
+.new-session-dialog footer button:disabled { opacity: 0.5; cursor: not-allowed; }
 .new-session-dialog footer button.primary {
   background: var(--black-900);
   color: var(--gray-050);
   border-color: var(--black-900);
+  min-width: 132px;
+  justify-content: center;
 }
-.new-session-dialog footer button.primary:hover { background: var(--black-1000); }
+.new-session-dialog footer button.primary:hover:not(:disabled) { background: var(--black-1000); }
+.new-session-dialog footer button.primary:disabled { opacity: 0.65; }
+
+/* Inline spinner shown on the primary button while the create-session
+   request is in flight. Keeps the button width-stable via min-width above. */
+.button-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  display: inline-block;
+  animation: button-spinner-rot 720ms linear infinite;
+}
+
+@keyframes button-spinner-rot {
+  to { transform: rotate(360deg); }
+}
 
 .fork-dialog { width: min(560px, 100%); }
 .fork-dialog .dialog-help {
@@ -911,9 +983,10 @@
      grow the input height to fit the larger line-box. */
   .session-create input,
   .session-controls input,
-  .session-controls select {
+  .session-controls select,
+  .new-session-fields input {
     font-size: 16px;
-    height: 34px;
+    height: 38px;
   }
 }
 

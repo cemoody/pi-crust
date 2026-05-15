@@ -81,6 +81,77 @@ describe("SessionDashboard", () => {
     expect(screen.getByText("mock/model")).toBeInTheDocument();
   });
 
+  it("NewSessionDialog: typing in the cwd field does NOT yank the caret back to column 0 on every re-render", async () => {
+    // Repro for the 'cursor flips to the far left whenever I start to type'
+    // bug. The previous implementation positioned the caret at column 0 via
+    // an inline `ref` callback, which React re-invokes on every render —
+    // so each keystroke (plus every SSE-driven dashboard re-render) jumped
+    // the caret back to column 0 of the prefilled path. With the fix the
+    // initial focus places the caret at 0 ONCE on mount; any subsequent
+    // user-driven caret position must survive re-renders.
+    render(<SessionDashboard api={makeApi()} />);
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    const cwdInput = await screen.findByLabelText("New session cwd") as HTMLInputElement;
+
+    // User moves the caret to the end of the path and types a character.
+    const initial = cwdInput.value;
+    cwdInput.setSelectionRange(initial.length, initial.length);
+    fireEvent.change(cwdInput, { target: { value: initial + "X" } });
+
+    // With the bug the ref callback would force selectionStart back to 0.
+    // The fix must leave the caret somewhere AFTER the start — we don't
+    // assert an exact position because jsdom's controlled-input default
+    // varies, but column 0 is the smoking-gun regression.
+    expect(cwdInput.selectionStart).not.toBe(0);
+  });
+
+  it("NewSessionDialog: prefers homeCwd over defaultCwd when the API exposes it", async () => {
+    const api = {
+      ...makeApi(),
+      async getDefaultCwd() { return "/srv/where-the-api-launched"; },
+      async getHomeCwd() { return "/home/coder"; },
+    } satisfies SessionDashboardApi;
+    render(<SessionDashboard api={api} />);
+    // Wait for the home-dir resolution to land in state before opening.
+    await waitFor(() => expect((api as { getHomeCwd?: () => Promise<unknown> }).getHomeCwd).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    const cwdInput = await screen.findByLabelText("New session cwd") as HTMLInputElement;
+    await waitFor(() => expect(cwdInput.value).toBe("/home/coder"));
+  });
+
+  it("NewSessionDialog: shows a loading state while createSession is in flight", async () => {
+    // The submit button must give immediate feedback — swapping its label to
+    // 'Creating…' and disabling form controls — because session creation
+    // takes a few seconds on the real backend.
+    let resolveCreate: ((v: SessionCardData) => void) | null = null;
+    const slowCreate = new Promise<SessionCardData>((resolve) => { resolveCreate = resolve; });
+    const api = {
+      ...makeApi(),
+      createSession: vi.fn(() => slowCreate),
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    fireEvent.change(await screen.findByLabelText("New session cwd"), { target: { value: "/repo/app" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create session" }));
+
+    // Immediately after the click the primary button must surface a busy
+    // state — not silently wait for the network round-trip.
+    const creatingButton = await screen.findByRole("button", { name: "Creating session" });
+    expect(creatingButton).toBeDisabled();
+    expect(creatingButton).toHaveTextContent(/Creating…/);
+    expect(screen.getByLabelText("New session cwd")).toBeDisabled();
+    expect(screen.getByLabelText("New session name")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    // Resolve and confirm the dialog tears down.
+    await act(async () => {
+      resolveCreate?.({ id: "s1", cwd: "/repo/app", status: "idle", model: "mock/model", lastActivity: 1 });
+      await slowCreate;
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Create new session" })).not.toBeInTheDocument());
+  });
+
   it("searches, toggles paths, filters named sessions, and sorts", async () => {
     render(<SessionDashboard api={makeApi([
       { id: "b", cwd: "/repo/b", sessionName: "Beta", status: "streaming", model: "m", lastActivity: 2 },

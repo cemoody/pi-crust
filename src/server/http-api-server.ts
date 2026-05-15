@@ -208,6 +208,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       projectRoot: context.projectRoot,
       sessionRoot: context.sessionRoot,
       defaultCwd: context.defaultCwd ?? process.cwd(),
+      // The user's home directory (server-side). The WUI uses this as the
+      // default 'Working directory' in the New Session dialog, which is
+      // friendlier than seeding it with whatever the API was invoked from.
+      homeCwd: os.homedir(),
       gitSha: context.gitSha ?? "unknown",
     });
   }

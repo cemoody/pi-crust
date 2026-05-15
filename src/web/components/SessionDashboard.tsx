@@ -23,6 +23,9 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [sessions, setSessions] = useState<readonly SessionCardData[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => readSessionFromUrl());
   const [defaultCwd, setDefaultCwd] = useState("");
+  // The user's home directory (server-side). Preferred as the New Session
+  // dialog default; falls back to defaultCwd when the API doesn't expose it.
+  const [homeCwd, setHomeCwd] = useState<string>("");
   const [query, setQuery] = useState("");
   const [showPaths, setShowPaths] = useState(false);
   const [namedOnly, setNamedOnly] = useState(false);
@@ -85,6 +88,14 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         const defaultCwd = api.getDefaultCwd ? await api.getDefaultCwd() : "/tmp/project";
         if (cancelled) return;
         setDefaultCwd(defaultCwd);
+        if (api.getHomeCwd) {
+          try {
+            const home = await api.getHomeCwd();
+            if (!cancelled && home) setHomeCwd(home);
+          } catch {
+            // Optional capability; ignore.
+          }
+        }
         setSessions(await api.listSessions(defaultCwd));
       } catch (caught) {
         if (!cancelled) setError(errorMessage(caught));
@@ -744,8 +755,8 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
 
       {newSessionOpen ? (
         <NewSessionDialog
-          initialCwd={defaultCwd}
-          onCreate={(input) => void createSession(input)}
+          initialCwd={homeCwd || defaultCwd}
+          onCreate={async (input) => { await createSession(input); }}
           onCancel={() => setNewSessionOpen(false)}
         />
       ) : null}
@@ -841,64 +852,112 @@ function RenameSessionForm(props: {
 
 function NewSessionDialog(props: {
   readonly initialCwd: string;
-  readonly onCreate: (input: { readonly cwd: string; readonly sessionName?: string }) => void;
+  readonly onCreate: (input: { readonly cwd: string; readonly sessionName?: string }) => Promise<void> | void;
   readonly onCancel: () => void;
 }) {
   const [cwd, setCwd] = useState(props.initialCwd);
   const [sessionName, setSessionName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const cwdRef = useRef<HTMLInputElement | null>(null);
 
-  function submit() {
-    const name = sessionName.trim();
-    props.onCreate({ cwd, ...(name ? { sessionName: name } : {}) });
+  // Position the caret at the start of the CWD field exactly ONCE on mount,
+  // so the path's leading characters are visible on narrow phones. The
+  // previous implementation did this in an inline `ref` callback that React
+  // re-invokes on every render — which meant every keystroke (and every SSE
+  // event that re-rendered the dashboard) jumped the caret back to column 0.
+  useEffect(() => {
+    const node = cwdRef.current;
+    if (!node) return;
+    node.focus();
+    node.setSelectionRange(0, 0);
+    node.scrollLeft = 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function submit() {
+    if (submitting) return;
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const name = sessionName.trim();
+      await props.onCreate({ cwd: cwd.trim(), ...(name ? { sessionName: name } : {}) });
+      // On success the parent unmounts the dialog. If it doesn't (e.g.
+      // because onCreate is sync), drop the spinner so the form is usable.
+      setSubmitting(false);
+    } catch (caught) {
+      setSubmitting(false);
+      setSubmitError(errorMessage(caught));
+    }
+  }
+
+  function handleCancel() {
+    if (submitting) return; // don't let users back out mid-creation
+    props.onCancel();
   }
 
   return (
-    <div className="new-session-backdrop" role="presentation" onClick={props.onCancel}>
+    <div className="new-session-backdrop" role="presentation" onClick={handleCancel}>
       <form
         className="new-session-dialog"
         role="dialog"
         aria-modal="true"
         aria-label="Create new session"
+        aria-busy={submitting}
         onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
-          submit();
+          void submit();
         }}
       >
         <header>
-          <h2>New session</h2>
-          <button type="button" onClick={props.onCancel} aria-label="Close new session dialog">×</button>
+          <div className="new-session-title">
+            <h2>New session</h2>
+            <p>Spawn a fresh pi agent in a working directory.</p>
+          </div>
+          <button type="button" onClick={handleCancel} aria-label="Close new session dialog" disabled={submitting}>×</button>
         </header>
         <div className="new-session-fields">
           <label>
-            CWD
+            <span className="field-label">Working directory</span>
             <input
-              autoFocus
+              ref={cwdRef}
               value={cwd}
               onChange={(event) => setCwd(event.target.value)}
               aria-label="New session cwd"
-              ref={(node) => {
-                // Place caret at the start so the path's leading characters are
-                // visible on narrow phones rather than the tail.
-                if (node && document.activeElement === node) {
-                  node.setSelectionRange(0, 0);
-                  node.scrollLeft = 0;
-                }
-              }}
-              onFocus={(event) => {
-                event.currentTarget.setSelectionRange(0, 0);
-                event.currentTarget.scrollLeft = 0;
-              }}
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              disabled={submitting}
             />
+            <span className="field-hint">Defaults to your home directory.</span>
           </label>
           <label>
-            Name <span>optional</span>
-            <input value={sessionName} onChange={(event) => setSessionName(event.target.value)} aria-label="New session name" placeholder="Untitled session" />
+            <span className="field-label">
+              Name
+              <span className="field-tag">optional</span>
+            </span>
+            <input
+              value={sessionName}
+              onChange={(event) => setSessionName(event.target.value)}
+              aria-label="New session name"
+              placeholder="Untitled session"
+              spellCheck={false}
+              disabled={submitting}
+            />
           </label>
+          {submitError ? <p className="new-session-error" role="alert">{submitError}</p> : null}
         </div>
         <footer>
-          <button type="button" onClick={props.onCancel}>Cancel</button>
-          <button type="submit" className="primary">Create session</button>
+          <button type="button" onClick={handleCancel} disabled={submitting}>Cancel</button>
+          <button type="submit" className="primary" disabled={submitting || !cwd.trim()} aria-label={submitting ? "Creating session" : "Create session"}>
+            {submitting ? (
+              <>
+                <span className="button-spinner" aria-hidden="true" />
+                <span>Creating…</span>
+              </>
+            ) : "Create session"}
+          </button>
         </footer>
       </form>
     </div>

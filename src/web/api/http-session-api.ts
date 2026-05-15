@@ -10,6 +10,11 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     return health.defaultCwd;
   }
 
+  async getHomeCwd(): Promise<string | undefined> {
+    const health = await request<{ homeCwd?: string }>("/api/health");
+    return health.homeCwd;
+  }
+
   async getServerInfo(): Promise<ServerInfo> {
     return request<ServerInfo>("/api/health");
   }

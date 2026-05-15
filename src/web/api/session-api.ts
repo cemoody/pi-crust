@@ -161,10 +161,15 @@ export interface ServerInfo {
   readonly projectRoot: string;
   readonly sessionRoot: string;
   readonly defaultCwd: string;
+  /** Server-side user home directory (os.homedir()). Optional for older
+   *  API builds and mock adapters that don't supply it. */
+  readonly homeCwd?: string;
 }
 
 export interface SessionDashboardApi {
   getDefaultCwd?(): Promise<string>;
+  /** Server-side user home directory, used as the New Session dialog default. */
+  getHomeCwd?(): Promise<string | undefined>;
   /** Snapshot of the server's identity (used for the help dialog SHA). */
   getServerInfo?(): Promise<ServerInfo>;
   listSessions(cwd?: string): Promise<readonly SessionCardData[]>;

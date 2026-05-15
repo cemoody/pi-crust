@@ -33,6 +33,22 @@ test('prompt textarea has font-size >= 16px on mobile (prevents iOS Safari focus
   expect(fontPx, `prompt textarea font-size is ${fontPx}px; iOS Safari will auto-zoom on focus when <16px`).toBeGreaterThanOrEqual(16);
 });
 
+test('New Session dialog inputs have font-size >= 16px on mobile', async ({ page }) => {
+  await page.goto('/');
+  // The 'New session' menu item lives in the sidebar; ensure the sidebar
+  // drawer is open before clicking it.
+  await page.getByRole('button', { name: /^Seeded session\b/ }).waitFor();
+  const newSession = page.getByRole('button', { name: 'New session' });
+  await newSession.click();
+  await page.getByRole('dialog', { name: 'Create new session' }).waitFor();
+
+  for (const labelName of ['New session cwd', 'New session name']) {
+    const input = page.getByLabel(labelName);
+    const fontPx = await input.evaluate((el) => parseFloat(getComputedStyle(el as HTMLElement).fontSize));
+    expect(fontPx, `${labelName} font-size is ${fontPx}px; iOS Safari will auto-zoom on focus when <16px`).toBeGreaterThanOrEqual(16);
+  }
+});
+
 test('all focusable text inputs in the mobile layout have font-size >= 16px', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /^Seeded session\b/ }).click();
