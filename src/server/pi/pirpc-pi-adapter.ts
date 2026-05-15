@@ -754,11 +754,20 @@ export interface CemoodyArtifactResolveOptions {
   readonly searchRoots?: readonly string[];
   /** Env source. Defaults to `process.env`; override in tests. */
   readonly env?: Record<string, string | undefined>;
+  /** Pi settings path. Defaults to `$HOME/.pi/agent/settings.json`; override in tests. */
+  readonly piSettingsPath?: string;
 }
 
 export async function resolveCemoodyArtifactExtension(options: CemoodyArtifactResolveOptions = {}): Promise<string | undefined> {
   const env = options.env ?? process.env;
   if (env.PI_REMOTE_DISABLE_CEMOODY_ARTIFACT === "1") return undefined;
+
+  // If the user's normal Pi configuration already installs pi-artifact (for
+  // example `../../pi-artifact` during local development), don't pass the
+  // bundled @cemoody/pi-artifact as an extra `--extension`. Pi will load the
+  // configured package itself, and double-loading registers `display` twice.
+  if (await piSettingsAlreadyIncludesArtifact(options.piSettingsPath, env)) return undefined;
+
   // Honor an explicit override path (useful for local development against a
   // sibling checkout of cemoody/pi-artifact).
   const override = env.PI_REMOTE_CEMOODY_ARTIFACT_PATH;
@@ -800,6 +809,22 @@ export async function resolveCemoodyArtifactExtension(options: CemoodyArtifactRe
     }
   }
   return undefined;
+}
+
+async function piSettingsAlreadyIncludesArtifact(
+  configuredPath: string | undefined,
+  env: Record<string, string | undefined>,
+): Promise<boolean> {
+  const settingsPath = configuredPath
+    ?? (env.HOME ? path.join(env.HOME, ".pi", "agent", "settings.json") : undefined);
+  if (!settingsPath) return false;
+  try {
+    const parsed = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+    const packages = Array.isArray(parsed?.packages) ? parsed.packages : [];
+    return packages.some((source: unknown) => typeof source === "string" && /(^|[/@:])pi-artifact($|[/#?])/i.test(source));
+  } catch {
+    return false;
+  }
 }
 
 export function toSessionMessages(messages: readonly unknown[]): SessionMessage[] {
