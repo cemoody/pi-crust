@@ -865,24 +865,29 @@ function InlineNameInput(props: {
   // Reset draft when switching sessions — we don't want a half-typed
   // name to leak from one fresh session to another.
   useEffect(() => { setDraft(""); }, [props.sessionId]);
+  const inputId = `session-name-${props.sessionId}`;
   return (
     <div className="session-name-row">
-      <div className="session-name-field">
-        <input
-          id={`session-name-${props.sessionId}`}
-          type="text"
-          className="session-name-input"
-          placeholder={props.currentName || "Optionally name this session…"}
-          aria-label="Name this session"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => {
-            const next = draft.trim();
-            if (!next || next === props.currentName) return;
-            props.onCommit(next);
-          }}
-        />
-      </div>
+      {/* Clicking anywhere in the row (including the icon) focuses the
+          input — the icon is decorative; the <label htmlFor> handles the
+          actual focus delegation. */}
+      <label htmlFor={inputId} className="session-name-icon" aria-hidden="true">
+        <PencilGlyph />
+      </label>
+      <input
+        id={inputId}
+        type="text"
+        className="session-name-input"
+        placeholder={props.currentName || "Optionally name this session…"}
+        aria-label="Name this session"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          const next = draft.trim();
+          if (!next || next === props.currentName) return;
+          props.onCommit(next);
+        }}
+      />
     </div>
   );
 }

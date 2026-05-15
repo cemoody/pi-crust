@@ -117,6 +117,16 @@ describe("SessionDashboard", () => {
     // hint lives inside the input as placeholder text.
     expect(screen.queryByText(/^name$/i)).toBeNull();
     expect(screen.queryByText(/^optional$/i)).toBeNull();
+    // The row renders a writing-icon affordance next to the input so the
+    // user can tell at a glance that the area is editable. The wrapper
+    // also drops the bordered card background so the field reads as a
+    // lighter, secondary affordance below the prompt composer.
+    const row = nameInput.closest(".session-name-row");
+    expect(row, "name input should live inside .session-name-row").not.toBeNull();
+    expect(row!.querySelector("svg"), ".session-name-row should include a pencil-style svg icon").not.toBeNull();
+    // The borderless variant no longer wraps the input in the rounded
+    // .session-name-field card.
+    expect(row!.querySelector(".session-name-field")).toBeNull();
   });
 
   it("the inline name input disappears once the first message is sent", async () => {

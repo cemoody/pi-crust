@@ -1022,46 +1022,57 @@
 }
 
 /* Inline 'name this session' row that appears above the prompt composer
-   while the active session has no messages yet. The grid + max-width +
-   horizontal padding mirror .prompt-composer so the field's left and
-   right edges align with the prompt textarea's bubble. The inner
-   .session-name-field copies .composer-input's rounded white box and
-   focus ring so the two surfaces read as a single column. */
+   while the active session has no messages yet. Borderless and muted on
+   purpose — it should read as a quiet secondary affordance below the
+   prompt textarea, not as another input field. A pencil icon to the
+   left makes the clickable affordance discoverable. */
 .session-name-row {
-  padding: 0 24px 4px;
-  display: grid;
-  grid-template-columns: minmax(0, var(--composer-max));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: var(--composer-max);
+  margin: 0 auto;
+  padding: 4px 24px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.session-name-icon {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-tertiary, var(--text-secondary));
+  flex-shrink: 0;
+  cursor: text;
+  /* The icon is paired with the input via <label htmlFor>; this just
+     gives it a hover hint without yet another box. */
 }
-.session-name-field {
-  background: var(--white-000);
-  border: 1px solid var(--hairline);
-  border-radius: 16px;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-}
-.session-name-field:focus-within {
-  border-color: var(--blue-accent);
-  box-shadow: 0 0 0 3px var(--blue-focus);
+.session-name-row:hover .session-name-icon,
+.session-name-row:focus-within .session-name-icon {
+  color: var(--text-secondary);
 }
 .session-name-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: 0;
   outline: 0;
   background: transparent;
-  /* 16 px so iOS Safari doesn't focus-zoom; matches the prompt textarea. */
+  /* 16 px so iOS Safari doesn't focus-zoom on tap. */
   font-size: 16px;
   line-height: 1.45;
-  /* Mirror the prompt textarea's vertical rhythm; horizontal padding
-     matches the textarea's left padding (40 px would over-pad without
-     icons, so 16 px feels right) and gives breathing room on both
-     sides. */
-  padding: 10px 16px;
-  color: var(--text-primary);
+  padding: 4px 0;
+  /* Quiet, secondary text colour to match this surface's lower
+     visual weight (the prompt composer is the primary surface). */
+  color: var(--text-secondary);
   font-family: var(--font-sans);
 }
-.session-name-input::placeholder { color: var(--text-tertiary, var(--text-secondary)); }
+.session-name-input::placeholder {
+  color: var(--text-tertiary, var(--text-secondary));
+  opacity: 0.85;
+}
+.session-name-input:focus { color: var(--text-primary); }
 
 @media (max-width: 720px) {
-  .session-name-row { padding: 0 12px 4px; }
+  .session-name-row { padding: 4px 12px; }
 }
