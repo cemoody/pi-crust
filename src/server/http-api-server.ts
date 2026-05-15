@@ -134,6 +134,18 @@ async function startDefaultServer(): Promise<void> {
   } catch (err) {
     console.warn(`reattachAll failed: ${err instanceof Error ? err.message : err}`);
   }
+  server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`pi-remote-control API: port ${port} on ${host} is already in use.`);
+      console.error(`hint: find the holder with: lsof -ti :${port}    (or: ss -tlnp | grep ${port})`);
+      // Exit cleanly so a supervisor loop can back off rather than crash-loop
+      // on an unhandled 'error' event. Code 2 is the canonical "bad config"
+      // exit code outer loops can react to.
+      process.exit(2);
+    }
+    console.error(`pi-remote-control API: server error: ${error.message}`);
+    process.exit(1);
+  });
   server.listen(port, host, () => {
     console.log(`pi-remote-control API listening on http://${host}:${port}`);
     console.log(`adapter=${adapterKind}`);

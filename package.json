@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "vite",
     "dev:api": "tsx src/server/http-api-server.ts",
+    "dev:api:loop": "scripts/dev-loop.sh api 8787 -- npm run dev:api",
+    "dev:web:loop": "scripts/dev-loop.sh web '' -- npm run dev -- --host 0.0.0.0",
+
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
