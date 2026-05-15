@@ -406,7 +406,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px;
+  /* zero horizontal padding so the row's icon/text starts at the same x
+     as the assistant's prose in the surrounding message bubble. */
+  padding: 4px 0;
   border-radius: 6px;
   color: var(--text-secondary);
   font-size: 12px;
@@ -418,7 +420,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px;
+  /* zero horizontal padding so the row's icon/text starts at the same x
+     as the assistant's prose in the surrounding message bubble. */
+  padding: 4px 0;
   border-radius: 6px;
   color: var(--text-secondary);
   font-size: 12px;
