@@ -1,6 +1,7 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import path from "node:path";
 import { execSync } from "node:child_process";
+import { defineConfig, type Plugin } from "vite";
+import react from "@vitejs/plugin-react";
 
 const apiTarget = process.env.VITE_PI_REMOTE_PROXY_TARGET ?? "http://127.0.0.1:8787";
 
@@ -20,15 +21,14 @@ function resolveFrontendGitSha(): string {
 }
 const frontendGitSha = resolveFrontendGitSha();
 
-// HMR is disabled by default in this deploy. The WUI is consumed from a
-// remote browser (often iPhone Safari over Tailscale); when iOS suspends
-// the tab in background the Vite HMR WebSocket dies, and on resume the
-// HMR client calls `location.reload()` to recover — destroying the user's
-// scroll position. Telemetry (logs/client-events.jsonl) showed every
-// observed "random refresh" was actually a Vite HMR reload. Opt back in
-// with VITE_PI_REMOTE_HMR=1 if you want HMR while editing on the same
-// machine that runs `vite`.
-const hmrEnabled = process.env.VITE_PI_REMOTE_HMR === "1";
+// HMR is ON by default to support the self-edit workflow: agent or human
+// edits a source file and the browser updates in place without a full
+// reload. The reload-on-disconnect behavior that historically wrecked
+// iPhone Safari scroll position is now tamed client-side in
+// src/web/utils/hmr-tame.ts (cancels Vite's auto-reload when the tab is
+// hidden or has just resumed from background). Set VITE_PI_REMOTE_HMR=0
+// to force HMR off if you ever need the old behavior.
+const hmrEnabled = process.env.VITE_PI_REMOTE_HMR !== "0";
 
 // Vite (≥6.0) rejects requests whose Host header isn't in `allowedHosts`
 // when bound to a non-localhost interface. The default list is just
@@ -49,8 +49,35 @@ const allowedHosts: true | string[] = rawAllowed === "all"
     ? rawAllowed.split(",").map((s) => s.trim()).filter(Boolean)
     : [...DEFAULT_ALLOWED_HOSTS];
 
+/**
+ * Vite reads its own config exactly once at startup and never reloads it.
+ * For the self-edit workflow we want edits to vite.config.ts to take effect
+ * just like edits to any other file. Strategy: watch the config file from
+ * within Vite, and on change exit the Vite process. The outer restart loop
+ * (scripts/dev-loop.sh via npm run dev:web:loop) brings it back with the
+ * new config in <1s.
+ */
+function restartOnConfigChange(): Plugin {
+  const configFile = path.resolve(__dirname, "vite.config.ts");
+  return {
+    name: "pi-remote-restart-on-config-change",
+    configureServer(server) {
+      server.watcher.add(configFile);
+      server.watcher.on("change", (file) => {
+        if (path.resolve(file) !== configFile) return;
+        server.config.logger.info(
+          "\n[restart-on-config-change] vite.config.ts changed — exiting so the outer restart loop can pick up the new config.\n",
+          { timestamp: true },
+        );
+        // Tiny delay so the log line flushes before the process exits.
+        setTimeout(() => process.exit(0), 50).unref();
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), restartOnConfigChange()],
   define: {
     __PI_REMOTE_GIT_SHA__: JSON.stringify(frontendGitSha),
   },
