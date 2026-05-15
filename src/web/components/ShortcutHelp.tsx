@@ -26,25 +26,31 @@ export interface ShortcutHelpProps {
   readonly fetchBackendInfo?: () => Promise<{ readonly gitSha?: string }>;
 }
 
-function readFrontendGitSha(): string {
+function readFrontendGitSha(): string | null {
   // Vite's `define` rewrites this identifier at build time into a string
-  // literal; in tests we let globalThis.__PI_REMOTE_GIT_SHA__ stand in. Read
-  // it at render time, not module-load, so tests can mutate the global
-  // before the dialog opens.
+  // literal. In production (`vite build`) we want to surface that SHA — it's
+  // the actual commit the bundle was compiled from and can legitimately
+  // differ from the backend's git HEAD if the two are deployed separately.
+  //
+  // In DEV (`vite serve`), the define is intentionally omitted so this
+  // returns null, and the caller falls back to the backend's live gitSha.
+  // Why: the dev bundle is HMR-patched in place from the same checkout that
+  // serves the api, so any baked-in SHA is just a startup-time snapshot of
+  // the same value the backend reports live — and was the source of
+  // 'I merged a PR but the help dialog still shows the old SHA' confusion.
+  //
+  // Test hook: globalThis.__PI_REMOTE_GIT_SHA__ stands in for the bake.
   type ShaHolder = { readonly __PI_REMOTE_GIT_SHA__?: unknown };
   const fromGlobal = (globalThis as unknown as ShaHolder).__PI_REMOTE_GIT_SHA__;
   if (typeof fromGlobal === "string" && fromGlobal.trim()) return fromGlobal;
   try {
-    // The build-time define resolves the bare identifier; access via Function
-    // to avoid TypeScript noting the identifier is unused if globalThis path
-    // already returned. Falls back if undefined.
     // eslint-disable-next-line no-new-func
     const baked = (new Function("return typeof __PI_REMOTE_GIT_SHA__ === 'string' ? __PI_REMOTE_GIT_SHA__ : undefined"))();
     if (typeof baked === "string" && baked.trim()) return baked;
   } catch {
     // ignore
   }
-  return "unknown";
+  return null;
 }
 
 async function defaultFetchBackendInfo(): Promise<{ readonly gitSha?: string }> {
@@ -124,7 +130,7 @@ export function ShortcutHelp(props: ShortcutHelpProps = {}) {
           <dl className="shortcut-help-shas">
             <div>
               <dt>frontend</dt>
-              <dd><code>{readFrontendGitSha()}</code></dd>
+              <dd><code>{(readFrontendGitSha() ?? (backendSha === "…" ? "fetching…" : backendSha))}</code></dd>
             </div>
             <div>
               <dt>backend</dt>

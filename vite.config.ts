@@ -76,11 +76,18 @@ function restartOnConfigChange(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react(), restartOnConfigChange()],
-  define: {
-    __PI_REMOTE_GIT_SHA__: JSON.stringify(frontendGitSha),
-  },
+  // Bake the SHA into the bundle ONLY for production builds, where the
+  // bundle is a static artifact whose identity can legitimately differ
+  // from the live api's. In dev (`vite serve`), leave it undefined; the
+  // help dialog falls through to the backend's live gitSha from
+  // /api/health, which always reflects the same checkout vite is serving
+  // from and updates after every `git pull`. See
+  // src/web/components/ShortcutHelp.tsx for the fallback logic.
+  define: command === "build"
+    ? { __PI_REMOTE_GIT_SHA__: JSON.stringify(frontendGitSha) }
+    : {},
   server: {
     hmr: hmrEnabled,
     allowedHosts,
@@ -91,4 +98,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

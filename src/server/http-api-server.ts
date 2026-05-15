@@ -11,7 +11,7 @@ import { MAX_PROMPT_CHARS } from "../shared/limits.js";
 import type { ExtensionUiResponse } from "../shared/protocol.js";
 import type { PromptAttachment, SessionMessage } from "./pi/types.js";
 import { PathPolicy } from "./security/path-policy.js";
-import { resolveGitSha } from "./git-sha.js";
+import { resolveGitSha, createLiveGitSha } from "./git-sha.js";
 import { SessionRegistry } from "./session/session-registry.js";
 import { CronStore, type CronJob } from "./cron/cron-store.js";
 import { CronScheduler } from "./cron/cron-scheduler.js";
@@ -31,8 +31,15 @@ export interface HttpApiServerOptions {
    * Used to investigate spurious browser refreshes. Omit to disable logging.
    */
   readonly clientEventLogPath?: string;
-  /** Short git SHA of the backend; surfaced on /api/health for the WUI's help dialog. */
-  readonly gitSha?: string;
+  /**
+   * Short git SHA of the backend; surfaced on /api/health for the WUI's
+   * help dialog. May be a string (frozen at startup, used by tests and
+   * CI builds) or a getter (live, recomputed when .git/HEAD changes —
+   * the default for `npm run dev:api`). When omitted the server falls
+   * back to a live getter at request time so a stale value never lies
+   * about the running build.
+   */
+  readonly gitSha?: string | (() => string);
 }
 
 interface HttpApiServerContext extends HttpApiServerOptions {
@@ -63,6 +70,14 @@ const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
 /** Append-only JSON-lines logger used for client telemetry. Lazy-creates the file. */
 interface ClientEventLog {
   append(payload: Record<string, unknown>): Promise<void>;
+}
+
+function resolveContextGitSha(value: string | (() => string) | undefined): string {
+  if (typeof value === "function") {
+    try { return value(); } catch { return "unknown"; }
+  }
+  if (typeof value === "string" && value.trim()) return value;
+  return "unknown";
 }
 
 function createClientEventLog(filePath: string): ClientEventLog {
@@ -125,7 +140,9 @@ async function startDefaultServer(): Promise<void> {
   void cronScheduler.start().catch((error) => console.error("[cron] failed to start scheduler", error));
   const clientEventLogPath = process.env.PI_REMOTE_CLIENT_EVENT_LOG
     ?? path.resolve(process.cwd(), "logs", "client-events.jsonl");
-  const gitSha = resolveGitSha({ cwd: process.cwd(), env: process.env });
+  // Live SHA: recomputed when .git/HEAD changes so /api/health doesn't lie
+  // about the build after a `git pull` lands new commits.
+  const gitSha = createLiveGitSha({ cwd: process.cwd(), env: process.env });
   const server = createHttpApiServer({
     registry,
     adapterKind,
@@ -212,7 +229,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       // default 'Working directory' in the New Session dialog, which is
       // friendlier than seeding it with whatever the API was invoked from.
       homeCwd: os.homedir(),
-      gitSha: context.gitSha ?? "unknown",
+      gitSha: resolveContextGitSha(context.gitSha),
     });
   }
 

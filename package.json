@@ -22,6 +22,8 @@
     "dev:api:loop": "node scripts/dev-api.mjs -- npm run dev:api",
     "dev:api:loop:bare": "scripts/dev-loop.sh api 8787 -- npm run dev:api",
     "dev:web:loop": "scripts/dev-loop.sh web '' -- npm run dev -- --host 0.0.0.0",
+    "dev:git-puller": "node scripts/dev-git-puller.mjs",
+
     "start": "node bin/pi-remote-control.mjs",
     "prepare": "test -f dist/index.html || vite build",
     "build": "vite build",

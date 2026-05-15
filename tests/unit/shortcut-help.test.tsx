@@ -60,4 +60,30 @@ describe("ShortcutHelp", () => {
     const dialog = screen.getByRole("dialog", { name: "Keyboard shortcuts" });
     await waitFor(() => expect(dialog.textContent ?? "").toMatch(/unknown/));
   });
+
+  it("in dev (no __PI_REMOTE_GIT_SHA__ define) the frontend row shows the live backend SHA", async () => {
+    // Simulate `vite serve` where the build-time define is omitted: the
+    // help dialog should show the backend's live gitSha for BOTH rows,
+    // matching the running checkout. This is the fix for 'I merged a PR
+    // but the help page still shows the old SHA': in dev, the bundle's
+    // baked SHA is meaningless (HMR has replaced modules), so we just
+    // mirror the api.
+    const prior = (globalThis as { __PI_REMOTE_GIT_SHA__?: string }).__PI_REMOTE_GIT_SHA__;
+    delete (globalThis as { __PI_REMOTE_GIT_SHA__?: string }).__PI_REMOTE_GIT_SHA__;
+    try {
+      const fetchBackend = vi.fn(async () => ({ gitSha: "livesha98e4" }));
+      render(<ShortcutHelp fetchBackendInfo={fetchBackend} />);
+      fireEvent.keyDown(document.body, { key: "?" });
+      // Both rows should eventually show the backend's live SHA. We can't
+      // assert with getByText because it'd match multiple elements; instead
+      // wait until both <code> tags in .shortcut-help-shas render that value.
+      await waitFor(() => {
+        const codes = Array.from(document.querySelectorAll(".shortcut-help-shas code"));
+        expect(codes).toHaveLength(2);
+        expect(codes.every((c) => c.textContent === "livesha98e4")).toBe(true);
+      });
+    } finally {
+      if (prior !== undefined) (globalThis as { __PI_REMOTE_GIT_SHA__?: string }).__PI_REMOTE_GIT_SHA__ = prior;
+    }
+  });
 });

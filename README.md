@@ -174,6 +174,29 @@ machine — the puller writes to disk, and the file watchers above react
 identically. There is no distinction between "agent edited a file" and
 "git pulled a new version of that file."
 
+For a long-running dev box that should auto-sync to `origin/main`, run
+the in-repo git puller in its own terminal alongside the api / web
+supervisors:
+
+```bash
+npm run dev:git-puller
+```
+
+It's a self-supervising loop — if the inner `git pull` throws, the outer
+supervisor catches and resumes after a short delay. The previous setup
+(a `&` subshell inside a hand-rolled `prc-loop.sh`) once died silently
+and stopped pulling for ~80 minutes before anyone noticed; this script
+exists so that can't happen.
+
+**Help-dialog gitSha.** Both rows of the help dialog show the **live**
+git HEAD of the checkout. The backend gitSha on `/api/health` is
+recomputed on every request (cheap; cached against `.git/HEAD` mtime so
+we don't shell out unless a `git pull` actually landed). In dev mode
+(`vite serve`), the frontend row falls back to the same backend value
+since the dev bundle's modules are HMR-patched from the same checkout.
+Production builds (`vite build`) bake the build-time SHA into the
+bundle, which can legitimately differ from a remotely-deployed api.
+
 **iOS scroll preservation.** Vite's HMR client historically called
 `location.reload()` whenever its WebSocket disconnected, which iOS Safari
 triggers on every tab-resume — wrecking scroll position and any draft
