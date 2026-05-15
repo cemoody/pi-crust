@@ -106,10 +106,17 @@ describe("SessionDashboard", () => {
     const prompt = await screen.findByLabelText("Prompt draft");
     await waitFor(() => expect(document.activeElement).toBe(prompt));
 
-    // The inline name input is visible (and starts empty).
+    // The inline name input is visible, starts empty, and uses a
+    // standalone placeholder rather than an external 'NAME / OPTIONAL'
+    // label — visual styling that matches the prompt textarea.
     const nameInput = screen.getByLabelText("Name this session") as HTMLInputElement;
     expect(nameInput).toBeInTheDocument();
     expect(nameInput.value).toBe("");
+    expect(nameInput.placeholder).toMatch(/optionally name this session/i);
+    // No external 'NAME' / 'optional' label should be in the DOM — the
+    // hint lives inside the input as placeholder text.
+    expect(screen.queryByText(/^name$/i)).toBeNull();
+    expect(screen.queryByText(/^optional$/i)).toBeNull();
   });
 
   it("the inline name input disappears once the first message is sent", async () => {

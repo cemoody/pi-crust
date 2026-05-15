@@ -867,23 +867,22 @@ function InlineNameInput(props: {
   useEffect(() => { setDraft(""); }, [props.sessionId]);
   return (
     <div className="session-name-row">
-      <label htmlFor={`session-name-${props.sessionId}`} className="session-name-label">
-        Name <span className="session-name-optional">optional</span>
-      </label>
-      <input
-        id={`session-name-${props.sessionId}`}
-        type="text"
-        className="session-name-input"
-        placeholder={props.currentName || "Name this session…"}
-        aria-label="Name this session"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => {
-          const next = draft.trim();
-          if (!next || next === props.currentName) return;
-          props.onCommit(next);
-        }}
-      />
+      <div className="session-name-field">
+        <input
+          id={`session-name-${props.sessionId}`}
+          type="text"
+          className="session-name-input"
+          placeholder={props.currentName || "Optionally name this session…"}
+          aria-label="Name this session"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            const next = draft.trim();
+            if (!next || next === props.currentName) return;
+            props.onCommit(next);
+          }}
+        />
+      </div>
     </div>
   );
 }

@@ -1022,50 +1022,46 @@
 }
 
 /* Inline 'name this session' row that appears above the prompt composer
-   while the active session has no messages yet. Once the user sends
-   the first prompt, the row disappears (rendering is gated by message
-   count in SessionDashboard). */
+   while the active session has no messages yet. The grid + max-width +
+   horizontal padding mirror .prompt-composer so the field's left and
+   right edges align with the prompt textarea's bubble. The inner
+   .session-name-field copies .composer-input's rounded white box and
+   focus ring so the two surfaces read as a single column. */
 .session-name-row {
-  margin: 0 24px;
-  max-width: var(--composer-max);
-  align-self: center;
-  width: calc(100% - 48px);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 0 6px;
+  padding: 0 24px 4px;
+  display: grid;
+  grid-template-columns: minmax(0, var(--composer-max));
+  justify-content: center;
 }
-.session-name-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-secondary);
-  flex-shrink: 0;
+.session-name-field {
+  background: var(--white-000);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
-.session-name-optional {
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 10.5px;
-  color: var(--text-tertiary, var(--text-secondary));
-  font-style: italic;
-  margin-left: 4px;
+.session-name-field:focus-within {
+  border-color: var(--blue-accent);
+  box-shadow: 0 0 0 3px var(--blue-focus);
 }
 .session-name-input {
-  flex: 1;
-  font: inherit;
-  font-size: 16px; /* iOS Safari focus-zoom guard */
-  padding: 6px 10px;
-  border: 1px solid var(--hairline);
+  width: 100%;
+  border: 0;
+  outline: 0;
   background: transparent;
-  border-radius: 8px;
+  /* 16 px so iOS Safari doesn't focus-zoom; matches the prompt textarea. */
+  font-size: 16px;
+  line-height: 1.45;
+  /* Mirror the prompt textarea's vertical rhythm; horizontal padding
+     matches the textarea's left padding (40 px would over-pad without
+     icons, so 16 px feels right) and gives breathing room on both
+     sides. */
+  padding: 10px 16px;
   color: var(--text-primary);
+  font-family: var(--font-sans);
 }
 .session-name-input::placeholder { color: var(--text-tertiary, var(--text-secondary)); }
-.session-name-input:focus {
-  outline: 2px solid rgba(124, 92, 255, 0.45);
-  outline-offset: -1px;
-}
 
 @media (max-width: 720px) {
-  .session-name-row { margin: 0 12px; width: calc(100% - 24px); }
+  .session-name-row { padding: 0 12px 4px; }
 }
