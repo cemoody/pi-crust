@@ -158,53 +158,37 @@ export function CronPanel({ api, defaultCwd, onOpenSession }: CronPanelProps) {
   const sortedJobs = useMemo(() => jobs.slice().sort((a, b) => a.name.localeCompare(b.name)), [jobs]);
 
   return (
-    <section className="cron-panel" aria-label="Cron jobs">
-      <header className="cron-panel-header">
-        <div className="cron-panel-title">
-          <h2>Cron jobs</h2>
-          <span className="cron-panel-subtitle" title={filePath}>{filePath ? <code>{filePath}</code> : null}</span>
-        </div>
-        <div className="cron-panel-actions">
-          <button type="button" onClick={startCreate} className="cron-primary">New cron job</button>
-        </div>
-      </header>
+    <section className="cron-panel" aria-label="Schedule">
+      <div className="cron-panel-inner">
+        <header className="cron-panel-header">
+          <div className="cron-panel-title">
+            <h2>Schedule</h2>
+            <span className="cron-panel-subtitle" title={filePath}>
+              {filePath ? <code>{filePath}</code> : null}
+            </span>
+          </div>
+          <div className="cron-panel-actions">
+            <button type="button" onClick={startCreate} className="cron-primary">New scheduled job</button>
+          </div>
+        </header>
 
-      {error ? <div className="cron-banner cron-banner-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div> : null}
-      {notice ? <div className="cron-banner cron-banner-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>Dismiss</button></div> : null}
+        {error ? <div className="cron-banner cron-banner-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div> : null}
+        {notice ? <div className="cron-banner cron-banner-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>Dismiss</button></div> : null}
 
-      {loading ? (
-        <p className="cron-empty">Loading…</p>
-      ) : sortedJobs.length === 0 ? (
-        <p className="cron-empty">No cron jobs yet. Create one to schedule a prompt.</p>
-      ) : (
-        <div className="cron-table-wrapper">
-          <table className="cron-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Schedule</th>
-                <th>Prompt</th>
-                <th>Enabled</th>
-                <th>Last run</th>
-                <th>Next run</th>
-                <th aria-label="Actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {sortedJobs.map((job) => (
-                <tr key={job.id} className={job.scheduleError ? "cron-row-error" : ""}>
-                  <td>
-                    <div className="cron-cell-name">{job.name}</div>
-                    <div className="cron-cell-cwd" title={job.cwd}><code>{job.cwd}</code></div>
-                  </td>
-                  <td>
-                    <code>{job.schedule}</code>
-                    {job.scheduleError ? <div className="cron-error-text">{job.scheduleError}</div> : null}
-                  </td>
-                  <td>
-                    <div className="cron-cell-prompt" title={job.prompt || "(empty)"}>{truncate(job.prompt, 80) || <em>(empty)</em>}</div>
-                  </td>
-                  <td>
+        {loading ? (
+          <p className="cron-empty">Loading…</p>
+        ) : sortedJobs.length === 0 ? (
+          <p className="cron-empty">No scheduled jobs yet. Create one to schedule a prompt.</p>
+        ) : (
+          <ul className="cron-list" aria-label="Scheduled jobs">
+            {sortedJobs.map((job) => (
+              <li key={job.id} className={`cron-card ${job.scheduleError ? "cron-card-error" : ""}`}>
+                <div className="cron-card-head">
+                  <div className="cron-card-identity">
+                    <h3 className="cron-card-name">{job.name}</h3>
+                    <code className="cron-card-cwd" title={job.cwd}>{job.cwd}</code>
+                  </div>
+                  <div className="cron-card-head-right">
                     <button
                       type="button"
                       className={`cron-toggle ${job.enabled ? "on" : "off"}`}
@@ -213,22 +197,47 @@ export function CronPanel({ api, defaultCwd, onOpenSession }: CronPanelProps) {
                       onClick={() => void toggleEnabled(job)}
                       title={job.enabled ? "Disable" : "Enable"}
                     >
+                      <span className="cron-toggle-dot" aria-hidden="true" />
                       {job.enabled ? "Enabled" : "Disabled"}
                     </button>
-                  </td>
-                  <td>{formatTime(job.lastRun)}</td>
-                  <td>{job.enabled ? formatTime(job.nextRun) : <span className="cron-muted">—</span>}</td>
-                  <td className="cron-row-actions">
-                    <button type="button" onClick={() => void runNow(job)} disabled={busyJobId === job.id} title="Run now (spawn session)">Run now</button>
-                    <button type="button" onClick={() => startEdit(job)} disabled={busyJobId === job.id}>Edit</button>
-                    <button type="button" className="cron-danger" onClick={() => void deleteJob(job)} disabled={busyJobId === job.id}>Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                  </div>
+                </div>
+
+                <dl className="cron-card-meta">
+                  <div className="cron-meta-item">
+                    <dt>Schedule</dt>
+                    <dd>
+                      <code>{job.schedule}</code>
+                      {job.scheduleError ? <div className="cron-error-text">{job.scheduleError}</div> : null}
+                    </dd>
+                  </div>
+                  <div className="cron-meta-item">
+                    <dt>Next run</dt>
+                    <dd>{job.enabled ? formatTime(job.nextRun) : <span className="cron-muted">—</span>}</dd>
+                  </div>
+                  <div className="cron-meta-item">
+                    <dt>Last run</dt>
+                    <dd>{formatTime(job.lastRun)}</dd>
+                  </div>
+                </dl>
+
+                <div className="cron-card-prompt">
+                  <div className="cron-card-prompt-label">Prompt</div>
+                  <div className="cron-card-prompt-body" title={job.prompt || "(empty)"}>
+                    {job.prompt ? truncate(job.prompt, 240) : <em className="cron-muted">(empty)</em>}
+                  </div>
+                </div>
+
+                <div className="cron-card-actions">
+                  <button type="button" className="cron-action-primary" onClick={() => void runNow(job)} disabled={busyJobId === job.id} title="Run now (spawn session)">Run now</button>
+                  <button type="button" onClick={() => startEdit(job)} disabled={busyJobId === job.id}>Edit</button>
+                  <button type="button" className="cron-danger" onClick={() => void deleteJob(job)} disabled={busyJobId === job.id}>Delete</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {draft ? (
         <CronDraftDialog
@@ -261,12 +270,12 @@ function CronDraftDialog({ draft, error, saving, onChange, onSave, onCancel }: C
         className="new-session-dialog cron-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={draft.id ? "Edit cron job" : "New cron job"}
+        aria-label={draft.id ? "Edit scheduled job" : "New scheduled job"}
         onClick={(event) => event.stopPropagation()}
       >
         <header>
-          <h2>{draft.id ? "Edit cron job" : "New cron job"}</h2>
-          <button type="button" onClick={onCancel} aria-label="Close cron dialog" disabled={saving}>×</button>
+          <h2>{draft.id ? "Edit scheduled job" : "New scheduled job"}</h2>
+          <button type="button" onClick={onCancel} aria-label="Close scheduled job dialog" disabled={saving}>×</button>
         </header>
         {error ? <div className="cron-dialog-error" role="alert">{error}</div> : null}
         <div className="cron-form">

@@ -626,7 +626,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         </ul>
       </aside>
 
-      <section className="active-session" aria-label={view === "cron" ? "Cron jobs" : "Active session"}>
+      <section className="active-session" aria-label={view === "cron" ? "Schedule" : "Active session"}>
         {view === "cron" && api.cron ? (
           <CronPanel
             api={api.cron}

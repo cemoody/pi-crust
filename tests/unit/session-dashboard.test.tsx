@@ -534,14 +534,14 @@ describe("SessionDashboard", () => {
 
     // Enter the cron view (sidebar label is 'Schedule').
     fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
-    await screen.findByRole("heading", { name: "Cron jobs" });
+    await screen.findByRole("heading", { name: "Schedule" });
 
     // Click a session in the sidebar — should leave the cron view and show
     // the active-session pane. Previously the cron panel stayed mounted
     // because only activeSessionId changed, leaving the user stuck on cron.
     fireEvent.click(screen.getByRole("button", { name: /Alpha/ }));
 
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "Cron jobs" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Schedule" })).not.toBeInTheDocument());
     expect(screen.getByRole("heading", { name: "Alpha" })).toBeInTheDocument();
   });
 
@@ -610,7 +610,7 @@ describe("SessionDashboard", () => {
     await screen.findByText("Alpha");
 
     fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
-    await screen.findByRole("heading", { name: "Cron jobs" });
+    await screen.findByRole("heading", { name: "Schedule" });
     await screen.findByText("dependabot");
 
     fireEvent.click(screen.getByRole("button", { name: "Run now" }));
@@ -618,7 +618,7 @@ describe("SessionDashboard", () => {
     // After the run-now resolves, the dashboard should switch to the sessions
     // view AND surface the spawned session as the active session, even though
     // it isn't in the filtered listSessions response.
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "Cron jobs" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Schedule" })).not.toBeInTheDocument());
     expect(screen.getByRole("heading", { name: "cron: dependabot" })).toBeInTheDocument();
   });
 
