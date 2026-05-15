@@ -180,24 +180,26 @@ describe("SessionDashboard", () => {
     expect(screen.getByText("Select or create a session.")).toBeInTheDocument();
   });
 
-  it("does not reorder the session list when status polling reports fresh timestamps", async () => {
+  it("orders active status-polled sessions before idle sessions in Recent sort", async () => {
+    const statusPoll = deferredPromise<readonly SessionCardData[]>();
     const api = {
       ...makeApi([
-        { id: "newer", cwd: "/repo/newer", sessionName: "Newer", status: "idle", lastActivity: 20 },
-        { id: "older", cwd: "/repo/older", sessionName: "Older", status: "idle", lastActivity: 10 },
+        { id: "idle-newer", cwd: "/repo/idle", sessionName: "Idle newer", status: "idle", lastActivity: 20 },
+        { id: "active-older", cwd: "/repo/active", sessionName: "Active older", status: "idle", lastActivity: 10 },
       ]),
-      listSessionStatuses: vi.fn(async () => ([
-        { id: "newer", cwd: "/repo/newer", sessionName: "Newer", status: "idle", lastActivity: 21 },
-        { id: "older", cwd: "/repo/older", sessionName: "Older", status: "idle", lastActivity: 999 },
-      ] satisfies readonly SessionCardData[])),
+      listSessionStatuses: vi.fn(() => statusPoll.promise),
     } satisfies SessionDashboardApi;
     render(<SessionDashboard api={api} />);
-    await screen.findByText("Newer");
-    expect(sessionListButtonNames()).toEqual(["Newer", "Older"]);
+    await screen.findByText("Idle newer");
+    expect(sessionListButtonNames()).toEqual(["Idle newer", "Active older"]);
 
+    statusPoll.resolve([
+      { id: "idle-newer", cwd: "/repo/idle", sessionName: "Idle newer", status: "idle", lastActivity: 20 },
+      { id: "active-older", cwd: "/repo/active", sessionName: "Active older", status: "streaming", lastActivity: 10 },
+    ]);
     await waitFor(() => expect(api.listSessionStatuses).toHaveBeenCalled());
 
-    expect(sessionListButtonNames()).toEqual(["Newer", "Older"]);
+    await waitFor(() => expect(sessionListButtonNames()).toEqual(["Active older", "Idle newer"]));
   });
 
   it("the inline name input disappears once the first message is sent", async () => {

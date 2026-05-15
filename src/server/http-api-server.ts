@@ -604,7 +604,14 @@ async function listSessionCards(context: HttpApiServerContext, cwd?: string) {
 async function sessionCardWithLiveState(context: HttpApiServerContext, session: SessionListItem) {
   if (context.registry.hasSession(session.id)) {
     try {
-      return toSessionCard(await context.registry.getSession(session.id).handle.getState());
+      const card = toSessionCard(await context.registry.getSession(session.id).handle.getState());
+      return {
+        ...card,
+        // getState() is an observation and some adapters report Date.now()
+        // there. Sidebar snapshots should sort by real session activity from
+        // the session index, not by the time this polling request ran.
+        lastActivity: Number.isFinite(session.lastActivity) ? session.lastActivity : card.lastActivity,
+      };
     } catch {
       // Fall back to the persisted list entry if the hot handle disappeared
       // while this status snapshot was being assembled.

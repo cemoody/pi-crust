@@ -43,6 +43,8 @@ describe("HTTP API session status snapshots", () => {
       pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
     });
     const created = await registry.createSession({ cwd: projectRoot, sessionName: "running elsewhere" });
+    adapter.session!.lastActivity = 123;
+    adapter.session!.stateLastActivity = 999;
     adapter.session!.setStatus("running");
     const server = createHttpApiServer({ registry, adapterKind: "test", projectRoot, sessionRoot, defaultCwd: projectRoot });
     servers.push(server);
@@ -51,9 +53,9 @@ describe("HTTP API session status snapshots", () => {
     const response = await fetch(`${baseUrl}/api/sessions/statuses?cwd=${encodeURIComponent(projectRoot)}`);
 
     expect(response.ok).toBe(true);
-    const sessions = await response.json() as Array<{ id: string; status: string; sessionName?: string }>;
+    const sessions = await response.json() as Array<{ id: string; status: string; sessionName?: string; lastActivity: number }>;
     expect(sessions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: created.id, sessionName: "running elsewhere", status: "streaming" }),
+      expect.objectContaining({ id: created.id, sessionName: "running elsewhere", status: "streaming", lastActivity: 123 }),
     ]));
   });
 });
@@ -101,6 +103,7 @@ class StatusTestSessionHandle implements PiSessionHandle {
   readonly sessionFile: string;
   sessionName: string | undefined;
   lastActivity = Date.now();
+  stateLastActivity: number | undefined;
   private status: SessionStatus = "idle";
   private readonly emitter = new EventEmitter();
 
@@ -113,7 +116,7 @@ class StatusTestSessionHandle implements PiSessionHandle {
 
   setStatus(status: SessionStatus): void {
     this.status = status;
-    this.lastActivity = Date.now();
+    if (this.stateLastActivity === undefined) this.lastActivity = Date.now();
   }
 
   async getState(): Promise<SessionState> {
@@ -124,7 +127,7 @@ class StatusTestSessionHandle implements PiSessionHandle {
       status: this.status,
       ...(this.sessionName === undefined ? {} : { sessionName: this.sessionName }),
       messageCount: 0,
-      lastActivity: this.lastActivity,
+      lastActivity: this.stateLastActivity ?? this.lastActivity,
     };
   }
 
