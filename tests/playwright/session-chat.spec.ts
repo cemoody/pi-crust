@@ -328,11 +328,13 @@ test('shortcut modal opens with ? outside an input, ignored inside textarea', as
 test('deleted sessions stay deleted after frontend reload', async ({ page }) => {
   await page.goto('/');
 
+  // Inline 'New session' flow: clicking the menu item immediately spawns
+  // a session and focuses the prompt; the optional name is entered in an
+  // inline input above the composer, not a modal.
   await page.getByRole('button', { name: 'New session' }).click();
-  await expect(page.getByRole('dialog', { name: 'Create new session' })).toBeVisible();
-  await page.getByLabel('New session cwd').fill(process.cwd());
-  await page.getByLabel('New session name').fill('Delete persistence check');
-  await page.getByRole('button', { name: 'Create session' }).click();
+  await page.getByLabel('Name this session').fill('Delete persistence check');
+  // The rename commits on blur; tab away from the field to trigger it.
+  await page.getByLabel('Name this session').press('Tab');
 
   await expect(page.getByRole('heading', { name: 'Delete persistence check' })).toBeVisible();
   await page.getByRole('button', { name: 'Delete', exact: true }).click();
@@ -347,14 +349,12 @@ test('can create a new session and send hello', async ({ page }) => {
   await page.goto('/');
 
   await page.getByRole('button', { name: 'New session' }).click();
-  await expect(page.getByRole('dialog', { name: 'Create new session' })).toBeVisible();
-  await page.getByLabel('New session cwd').fill(process.cwd());
-  await page.getByLabel('New session name').fill('Playwright new session');
-  await page.getByRole('button', { name: 'Create session' }).click();
-
-  await expect(page.getByRole('heading', { name: 'Playwright new session' })).toBeVisible();
+  // Inline name input → first prompt commits the rename alongside the
+  // send, no modal in between.
+  await page.getByLabel('Name this session').fill('Playwright new session');
   await page.getByLabel('Prompt draft').fill('hello');
   await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.getByRole('heading', { name: 'Playwright new session' })).toBeVisible();
 
   // exact: true — see note on the cold-session counterpart above.
   await expect(page.getByText('Mock response to: hello', { exact: true })).toBeVisible();

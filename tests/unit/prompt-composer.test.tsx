@@ -322,6 +322,29 @@ describe("PromptComposer", () => {
     expect(screen.queryByRole("button", { name: /claude-opus-4-7/ })).not.toBeInTheDocument();
   });
 
+  it("Shift+Tab from the prompt textarea moves focus to the previous tabbable element (no pathComplete swallow)", () => {
+    // The composer's prompt textarea binds Tab to @-path completion. That
+    // handler used to also catch Shift+Tab — trapping focus inside the
+    // composer. We want Shift+Tab to behave like a normal back-tab so the
+    // user can quickly hop up to the inline 'name this session' input
+    // above the composer.
+    renderComposer();
+    const draft = screen.getByLabelText("Prompt draft");
+    // fireEvent.keyDown returns false when the React handler calls
+    // event.preventDefault() (i.e. the default action is cancelled).
+    const shiftTabPropagated = fireEvent.keyDown(draft, { key: "Tab", shiftKey: true });
+    expect(shiftTabPropagated, "Shift+Tab on the prompt textarea must NOT preventDefault (browser native back-tab needs to run)").toBe(true);
+    // Forward Tab still triggers pathComplete and must preventDefault.
+    const forwardTabPropagated = fireEvent.keyDown(draft, { key: "Tab", shiftKey: false });
+    expect(forwardTabPropagated).toBe(false);
+  });
+
+  it("paperclip attach button is skipped in tab order so Shift+Tab lands on the previous control directly", () => {
+    renderComposer();
+    const paperclip = screen.getByRole("button", { name: "Add attachment" });
+    expect(paperclip.tabIndex).toBe(-1);
+  });
+
   it("ignores Escape when idle (does not clear or abort)", () => {
     const handlers = renderComposer();
     const draft = screen.getByLabelText("Prompt draft");

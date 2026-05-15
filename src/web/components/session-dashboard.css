@@ -1020,3 +1020,59 @@
   .active-actions { gap: 0; }
   .active-actions button.action-icon { width: 32px; height: 32px; }
 }
+
+/* Inline 'name this session' row that appears above the prompt composer
+   while the active session has no messages yet. Borderless and muted on
+   purpose — it should read as a quiet secondary affordance below the
+   prompt textarea, not as another input field. A pencil icon to the
+   left makes the clickable affordance discoverable. */
+.session-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: var(--composer-max);
+  margin: 0 auto;
+  padding: 4px 24px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.session-name-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-tertiary, var(--text-secondary));
+  flex-shrink: 0;
+  cursor: text;
+  /* The icon is paired with the input via <label htmlFor>; this just
+     gives it a hover hint without yet another box. */
+}
+.session-name-row:hover .session-name-icon,
+.session-name-row:focus-within .session-name-icon {
+  color: var(--text-secondary);
+}
+.session-name-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  /* 16 px so iOS Safari doesn't focus-zoom on tap. */
+  font-size: 16px;
+  line-height: 1.45;
+  padding: 4px 0;
+  /* Quiet, secondary text colour to match this surface's lower
+     visual weight (the prompt composer is the primary surface). */
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+}
+.session-name-input::placeholder {
+  color: var(--text-tertiary, var(--text-secondary));
+  opacity: 0.85;
+}
+.session-name-input:focus { color: var(--text-primary); }
+
+@media (max-width: 720px) {
+  .session-name-row { padding: 4px 12px; }
+}

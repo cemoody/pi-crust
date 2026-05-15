@@ -85,14 +85,26 @@ describe("SessionDashboard modal input render isolation", () => {
     expect(renderTimeline).toHaveBeenCalledTimes(callsAfterOpening);
   });
 
-  it("does not rerender the message timeline while typing in the new-session dialog", async () => {
+  it("does not rerender the message timeline while typing in the inline 'name this session' input", async () => {
+    // The 'New session' modal was replaced by an inline flow: clicking the
+    // menu spawns a fresh session and renders a small 'name this session'
+    // input above the composer. We pin that *typing* into that input keeps
+    // MessageTimeline render counts flat — the same isolation guarantee
+    // the old dialog had. (Switching to the freshly-created session and
+    // the focus-seed effect naturally rerender the timeline a few times;
+    // we snapshot the count after those settle and assert keystrokes add
+    // zero on top of that.)
     await renderActiveDashboard();
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
-    await screen.findByRole("dialog", { name: "Create new session" });
+    const nameInput = await screen.findByLabelText("Name this session");
+    // Allow any post-create batched state updates to flush before we lock
+    // in the baseline.
+    await waitFor(() => expect(renderTimeline).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const callsAfterOpening = renderTimeline.mock.calls.length;
 
-    fireEvent.change(screen.getByLabelText("New session name"), { target: { value: "A lag-free new session name" } });
-    fireEvent.change(screen.getByLabelText("New session cwd"), { target: { value: "/repo/another" } });
+    fireEvent.change(nameInput, { target: { value: "A lag-free new session name" } });
+    fireEvent.change(nameInput, { target: { value: "A lag-free new session name still" } });
 
     expect(renderTimeline).toHaveBeenCalledTimes(callsAfterOpening);
   });

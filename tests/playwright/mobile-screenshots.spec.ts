@@ -79,11 +79,16 @@ for (const vp of VIEWPORTS) {
       await shot(page, vp, '04-sidebar-collapsed');
     });
 
-    test('05 new session dialog', async ({ page }) => {
+    test('05 new session inline flow', async ({ page }) => {
+      // The 'New session' modal was replaced by an inline flow: clicking
+      // the menu immediately spawns a session, focuses the prompt, and
+      // surfaces a small 'name this session' input above the composer.
+      // The screenshot captures that state for layout review.
       await page.goto('/');
       await page.getByRole('button', { name: 'New session' }).click();
-      await page.getByRole('dialog', { name: 'Create new session' }).waitFor();
-      await shot(page, vp, '05-new-session-dialog');
+      await page.getByLabel('Name this session').waitFor();
+      await page.waitForTimeout(280);
+      await shot(page, vp, '05-new-session-inline');
     });
 
     test('06 model picker', async ({ page }) => {

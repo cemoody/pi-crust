@@ -307,6 +307,13 @@ export function PromptComposer(props: PromptComposerProps) {
           type="button"
           className="composer-attach"
           aria-label="Add attachment"
+          // Skip the paperclip in the natural tab cycle so Shift+Tab from
+          // the prompt textarea lands on the previous focusable element
+          // (the inline 'name this session' input above the composer)
+          // directly, instead of bouncing through the paperclip first.
+          // The button is still mouse-clickable and reachable via
+          // keyboard shortcut paste / drag-drop.
+          tabIndex={-1}
           onClick={() => fileInputRef.current?.click()}
         >
           <PaperclipGlyph />
@@ -334,7 +341,10 @@ export function PromptComposer(props: PromptComposerProps) {
               void props.onAbort();
               return;
             }
-            if (event.key === "Tab") {
+            if (event.key === "Tab" && !event.shiftKey) {
+              // Forward Tab = @-path completion. Shift+Tab falls through
+              // to native back-tab so the user can jump to the inline
+              // 'name this session' input above the composer.
               event.preventDefault();
               pathComplete();
               return;

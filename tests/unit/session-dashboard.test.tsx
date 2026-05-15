@@ -12,6 +12,28 @@ import { SessionDashboard } from "../../src/web/components/SessionDashboard.js";
 import type { ExtensionUiResponse } from "../../src/shared/protocol.js";
 import type { SessionCardData, SessionDashboardApi, NewSessionInput } from "../../src/web/api/session-api.js";
 
+function renderDashboardCapturingPrompts() {
+  const promptCalls: Array<{ readonly sessionId: string; readonly text: string }> = [];
+  const renameCalls: Array<{ readonly sessionId: string; readonly name: string }> = [];
+  const baseApi = makeApi();
+  const api: SessionDashboardApi = {
+    ...baseApi,
+    async prompt(sessionId, text) {
+      promptCalls.push({ sessionId, text });
+      return [
+        { id: `u-${promptCalls.length}`, role: "user", text },
+        { id: `a-${promptCalls.length}`, role: "assistant", text: `Mock response to: ${text}` },
+      ];
+    },
+    async renameSession(sessionId, name) {
+      renameCalls.push({ sessionId, name });
+      return baseApi.renameSession(sessionId, name);
+    },
+  };
+  render(<SessionDashboard api={api} />);
+  return { promptCalls, renameCalls };
+}
+
 function makeApi(initial: SessionCardData[] = []): SessionDashboardApi {
   let sessions = [...initial];
   return {
@@ -68,88 +90,71 @@ describe("SessionDashboard", () => {
     expect(screen.getByText("Select or create a session.")).toBeInTheDocument();
   });
 
-  it("creates a session and shows the active session pane", async () => {
+  it("clicking 'New session' immediately creates a session, focuses the prompt, and shows the inline name input", async () => {
+    // The 'New session' modal was replaced by an inline flow: the click
+    // immediately spawns a session (cwd = home-or-default), the prompt
+    // textarea gets focus, and a small 'name (optional)' input appears
+    // above the composer until the first message is sent.
     render(<SessionDashboard api={makeApi()} />);
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
-    await screen.findByRole("dialog", { name: "Create new session" });
-    fireEvent.change(screen.getByLabelText("New session cwd"), { target: { value: "/repo/app" } });
-    fireEvent.change(screen.getByLabelText("New session name"), { target: { value: "Feature work" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create session" }));
+    await screen.findByRole("heading", { name: "pi remote" });
 
-    await screen.findByRole("heading", { name: "Feature work" });
-    expect(screen.getByText("/repo/app")).toBeInTheDocument();
-    expect(screen.getByText("mock/model")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    // No modal dialog should ever appear.
+    expect(screen.queryByRole("dialog", { name: /Create new session|new session/i })).not.toBeInTheDocument();
+
+    // The composer's prompt textarea is now in the DOM and focused.
+    const prompt = await screen.findByLabelText("Prompt draft");
+    await waitFor(() => expect(document.activeElement).toBe(prompt));
+
+    // The inline name input is visible, starts empty, and uses a
+    // standalone placeholder rather than an external 'NAME / OPTIONAL'
+    // label — visual styling that matches the prompt textarea.
+    const nameInput = screen.getByLabelText("Name this session") as HTMLInputElement;
+    expect(nameInput).toBeInTheDocument();
+    expect(nameInput.value).toBe("");
+    expect(nameInput.placeholder).toMatch(/optionally name this session/i);
+    // No external 'NAME' / 'optional' label should be in the DOM — the
+    // hint lives inside the input as placeholder text.
+    expect(screen.queryByText(/^name$/i)).toBeNull();
+    expect(screen.queryByText(/^optional$/i)).toBeNull();
+    // The row renders a writing-icon affordance next to the input so the
+    // user can tell at a glance that the area is editable. The wrapper
+    // also drops the bordered card background so the field reads as a
+    // lighter, secondary affordance below the prompt composer.
+    const row = nameInput.closest(".session-name-row");
+    expect(row, "name input should live inside .session-name-row").not.toBeNull();
+    expect(row!.querySelector("svg"), ".session-name-row should include a pencil-style svg icon").not.toBeNull();
+    // The borderless variant no longer wraps the input in the rounded
+    // .session-name-field card.
+    expect(row!.querySelector(".session-name-field")).toBeNull();
   });
 
-  it("NewSessionDialog: typing in the cwd field does NOT yank the caret back to column 0 on every re-render", async () => {
-    // Repro for the 'cursor flips to the far left whenever I start to type'
-    // bug. The previous implementation positioned the caret at column 0 via
-    // an inline `ref` callback, which React re-invokes on every render —
-    // so each keystroke (plus every SSE-driven dashboard re-render) jumped
-    // the caret back to column 0 of the prefilled path. With the fix the
-    // initial focus places the caret at 0 ONCE on mount; any subsequent
-    // user-driven caret position must survive re-renders.
-    render(<SessionDashboard api={makeApi()} />);
+  it("the inline name input disappears once the first message is sent", async () => {
+    const handlers = renderDashboardCapturingPrompts();
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
-    const cwdInput = await screen.findByLabelText("New session cwd") as HTMLInputElement;
+    await screen.findByLabelText("Name this session");
 
-    // User moves the caret to the end of the path and types a character.
-    const initial = cwdInput.value;
-    cwdInput.setSelectionRange(initial.length, initial.length);
-    fireEvent.change(cwdInput, { target: { value: initial + "X" } });
-
-    // With the bug the ref callback would force selectionStart back to 0.
-    // The fix must leave the caret somewhere AFTER the start — we don't
-    // assert an exact position because jsdom's controlled-input default
-    // varies, but column 0 is the smoking-gun regression.
-    expect(cwdInput.selectionStart).not.toBe(0);
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(handlers.promptCalls.length).toBe(1));
+    await waitFor(() => expect(screen.queryByLabelText("Name this session")).not.toBeInTheDocument());
   });
 
-  it("NewSessionDialog: prefers homeCwd over defaultCwd when the API exposes it", async () => {
-    const api = {
-      ...makeApi(),
-      async getDefaultCwd() { return "/srv/where-the-api-launched"; },
-      async getHomeCwd() { return "/home/coder"; },
-    } satisfies SessionDashboardApi;
-    render(<SessionDashboard api={api} />);
-    // Wait for the home-dir resolution to land in state before opening.
-    await waitFor(() => expect((api as { getHomeCwd?: () => Promise<unknown> }).getHomeCwd).toBeDefined());
+  it("typing in the inline name input and sending a prompt renames the session", async () => {
+    const handlers = renderDashboardCapturingPrompts();
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
-    const cwdInput = await screen.findByLabelText("New session cwd") as HTMLInputElement;
-    await waitFor(() => expect(cwdInput.value).toBe("/home/coder"));
-  });
+    const nameInput = await screen.findByLabelText("Name this session") as HTMLInputElement;
 
-  it("NewSessionDialog: shows a loading state while createSession is in flight", async () => {
-    // The submit button must give immediate feedback — swapping its label to
-    // 'Creating…' and disabling form controls — because session creation
-    // takes a few seconds on the real backend.
-    let resolveCreate: ((v: SessionCardData) => void) | null = null;
-    const slowCreate = new Promise<SessionCardData>((resolve) => { resolveCreate = resolve; });
-    const api = {
-      ...makeApi(),
-      createSession: vi.fn(() => slowCreate),
-    } satisfies SessionDashboardApi;
+    fireEvent.change(nameInput, { target: { value: "Feature work" } });
+    // The inline name input commits on blur — simulating the user moving
+    // focus from the name field to the prompt textarea before sending.
+    fireEvent.blur(nameInput);
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "start" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    render(<SessionDashboard api={api} />);
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
-    fireEvent.change(await screen.findByLabelText("New session cwd"), { target: { value: "/repo/app" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create session" }));
-
-    // Immediately after the click the primary button must surface a busy
-    // state — not silently wait for the network round-trip.
-    const creatingButton = await screen.findByRole("button", { name: "Creating session" });
-    expect(creatingButton).toBeDisabled();
-    expect(creatingButton).toHaveTextContent(/Creating…/);
-    expect(screen.getByLabelText("New session cwd")).toBeDisabled();
-    expect(screen.getByLabelText("New session name")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-
-    // Resolve and confirm the dialog tears down.
-    await act(async () => {
-      resolveCreate?.({ id: "s1", cwd: "/repo/app", status: "idle", model: "mock/model", lastActivity: 1 });
-      await slowCreate;
-    });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Create new session" })).not.toBeInTheDocument());
+    await waitFor(() => expect(handlers.renameCalls.length).toBe(1));
+    expect(handlers.renameCalls[0]!.name).toBe("Feature work");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Feature work" })).toBeInTheDocument());
   });
 
   it("searches, toggles paths, filters named sessions, and sorts", async () => {

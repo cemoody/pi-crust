@@ -23,6 +23,10 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [sessions, setSessions] = useState<readonly SessionCardData[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => readSessionFromUrl());
   const [defaultCwd, setDefaultCwd] = useState("");
+  // Path-policy allowed project root, surfaced via /api/health. Used to
+  // decide whether $HOME is a safe default for new sessions or whether
+  // we should fall back to the API server's own cwd.
+  const [projectRoot, setProjectRoot] = useState("");
   // The user's home directory (server-side). Preferred as the New Session
   // dialog default; falls back to defaultCwd when the API doesn't expose it.
   const [homeCwd, setHomeCwd] = useState<string>("");
@@ -35,7 +39,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [steeringBySession, setSteeringBySession] = useState<Record<string, string[]>>({});
   const [followUpBySession, setFollowUpBySession] = useState<Record<string, string[]>>({});
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [newSessionOpen, setNewSessionOpen] = useState(false);
+
   const [notice, setNotice] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
@@ -88,6 +92,14 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         const defaultCwd = api.getDefaultCwd ? await api.getDefaultCwd() : "/tmp/project";
         if (cancelled) return;
         setDefaultCwd(defaultCwd);
+        if (api.getServerInfo) {
+          try {
+            const info = await api.getServerInfo();
+            if (!cancelled) setProjectRoot(info.projectRoot ?? "");
+          } catch {
+            // Optional capability; ignore.
+          }
+        }
         if (api.getHomeCwd) {
           try {
             const home = await api.getHomeCwd();
@@ -221,13 +233,28 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
 
   async function createSession(input?: { readonly cwd?: string; readonly sessionName?: string }) {
     setError(null);
-    const nextCwd = input?.cwd?.trim() || defaultCwd;
+    // Prefer the user's $HOME when it's still inside the path-policy's
+    // allowed projectRoot (the common production case where projectRoot
+    // is $HOME). In tighter sandboxes (CI / playwright runs where
+    // projectRoot is the repo root) homeCwd falls outside policy, so
+    // fall back to defaultCwd — the API server's own cwd, which is
+    // always within projectRoot by construction. The explicit input
+    // override (e.g. from a slash command) trumps both.
+    const inferredHomeCwd = homeCwd && projectRoot && isWithin(homeCwd, projectRoot) ? homeCwd : "";
+    const nextCwd = input?.cwd?.trim() || inferredHomeCwd || defaultCwd;
     const nextName = input?.sessionName?.trim() ?? "";
     const created = await api.createSession({ cwd: nextCwd, ...(nextName ? { sessionName: nextName } : {}) });
     setSessions((current) => [created, ...current]);
     setMessagesBySession((current) => ({ ...current, [created.id]: [] }));
     setActiveSessionId(created.id);
-    setNewSessionOpen(false);
+    // Trigger PromptComposer's draftSeed effect to focus the textarea on
+    // freshly created sessions — the inline 'New session' flow expects to
+    // act like "the prompt is the new-session dialog".
+    setDraftSeedBySession((current) => ({
+      ...current,
+      [created.id]: { id: `created-${created.id}-${Date.now()}`, value: "" },
+    }));
+    return created;
   }
 
   function beginRename() {
@@ -548,7 +575,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
           <button
             type="button"
             className="sidebar-menu-item"
-            onClick={() => { setView("sessions"); setNewSessionOpen(true); }}
+            onClick={() => { setView("sessions"); void createSession(); }}
           >
             <NewSessionGlyph />
             New session
@@ -717,6 +744,13 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 onConfirmResponse={(id, confirmed) => respondToExtensionUi({ id, confirmed })}
                 onCancelResponse={(id) => respondToExtensionUi({ id, cancelled: true })}
               />
+              {(messagesBySession[activeSession.id]?.length ?? 0) === 0 ? (
+                <InlineNameInput
+                  sessionId={activeSession.id}
+                  currentName={activeSession.sessionName ?? ""}
+                  onCommit={(next) => void commitRename(next)}
+                />
+              ) : null}
               {promptErrorBySession[activeSession.id] ? (
                 <div className="prompt-error-banner" role="alert" aria-label="Prompt error">
                   <div className="prompt-error-text">
@@ -755,13 +789,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         )}
       </section>
 
-      {newSessionOpen ? (
-        <NewSessionDialog
-          initialCwd={homeCwd || defaultCwd}
-          onCreate={async (input) => { await createSession(input); }}
-          onCancel={() => setNewSessionOpen(false)}
-        />
-      ) : null}
+
 
       {forkDialogOpen ? (
         <div className="new-session-backdrop" role="presentation" onClick={() => setForkDialogOpen(false)}>
@@ -819,6 +847,48 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         onClose={() => setModelPickerOpen(false)}
       />
     </main>
+  );
+}
+
+/**
+ * Inline 'name this session' input that lives above the prompt composer
+ * while the active session still has zero messages. Owns its own local
+ * state so keystrokes don't bubble up to SessionDashboard re-renders
+ * (and therefore don't churn the MessageTimeline). Commits on blur.
+ */
+function InlineNameInput(props: {
+  readonly sessionId: string;
+  readonly currentName: string;
+  readonly onCommit: (name: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  // Reset draft when switching sessions — we don't want a half-typed
+  // name to leak from one fresh session to another.
+  useEffect(() => { setDraft(""); }, [props.sessionId]);
+  const inputId = `session-name-${props.sessionId}`;
+  return (
+    <div className="session-name-row">
+      {/* Clicking anywhere in the row (including the icon) focuses the
+          input — the icon is decorative; the <label htmlFor> handles the
+          actual focus delegation. */}
+      <label htmlFor={inputId} className="session-name-icon" aria-hidden="true">
+        <PencilGlyph />
+      </label>
+      <input
+        id={inputId}
+        type="text"
+        className="session-name-input"
+        placeholder={props.currentName || "Optionally name this session…"}
+        aria-label="Name this session"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          const next = draft.trim();
+          if (!next || next === props.currentName) return;
+          props.onCommit(next);
+        }}
+      />
+    </div>
   );
 }
 
@@ -1434,6 +1504,19 @@ function toTimelineMessage(message: import("../api/session-api.js").DashboardMes
         }
       : {}),
   };
+}
+
+/**
+ * Returns true if `candidate` is the same as or a subdirectory of `root`.
+ * String-comparison only — we don't have node's path.resolve / relative
+ * in the browser, but both inputs come from the server which already
+ * resolved them, so a normalised prefix check is sufficient.
+ */
+function isWithin(candidate: string, root: string): boolean {
+  if (!candidate || !root) return false;
+  const c = candidate.replace(/\/+$/, "");
+  const r = root.replace(/\/+$/, "");
+  return c === r || c.startsWith(`${r}/`);
 }
 
 function errorMessage(error: unknown): string {
