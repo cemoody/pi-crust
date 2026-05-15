@@ -532,8 +532,8 @@ describe("SessionDashboard", () => {
     render(<SessionDashboard api={api} />);
     await screen.findByText("Alpha");
 
-    // Enter the cron view.
-    fireEvent.click(screen.getByRole("button", { name: "Cron" }));
+    // Enter the cron view (sidebar label is 'Schedule').
+    fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
     await screen.findByRole("heading", { name: "Cron jobs" });
 
     // Click a session in the sidebar — should leave the cron view and show
@@ -609,7 +609,7 @@ describe("SessionDashboard", () => {
     render(<SessionDashboard api={api} />);
     await screen.findByText("Alpha");
 
-    fireEvent.click(screen.getByRole("button", { name: "Cron" }));
+    fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
     await screen.findByRole("heading", { name: "Cron jobs" });
     await screen.findByText("dependabot");
 

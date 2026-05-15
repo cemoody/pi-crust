@@ -560,7 +560,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             onClick={() => setView(view === "cron" ? "sessions" : "cron")}
           >
             <CronGlyph />
-            Cron
+            Schedule
           </button>
         </nav>
 

@@ -65,7 +65,7 @@
   height: 22px;
   display: grid;
   place-items: center;
-  border-radius: 5px;
+  border-radius: 4px;
   border: 0;
   background: transparent;
   color: var(--gray-500);
@@ -87,7 +87,7 @@
   min-width: 220px;
   background: var(--white-000);
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 6px;
   box-shadow: var(--shadow-2);
   padding: 4px;
   z-index: 60;
@@ -98,7 +98,7 @@
   width: 100%;
   text-align: left;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 0;
   background: transparent;
   font-size: 12px;
@@ -127,7 +127,7 @@
 .message-card.user {
   align-self: flex-start;
   background: rgba(169, 118, 237, 0.08);
-  border-radius: 14px;
+  border-radius: 10px;
   padding: 8px 14px;
   max-width: 70%;
   width: fit-content;
@@ -190,7 +190,7 @@
   padding: 0 7px;
   font-size: 11px;
   color: var(--text-secondary);
-  border-radius: 5px;
+  border-radius: 4px;
   background: transparent;
   border: 0;
 }
@@ -208,7 +208,7 @@
 .message-error { color: var(--red-600); font-size: 12.5px; margin: 4px 0 0; }
 
 .message-images { display: flex; gap: 6px; margin: 6px 0; }
-.message-images img { max-width: 9rem; max-height: 9rem; border-radius: 6px; border: 1px solid var(--hairline); }
+.message-images img { max-width: 9rem; max-height: 9rem; border-radius: 4px; border: 1px solid var(--hairline); }
 
 /* .thinking-block now adopts the .tool-card visual rhythm in MessageTimeline
    so 'thinking' steps and tool calls share a single anatomy. Most styling
@@ -228,7 +228,7 @@
   padding: 8px 10px;
   background: var(--gray-060);
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 6px;
   white-space: pre-wrap;
   font-size: 12px;
   color: var(--text-secondary);
@@ -295,7 +295,7 @@
 
 .markdown-lite code {
   background: var(--gray-080);
-  border-radius: 4px;
+  border-radius: 3px;
   padding: 1px 5px;
   font-size: 12.5px;
   font-family: var(--font-mono);
@@ -308,7 +308,7 @@
 
 .code-block {
   border: 1px solid var(--hairline);
-  border-radius: 10px;
+  border-radius: 7px;
   background: var(--gray-060);
   /* overflow:hidden previously clipped the inner <pre>'s horizontal scrollbar
      so long code lines were invisible. We let the pre scroll instead. */
@@ -345,7 +345,7 @@
   color: var(--text-secondary);
   background: var(--white-000);
   border: 1px solid var(--hairline);
-  border-radius: 6px;
+  border-radius: 4px;
   opacity: 0;
   transition: opacity 120ms ease;
 }
@@ -409,7 +409,7 @@
   /* zero horizontal padding so the row's icon/text starts at the same x
      as the assistant's prose in the surrounding message bubble. */
   padding: 4px 0;
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--text-secondary);
   font-size: 12px;
 }
@@ -423,7 +423,7 @@
   /* zero horizontal padding so the row's icon/text starts at the same x
      as the assistant's prose in the surrounding message bubble. */
   padding: 4px 0;
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
@@ -455,7 +455,7 @@
   padding: 8px 10px;
   background: var(--gray-060);
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 12px;
   white-space: pre-wrap;
   font-family: var(--font-mono);
@@ -491,7 +491,7 @@
 
 .tool-card .tool-line { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; }
 .tool-card .tool-line strong { font-weight: 500; color: var(--text-primary); }
-.tool-card .tool-line code { background: var(--gray-080); padding: 0 5px; border-radius: 4px; font-size: 11.5px; }
+.tool-card .tool-line code { background: var(--gray-080); padding: 0 5px; border-radius: 3px; font-size: 11.5px; }
 .tool-card .tool-args { font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tool-card .tool-status-text { margin-left: auto; font-size: 10.5px; color: var(--text-secondary); font-style: italic; }
 .tool-card.error .tool-status-text { color: var(--red-600); font-style: normal; }
@@ -502,7 +502,7 @@
   padding: 8px 10px;
   background: var(--gray-060);
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 12px;
   white-space: pre-wrap;
 }
@@ -511,7 +511,7 @@
   margin: 8px 0 0;
   padding: 10px;
   border: 1px solid var(--hairline);
-  border-radius: 10px;
+  border-radius: 7px;
   background: var(--white-900);
 }
 
@@ -528,7 +528,7 @@
   display: block;
   max-width: 100%;
   max-height: 420px;
-  border-radius: 8px;
+  border-radius: 6px;
   border: 1px solid var(--hairline);
 }
 
@@ -536,7 +536,7 @@
   width: 100%;
   min-height: 320px;
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 6px;
   background: white;
 }
 
@@ -545,7 +545,7 @@
   align-self: flex-start;
   gap: 4px;
   padding: 8px 12px;
-  border-radius: 14px;
+  border-radius: 10px;
   background: rgba(0, 0, 0, 0.03);
 }
 
@@ -571,7 +571,7 @@
 .artifact-view {
   margin: 4px 0;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: rgba(0, 0, 0, 0.02);
   border: 1px solid rgba(0, 0, 0, 0.06);
 }

@@ -13,7 +13,7 @@
   position: relative;
   background: var(--white-000);
   border: 1px solid var(--hairline);
-  border-radius: 16px;
+  border-radius: 10px;
   transition: border-color 120ms ease, box-shadow 120ms ease;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
@@ -97,7 +97,7 @@
 .composer-send.composer-stop {
   background: var(--red-100);
   color: var(--red-600);
-  border-radius: 8px;
+  border-radius: 6px;
   width: 26px;
   height: 26px;
   border: 1px solid var(--red-200);
@@ -121,7 +121,7 @@
   padding: 6px 10px;
   border: 1px solid rgba(189, 166, 89, 0.4);
   background: rgba(236, 208, 111, 0.18);
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--gold-700);
   font-size: 11.5px;
   display: flex;
@@ -133,7 +133,7 @@
 .composer-paste-warning button {
   width: 20px;
   height: 20px;
-  border-radius: 4px;
+  border-radius: 3px;
   border: 0;
   background: transparent;
   color: var(--gold-700);
@@ -212,7 +212,7 @@
   font: inherit;
   padding: 0;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 2px;
 }
 
 .composer-status-model:hover {
@@ -233,7 +233,7 @@
   height: 24px;
   display: grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
@@ -260,7 +260,7 @@
 .composer-text-action {
   height: 24px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
@@ -301,16 +301,16 @@
   padding: 4px 8px;
   background: var(--gray-060);
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 12px;
   color: var(--text-secondary);
 }
 
-.attachments img { width: 28px; height: 28px; border-radius: 4px; border: 1px solid var(--hairline); object-fit: cover; }
+.attachments img { width: 28px; height: 28px; border-radius: 3px; border: 1px solid var(--hairline); object-fit: cover; }
 .attachments button {
   height: 20px;
   padding: 0 6px;
-  border-radius: 4px;
+  border-radius: 3px;
   border: 0;
   background: transparent;
   font-size: 11px;

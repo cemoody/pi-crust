@@ -12,7 +12,7 @@
   width: min(560px, 100%);
   max-height: min(80vh, 720px);
   background: var(--white-000);
-  border-radius: 14px;
+  border-radius: 10px;
   box-shadow: var(--shadow-3);
   border: 1px solid var(--hairline);
   display: grid;
@@ -38,7 +38,7 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   border: 1px solid var(--hairline);
   background: var(--white-000);
   display: grid;
@@ -54,7 +54,7 @@
   margin: 12px 18px;
   height: 32px;
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 0 10px;
   font-size: 13px;
   outline: none;
@@ -67,7 +67,7 @@
   color: var(--red-600);
   background: rgba(209,74,37,0.08);
   border: 1px solid rgba(209,74,37,0.18);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 8px;
   font-size: 12.5px;
 }
@@ -90,7 +90,7 @@
   row-gap: 4px;
   column-gap: 12px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 7px;
   border: 1px solid var(--hairline);
   background: var(--white-000);
   text-align: left;
