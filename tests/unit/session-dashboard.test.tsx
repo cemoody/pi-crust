@@ -215,6 +215,79 @@ describe("SessionDashboard", () => {
     expect(sessionListButtonNames()).toEqual(["Newer", "Older"]);
   });
 
+  it("Recent sort: only user-driven activity (handlePrompt) moves a row; LLM/tool/poll updates do NOT", async () => {
+    // Contract pinned here: 'Recent' is the last time the user submitted
+    // input on this client. Server-driven ticks (LLM streaming, tool
+    // execution, status polling, session-index mtime drift) MUST NOT
+    // reorder the sidebar.
+    if (typeof window !== "undefined" && window.localStorage) window.localStorage.clear();
+
+    const statusPoll = deferredPromise<readonly SessionCardData[]>();
+    const api = {
+      ...makeApi([
+        // Two rows. 'Older' has the LATER server-side lastActivity so the
+        // pre-fix Recent sort would have put it on top. We want the order
+        // here to be 'Newer first' once the user has touched it.
+        { id: "newer", cwd: "/repo/newer", sessionName: "Newer", status: "idle", lastActivity: 10 },
+        { id: "older", cwd: "/repo/older", sessionName: "Older", status: "idle", lastActivity: 1_000_000 },
+      ]),
+      listSessionStatuses: vi.fn(() => statusPoll.promise),
+    } satisfies SessionDashboardApi;
+    render(<SessionDashboard api={api} />);
+    // Initial order seeds from server lastActivity — 'Older' wins.
+    await screen.findByText("Older");
+    expect(sessionListButtonNames()).toEqual(["Older", "Newer"]);
+
+    // User selects 'Newer' and submits a prompt — that's the canonical
+    // user-activity bump. Now 'Newer' should pop to the top.
+    fireEvent.click(screen.getByRole("button", { name: /Newer/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sessionListButtonNames()).toEqual(["Newer", "Older"]));
+
+    // Now simulate the server reporting 'Older' as streaming with a
+    // wildly newer lastActivity — the kind of update PR #77 used to act
+    // on. The sidebar must stay put because no user activity happened.
+    statusPoll.resolve([
+      { id: "newer", cwd: "/repo/newer", sessionName: "Newer", status: "idle", lastActivity: 11 },
+      { id: "older", cwd: "/repo/older", sessionName: "Older", status: "streaming", lastActivity: 9_999_999_999 },
+    ]);
+    await waitFor(() => expect(api.listSessionStatuses).toHaveBeenCalled());
+    expect(sessionListButtonNames()).toEqual(["Newer", "Older"]);
+  });
+
+  it("Recent sort: localStorage persistence preserves user-driven order across reloads", async () => {
+    if (typeof window !== "undefined" && window.localStorage) window.localStorage.clear();
+
+    const initial = [
+      { id: "a", cwd: "/repo/a", sessionName: "Alpha", status: "idle" as const, model: "m", lastActivity: 100 },
+      { id: "b", cwd: "/repo/b", sessionName: "Beta",  status: "idle" as const, model: "m", lastActivity: 200 },
+    ];
+    const first = render(<SessionDashboard api={makeApi(initial)} />);
+    await screen.findByText("Beta");
+    expect(sessionListButtonNames()).toEqual(["Beta", "Alpha"]);
+
+    // User prompts 'Alpha' — it goes to the top.
+    fireEvent.click(screen.getByRole("button", { name: /Alpha/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sessionListButtonNames()).toEqual(["Alpha", "Beta"]));
+
+    // Unmount and re-render with a fresh API. localStorage should carry
+    // the user-activity map so 'Alpha' remains on top. Clear the active
+    // session from the URL so the second render starts from the sidebar
+    // list rather than re-opening the same session (which would double
+    // up the 'Alpha' DOM nodes between sidebar row and active-session h2).
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("session");
+      window.history.replaceState(null, "", url.toString());
+    }
+    first.unmount();
+    render(<SessionDashboard api={makeApi(initial)} />);
+    await waitFor(() => expect(sessionListButtonNames()).toEqual(["Alpha", "Beta"]));
+  });
+
   it("the inline name input disappears once the first message is sent", async () => {
     const handlers = renderDashboardCapturingPrompts();
     fireEvent.click(screen.getByRole("button", { name: "New session" }));

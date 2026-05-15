@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ExtensionUiRequest, ExtensionUiResponse, WireMessage } from "../../shared/protocol.js";
 import type { DashboardArtifact, DashboardMessage, DashboardToolDetails, ForkMessageOption, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
@@ -34,6 +34,25 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [showPaths, setShowPaths] = useState(false);
   const [namedOnly, setNamedOnly] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
+  // Sidebar 'Recent' sort key. We track the last time the *user* drove
+  // activity into a session (prompt sent, bash command sent, session
+  // created/forked/cloned) on this client, and sort by that. Server-side
+  // ticks — LLM streaming, tool executions, status polls, session-index
+  // mtime drift — are deliberately ignored so the row doesn't move out
+  // from under the user just because the agent is doing work. Persisted
+  // to localStorage so a reload preserves the order the user established.
+  const [lastUserActivityById, setLastUserActivityById] = useState<Record<string, number>>(() => loadUserActivityMap());
+  const userActivityMapHydrated = useRef(false);
+  useEffect(() => {
+    if (!userActivityMapHydrated.current) {
+      userActivityMapHydrated.current = true;
+      return;
+    }
+    saveUserActivityMap(lastUserActivityById);
+  }, [lastUserActivityById]);
+  const bumpUserActivity = useCallback((sessionId: string, when: number = Date.now()) => {
+    setLastUserActivityById((current) => ({ ...current, [sessionId]: when }));
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [messagesBySession, setMessagesBySession] = useState<Record<string, TimelineMessage[]>>({});
   const [steeringBySession, setSteeringBySession] = useState<Record<string, string[]>>({});
@@ -109,7 +128,22 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             // Optional capability; ignore.
           }
         }
-        setSessions(await api.listSessions(defaultCwd));
+        const initialSessions = await api.listSessions(defaultCwd);
+        if (cancelled) return;
+        setSessions(initialSessions);
+        // Seed the user-activity map for sessions we haven't seen before so
+        // the very first render after install/reload has a reasonable order.
+        // Sessions that already have an entry (from localStorage) keep it.
+        setLastUserActivityById((current) => {
+          let next: Record<string, number> | null = null;
+          for (const session of initialSessions) {
+            if (current[session.id] === undefined) {
+              if (!next) next = { ...current };
+              next[session.id] = session.lastActivity;
+            }
+          }
+          return next ?? current;
+        });
       } catch (caught) {
         if (!cancelled) setError(errorMessage(caught));
       }
@@ -259,18 +293,19 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     return [...filtered].sort((a, b) => {
       if (sortMode === "name") return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
       if (sortMode === "cwd") return a.cwd.localeCompare(b.cwd);
-      // Status is intentionally NOT a primary sort key. PR #77 added
-      // sessionActivityRank() as the leading comparator and the sidebar
-      // started thrashing: any session transitioning streaming -> idle
-      // (or compacting/retrying flicker) would yank rows up by 5+ slots
-      // and back. Status is already surfaced visually via the per-row
-      // status dot; we keep the row position stable by sorting on
-      // recency alone, with a stable name tiebreaker.
-      const recentDelta = b.lastActivity - a.lastActivity;
+      // 'Recent' is defined as the last time *the user* drove activity
+      // into the session on this client (handlePrompt / handleBash /
+      // create / fork / clone). Server-driven ticks (LLM streaming,
+      // tool executions, status polls, session-index mtime drift) do
+      // not change this value, so the row does NOT move while the agent
+      // is working. Status colors on the bubble still reflect live state.
+      const userA = lastUserActivityById[a.id] ?? a.lastActivity;
+      const userB = lastUserActivityById[b.id] ?? b.lastActivity;
+      const recentDelta = userB - userA;
       if (recentDelta !== 0) return recentDelta;
       return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
     });
-  }, [namedOnly, query, sessions, sortMode]);
+  }, [namedOnly, query, sessions, sortMode, lastUserActivityById]);
 
   const activeSession = activeSessionId ? sessions.find((session) => session.id === activeSessionId) : null;
 
@@ -288,6 +323,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     const nextName = input?.sessionName?.trim() ?? "";
     const created = await api.createSession({ cwd: nextCwd, ...(nextName ? { sessionName: nextName } : {}) });
     setSessions((current) => [created, ...current]);
+    bumpUserActivity(created.id);
     setMessagesBySession((current) => ({ ...current, [created.id]: [] }));
     setActiveSessionId(created.id);
     // Trigger PromptComposer's draftSeed effect to focus the textarea on
@@ -367,6 +403,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     if (!activeSession) return;
     const sessionId = activeSession.id;
     const now = Date.now();
+    // Submitting a prompt is the canonical 'user activity' signal for
+    // sorting. Bump synchronously (not after the await) so the sidebar
+    // reorders immediately on click, not when the network round-trip
+    // resolves.
+    bumpUserActivity(sessionId, now);
     if (text.length > MAX_PROMPT_CHARS) {
       setPromptErrorBySession((current) => ({
         ...current,
@@ -471,6 +512,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       }
       const session = result.session;
       setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+      bumpUserActivity(session.id);
       setMessagesBySession((current) => ({ ...current, [session.id]: [] }));
       if (result.text) {
         setDraftSeedBySession((current) => ({ ...current, [session.id]: { id: `${Date.now()}-${entryId}`, value: result.text ?? "" } }));
@@ -499,6 +541,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       }
       const session = result.session;
       setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+      bumpUserActivity(session.id);
       setMessagesBySession((current) => ({ ...current, [session.id]: [] }));
       setActiveSessionId(session.id);
       setNotice("Cloned session.");
@@ -577,6 +620,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     if (!activeSession) return;
     const sessionId = activeSession.id;
     const now = Date.now();
+    bumpUserActivity(sessionId, now);
     setPromptErrorBySession((current) => ({ ...current, [sessionId]: null }));
     appendMessage(sessionId, {
       id: `bash-${now}`,
@@ -1421,6 +1465,40 @@ function truncate(value: string, max: number): string {
 function readSessionFromUrl(): string | null {
   if (typeof window === "undefined") return null;
   return new URL(window.location.href).searchParams.get("session");
+}
+
+// ---------- 'Recent' sort: last-user-activity persistence ----------
+//
+// We persist the per-session 'last user activity' timestamps in localStorage
+// so a reload or new tab preserves the same sidebar order the user
+// established. Failures (no localStorage, quota errors, parse errors) all
+// degrade silently to an empty map.
+const USER_ACTIVITY_STORAGE_KEY = "pi-remote-control:lastUserActivityById:v1";
+
+function loadUserActivityMap(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(USER_ACTIVITY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveUserActivityMap(map: Record<string, number>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(USER_ACTIVITY_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // Quota / private-mode failures are not worth surfacing.
+  }
 }
 
 function formatStats(
