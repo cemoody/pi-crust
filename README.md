@@ -165,7 +165,7 @@ source files sees the changes in the running server and browser within
 | edit | how it propagates |
 |---|---|
 | `src/web/**/*.{ts,tsx,css}` | Vite HMR patches the running modules in every connected browser. Scroll, composer drafts, and React state survive. No reload. |
-| `src/server/**/*.ts` | `tsx watch` SIGTERMs the api, which detaches its pirpc supervisors (the actual `pi` processes keep running) and exits. `tsx watch` immediately respawns it; the new instance `reattachAll()`s to the same supervisors. The user's chat session survives — only the SSE stream blips for ~300 ms and reconnects via `Last-Event-ID`. |
+| `src/server/**/*.ts` | `scripts/dev-api.mjs` (driven by `npm run dev:api:loop`) watches the directory with a 500 ms debounce, SIGTERMs the api, which detaches its pirpc supervisors (the actual `pi` processes keep running) and exits. The supervisor respawns it immediately; the new instance `reattachAll()`s to the same supervisors. The user's chat session survives — only the SSE stream blips for ~300 ms and reconnects via `Last-Event-ID`. |
 | `vite.config.ts` | A tiny in-config plugin exits the Vite process when the file changes; the outer `dev:web:loop` restart loop brings Vite back with the new config in <1 s. |
 | `scripts/pirpc-supervisor.mjs` | Picked up on the *next* worker spawn (each pirpc worker is a fresh `node` fork that re-reads the script from disk). Existing supervisors keep their loaded copy until they exit. |
 
@@ -190,6 +190,18 @@ their `/tmp/pi-remote-control/sessions/<sessionId>.sock` files. This
 behavior is pinned by `tests/e2e/api-restart-resume.test.ts`, which
 restarts the api mid-stream and asserts the final message matches a
 no-restart control run.
+
+**Why not `tsx watch`?** The obvious first attempt was `tsx watch`. It
+has a fatal hang when its child crashes during *startup* (vs. while
+running): tsx watch stays alive waiting for the next file event, and
+the outer restart loop never sees an exit signal. This shows up
+reliably in the wild any time `prc-loop.sh`'s git puller pulls a PR
+that touches multiple files — tsx watch sees an `unlink` mid-pull,
+triggers a restart, and the restarted child crashes on a half-written
+`package.json`. `scripts/dev-api.mjs` is a small in-house supervisor
+that watches with `fs.watch` + a debounce long enough to outlast a
+typical pull, and ALWAYS respawns the child on exit. Three invariants
+are pinned by `tests/integration/dev-api-supervisor.test.ts`.
 
 ### Common env
 

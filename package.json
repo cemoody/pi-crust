@@ -18,9 +18,9 @@
   ],
   "scripts": {
     "dev": "vite",
-    "dev:api": "tsx watch --clear-screen=false src/server/http-api-server.ts",
-    "dev:api:once": "tsx src/server/http-api-server.ts",
-    "dev:api:loop": "scripts/dev-loop.sh api 8787 -- npm run dev:api",
+    "dev:api": "tsx src/server/http-api-server.ts",
+    "dev:api:loop": "node scripts/dev-api.mjs -- npm run dev:api",
+    "dev:api:loop:bare": "scripts/dev-loop.sh api 8787 -- npm run dev:api",
     "dev:web:loop": "scripts/dev-loop.sh web '' -- npm run dev -- --host 0.0.0.0",
     "start": "node bin/pi-remote-control.mjs",
     "prepare": "test -f dist/index.html || vite build",
