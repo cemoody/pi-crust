@@ -452,7 +452,7 @@ function ThinkingCard({ thinking }: { readonly thinking: string }) {
     <details className="thinking-block tool-card thinking" aria-label="thinking step">
       <summary>
         <span className="disclosure" aria-hidden="true">▸</span>
-        <span className="tool-icon" aria-hidden="true">✦</span>
+        <span className="tool-icon" aria-hidden="true">💡</span>
         <span className="tool-line">
           <strong>Thought</strong>
         </span>

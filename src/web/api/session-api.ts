@@ -65,6 +65,8 @@ export interface DashboardToolDetails {
   readonly status: "running" | "success" | "error";
   readonly output: string;
   readonly artifact?: DashboardArtifact;
+  readonly startedAt?: number;
+  readonly completedAt?: number;
 }
 
 export interface PromptAttachment {

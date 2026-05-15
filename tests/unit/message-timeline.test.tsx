@@ -122,6 +122,19 @@ describe("MessageTimeline", () => {
     expect(details!.querySelector("summary .tool-line")).not.toBeNull();
   });
 
+  it("uses a lightbulb glyph for the thinking-card status icon", () => {
+    // Visual: thinking should be marked by a 💡 (or comparable bulb) glyph
+    // rather than the previous ✦ / star so it reads as 'idea / thought',
+    // matching how tool cards have a status ✓ / ✕ in the same slot.
+    const { container } = render(<MessageTimeline messages={[{
+      id: "a1", role: "assistant", text: "reply",
+      thinking: "weighing options",
+    }]} />);
+    const icon = container.querySelector("details.thinking-block summary .tool-icon");
+    expect(icon, "thinking-card should have a .tool-icon span").not.toBeNull();
+    expect(icon!.textContent ?? "").toMatch(/💡/);
+  });
+
   it("flips the disclosure chevron when a tool card or thinking block is expanded", () => {
     // The native <details> arrow is hidden by CSS; we render our own
     // chevron span so the user can see the open/closed state. When
@@ -171,6 +184,23 @@ describe("MessageTimeline", () => {
     const input = container.querySelector(".tool-input");
     expect(input, "expanded tool card should show an .tool-input box").not.toBeNull();
     expect(input!.textContent ?? "").toContain("echo 'hello world' && date");
+  });
+
+  it("prefers elapsed duration over 'done' even after a reload (when the tool carries timestamps)", () => {
+    // Reload bug: after history reload tool entries lost their
+    // startedAt/completedAt and the row reverted to 'done'. The pipeline
+    // (pirpc-pi-adapter → toDashboardMessages → toTimelineMessage) now
+    // plumbs both timestamps through SessionToolDetails so the row
+    // always shows the real duration when we have the data.
+    const start = 1778800000000;
+    render(<MessageTimeline messages={[{
+      id: "t1", role: "tool", text: "hello",
+      tool: { id: "x", name: "bash", args: { command: "echo hello" },
+              status: "success", output: "hello",
+              startedAt: start, completedAt: start + 12_000 },
+    }]} />);
+    expect(screen.getByText("12 sec")).toBeInTheDocument();
+    expect(screen.queryByText("done")).not.toBeInTheDocument();
   });
 
   it("formats elapsed durations as '3 sec' / '5 min' (not 'done' or bare units)", () => {

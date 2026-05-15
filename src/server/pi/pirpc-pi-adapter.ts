@@ -893,6 +893,11 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
             args,
             status: "running",
             output: "",
+            // The assistant turn's timestamp is when the toolCall was
+            // emitted — the best proxy for 'tool started' we have at the
+            // JSONL reload path. Streaming overlays a more precise
+            // Date.now() via the SSE event reducer.
+            startedAt: timestamp,
           },
         });
         toolCallIndexes.set(id, index);
@@ -926,6 +931,7 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
               ...previous.tool,
               status: message.isError ? "error" : "success",
               output,
+              completedAt: timestamp,
             },
           };
           continue;

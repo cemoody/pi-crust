@@ -214,9 +214,14 @@
    so 'thinking' steps and tool calls share a single anatomy. Most styling
    comes from the .tool-card rules below; these are the thinking-only tweaks. */
 .thinking-block { margin: 0; color: var(--text-secondary); font-size: 12px; }
+/* The lightbulb emoji renders best at slightly larger size on a clean
+   background — dropping the gray-chip styling that suits the ✓/✕ glyphs. */
 .thinking-block .tool-icon {
-  background: rgba(124, 92, 255, 0.16);
-  color: var(--violet-600, #7c5cff);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  width: 16px;
+  height: 16px;
 }
 .thinking-block .thinking-body {
   margin: 4px 0 0;

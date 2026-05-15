@@ -102,6 +102,10 @@ export interface SessionToolDetails {
   readonly args: Record<string, unknown>;
   readonly status: "running" | "success" | "error";
   readonly output: string;
+  /** Epoch-ms when the toolCall was emitted (assistant turn timestamp). */
+  readonly startedAt?: number;
+  /** Epoch-ms when the toolResult arrived. Undefined while still running. */
+  readonly completedAt?: number;
 }
 
 export interface CreateSessionOptions {
