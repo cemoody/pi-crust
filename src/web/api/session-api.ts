@@ -65,6 +65,8 @@ export interface DashboardToolDetails {
   readonly status: "running" | "success" | "error";
   readonly output: string;
   readonly artifact?: DashboardArtifact;
+  readonly startedAt?: number;
+  readonly completedAt?: number;
 }
 
 export interface PromptAttachment {
@@ -83,6 +85,7 @@ export interface DashboardMessage {
   readonly id: string;
   readonly role: "user" | "assistant" | "custom" | "summary" | "tool";
   readonly text: string;
+  readonly thinking?: string;
   readonly provider?: string;
   readonly model?: string;
   readonly stopReason?: string;
@@ -152,8 +155,18 @@ export interface CronApi {
   runNow(id: string): Promise<CronRunResponse>;
 }
 
+export interface ServerInfo {
+  readonly gitSha: string;
+  readonly adapter: string;
+  readonly projectRoot: string;
+  readonly sessionRoot: string;
+  readonly defaultCwd: string;
+}
+
 export interface SessionDashboardApi {
   getDefaultCwd?(): Promise<string>;
+  /** Snapshot of the server's identity (used for the help dialog SHA). */
+  getServerInfo?(): Promise<ServerInfo>;
   listSessions(cwd?: string): Promise<readonly SessionCardData[]>;
   createSession(input: NewSessionInput): Promise<SessionCardData>;
   renameSession(sessionId: string, name: string): Promise<SessionCardData>;

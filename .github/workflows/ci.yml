@@ -1,0 +1,176 @@
+name: ci
+
+# Runs the full test pyramid on every pull request and on every push to main.
+#
+#   typecheck-and-unit  : tsc --noEmit + vitest (unit + e2e under tests/{unit,e2e})
+#   playwright          : tests/playwright/* against playwright.config.ts
+#                         (mobile-input-zoom, mobile-screenshots, session-chat)
+#   playwright-promo    : tests/playwright/promo-screenshots.spec.ts against
+#                         playwright.promo.config.ts (README hero suite)
+#
+# Each playwright job uploads its artifacts so reviewers can see the produced
+# screenshots / video / traces directly from the PR's "Checks" tab.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Avoid noisy npm install lifecycle scripts (esbuild's optional binaries etc).
+  npm_config_fund: "false"
+  npm_config_audit: "false"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  typecheck-and-unit:
+    name: typecheck + vitest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: vitest (unit + e2e)
+        # tests/unit + tests/e2e both run under vitest; tests/playwright is the
+        # one that's run via @playwright/test in the other jobs.
+        run: npm test -- --reporter=default
+
+      - name: build
+        # Verify the production WUI bundle still compiles. Cheap; gives early
+        # warning if a runtime import is missing.
+        run: npm run build
+
+  # ─────────────────────────────────────────────────────────────────────────
+  playwright:
+    name: playwright (default suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      # Cache the chromium download keyed on the playwright package version
+      # so repeat runs don't re-download ~150 MB each time.
+      - name: resolve playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: cache playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: install chromium + deps
+        run: npx playwright install --with-deps chromium
+
+      - name: playwright test (default config)
+        # The default playwright.config.ts boots a mock API on 9787 and a
+        # vite dev server on 5174 via webServer entries. Covers:
+        #   - tests/playwright/mobile-input-zoom.spec.ts
+        #   - tests/playwright/mobile-screenshots.spec.ts
+        #   - tests/playwright/session-chat.spec.ts
+        run: npx playwright test --reporter=list
+
+      - name: upload mobile screenshots
+        # Layout-regression suite writes PNGs into mobile-screenshots/.
+        # Useful for reviewers regardless of pass/fail.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-screenshots
+          path: mobile-screenshots/
+          if-no-files-found: ignore
+
+      - name: upload playwright traces / videos on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-default-failure-artifacts
+          path: test-results/
+          if-no-files-found: ignore
+
+      - name: upload playwright HTML report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-default-html-report
+          path: playwright-report/
+          if-no-files-found: ignore
+
+  # ─────────────────────────────────────────────────────────────────────────
+  playwright-promo:
+    name: playwright (promo screenshots)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: resolve playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: cache playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: install chromium + deps
+        run: npx playwright install --with-deps chromium
+
+      - name: npm run promo
+        # Boots a separate mock API on 9789 + vite on 5176 and writes 18
+        # screenshots into promo-screenshots/<viewport>/. The D3 artifact
+        # spec pulls D3 v7 from a CDN inside the sandboxed iframe; that
+        # network egress is required in CI.
+        run: npm run promo
+
+      - name: upload promo screenshots
+        # Always upload so reviewers can preview README hero changes from the
+        # PR's Checks tab without running anything locally.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promo-screenshots
+          path: promo-screenshots/
+          if-no-files-found: ignore
+
+      - name: upload promo failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-promo-failure-artifacts
+          path: test-results/
+          if-no-files-found: ignore

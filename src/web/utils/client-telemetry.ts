@@ -119,10 +119,14 @@ export function installClientTelemetry(): void {
   if (w[flag]) return;
   w[flag] = true;
 
+  // Per-tab id, NOT shared across tabs. sessionStorage is scoped to the
+  // browsing context (the tab / popup), so two tabs in the same browser get
+  // distinct ids — which is exactly what server-side SSE eviction needs to
+  // avoid one tab kicking another off its event stream.
   const context = derivePageLoadContext({
     performance: window.performance,
     document,
-    storage: window.localStorage,
+    storage: window.sessionStorage,
     url: window.location.href,
     newUUID: () => crypto?.randomUUID?.() ?? `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
   });
@@ -185,8 +189,9 @@ export function installClientTelemetry(): void {
   });
 }
 
-/** Exposed so other modules (e.g. the EventSource wrapper) can read the tab id. */
+/** Exposed so other modules (e.g. the EventSource wrapper) can read the tab id.
+ *  Reads from sessionStorage so each tab has its own id. */
 export function getTabSessionId(): string {
   if (typeof window === "undefined") return "";
-  return window.localStorage.getItem(SESSION_ID_KEY) ?? "";
+  return window.sessionStorage.getItem(SESSION_ID_KEY) ?? "";
 }

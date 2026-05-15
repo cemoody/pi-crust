@@ -2,6 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/playwright',
+  // promo-screenshots.spec.ts has its own dedicated config
+  // (playwright.promo.config.ts) that boots a different seed + ports.
+  // Skip it here so `playwright test` (default) doesn't pull it in.
+  testIgnore: /promo-screenshots\.spec\.ts$/,
   timeout: 30_000,
   fullyParallel: false,
   use: {

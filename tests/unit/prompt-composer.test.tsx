@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PromptComposer } from "../../src/web/components/PromptComposer.js";
 
@@ -312,5 +312,105 @@ describe("PromptComposer", () => {
     fireEvent.keyDown(draft, { key: "Escape" });
     expect(handlers.onAbort).not.toHaveBeenCalled();
     expect(draft).toHaveValue("keep me");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug report (PR backlog): attaching an image, submitting, and then switching
+  // sessions leaves the image still 'attached' in the composer; the user has
+  // to click Remove to make it go away.
+  //
+  // The four tests below pin down each variant so we can both repro and
+  // regression-guard the fix.
+  // ---------------------------------------------------------------------------
+
+  it("clears attachments after a successful submit while idle", async () => {
+    renderComposer();
+    const file = new File(["abc"], "photo.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Attach files"), { target: { files: [file] } });
+    await screen.findByText("photo.png");
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "look" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.queryByText("photo.png")).not.toBeInTheDocument());
+  });
+
+  it("clears attachments after a streaming submit (follow-up path)", async () => {
+    // Reproduces the production case: while the agent is streaming the
+    // composer routes Send into onFollowUp. The follow-up handler takes
+    // text but not attachments; submit() still needs to clear the
+    // attachment state from the local composer so the user doesn't see
+    // the image stuck under the textarea.
+    const handlers = renderComposer({ isStreaming: true });
+    const file = new File(["abc"], "photo.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Attach files"), { target: { files: [file] } });
+    await screen.findByText("photo.png");
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "and this too" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(handlers.onFollowUp).toHaveBeenCalledWith("and this too"));
+    await waitFor(() => expect(screen.queryByText("photo.png")).not.toBeInTheDocument());
+  });
+
+  it("clears attachments when the active session changes", async () => {
+    // The user said "the image stays 'attached' even i change sessions and
+    // go elsewhere". PromptComposer keeps its `attachments` state across
+    // sessionId-prop changes today; this test pins that scope.
+    const handlers = {
+      onPrompt: vi.fn(),
+      onSteer: vi.fn(),
+      onFollowUp: vi.fn(),
+      onAbort: vi.fn(),
+      onBash: vi.fn(),
+      onAbortBash: vi.fn(),
+    };
+    function Harness({ id }: { readonly id: string }) {
+      return (
+        <PromptComposer
+          sessionId={id}
+          isStreaming={false}
+          steeringQueue={[]}
+          followUpQueue={[]}
+          fileSuggestions={[]}
+          commandSuggestions={[]}
+          {...handlers}
+        />
+      );
+    }
+    const { rerender } = render(<Harness id="s1" />);
+    const file = new File(["abc"], "photo.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Attach files"), { target: { files: [file] } });
+    await screen.findByText("photo.png");
+    // Switch to a different session — the composer should not carry the
+    // previous session's attachment over.
+    rerender(<Harness id="s2" />);
+    await waitFor(() => expect(screen.queryByText("photo.png")).not.toBeInTheDocument());
+  });
+
+  it("does not re-attach a late-resolving paste after a successful submit", async () => {
+    // Race: user attaches image A (committed), starts attaching image B via
+    // paste, then hits Send before B's downscale resolves. submit() clears
+    // attachments to []. The async addAttachments resolver should NOT then
+    // append B to the empty state — otherwise B 'pops back' into the
+    // composer after the user thought they were sent.
+    //
+    // We simulate the race by triggering a synchronous addFiles call (which
+    // returns a Promise we don't wait on) for B, then immediately clicking
+    // Send. The submitted prompt should not include B and the composer
+    // should not show B once everything settles.
+    const handlers = renderComposer();
+    const a = new File(["a-bytes"], "a.png", { type: "image/png" });
+    const b = new File(["b-bytes"], "b.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Attach files"), { target: { files: [a] } });
+    await screen.findByText("a.png");
+
+    // Start B (no await) and immediately Send.
+    fireEvent.change(screen.getByLabelText("Attach files"), { target: { files: [b] } });
+    fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // Let the in-flight addAttachments resolve. After everything settles
+    // there should be no leftover attachments visible in the composer.
+    await waitFor(() => expect(handlers.onPrompt).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText("a.png")).not.toBeInTheDocument();
+    expect(screen.queryByText("b.png")).not.toBeInTheDocument();
   });
 });

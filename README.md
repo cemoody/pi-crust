@@ -156,6 +156,41 @@ Want to hack on the code instead? See [Development](#development) for the
 old two-terminal `git clone` + `npm run dev`/`dev:api` loop — that path
 still works and has HMR.
 
+### Self-edit workflow (PRC editing itself)
+
+The default scripts are wired so an agent (or a human) editing PRC's own
+source files sees the changes in the running server and browser within
+~1 second — no manual restart, no git commit required:
+
+| edit | how it propagates |
+|---|---|
+| `src/web/**/*.{ts,tsx,css}` | Vite HMR patches the running modules in every connected browser. Scroll, composer drafts, and React state survive. No reload. |
+| `src/server/**/*.ts` | `tsx watch` SIGTERMs the api, which detaches its pirpc supervisors (the actual `pi` processes keep running) and exits. `tsx watch` immediately respawns it; the new instance `reattachAll()`s to the same supervisors. The user's chat session survives — only the SSE stream blips for ~300 ms and reconnects via `Last-Event-ID`. |
+| `vite.config.ts` | A tiny in-config plugin exits the Vite process when the file changes; the outer `dev:web:loop` restart loop brings Vite back with the new config in <1 s. |
+| `scripts/pirpc-supervisor.mjs` | Picked up on the *next* worker spawn (each pirpc worker is a fresh `node` fork that re-reads the script from disk). Existing supervisors keep their loaded copy until they exit. |
+
+The same pipeline handles changes that arrived via `git pull` from another
+machine — the puller writes to disk, and the file watchers above react
+identically. There is no distinction between "agent edited a file" and
+"git pulled a new version of that file."
+
+**iOS scroll preservation.** Vite's HMR client historically called
+`location.reload()` whenever its WebSocket disconnected, which iOS Safari
+triggers on every tab-resume — wrecking scroll position and any draft
+composer text. PRC ships a small client-side suppression
+(`src/web/utils/hmr-tame.ts`) that cancels the auto-reload when the tab is
+hidden or has just resumed. HMR then catches up via its normal reconnect
+flow without a page refresh. Set `VITE_PI_REMOTE_HMR=0` to disable HMR
+entirely if you ever need the old behavior.
+
+**Active session safety.** The api's SIGTERM handler `detachAll()`s its
+sessions before exiting, leaving the pirpc supervisor processes alive
+on disk. On the next api boot, `reattachAll()` reconnects to them via
+their `/tmp/pi-remote-control/sessions/<sessionId>.sock` files. This
+behavior is pinned by `tests/e2e/api-restart-resume.test.ts`, which
+restarts the api mid-stream and asserts the final message matches a
+no-restart control run.
+
 ### Common env
 
 | variable                          | default                                          | what it does |

@@ -11,6 +11,7 @@ import { MAX_PROMPT_CHARS } from "../shared/limits.js";
 import type { ExtensionUiResponse } from "../shared/protocol.js";
 import type { PromptAttachment, SessionMessage } from "./pi/types.js";
 import { PathPolicy } from "./security/path-policy.js";
+import { resolveGitSha } from "./git-sha.js";
 import { SessionRegistry } from "./session/session-registry.js";
 import { CronStore, type CronJob } from "./cron/cron-store.js";
 import { CronScheduler } from "./cron/cron-scheduler.js";
@@ -30,6 +31,8 @@ export interface HttpApiServerOptions {
    * Used to investigate spurious browser refreshes. Omit to disable logging.
    */
   readonly clientEventLogPath?: string;
+  /** Short git SHA of the backend; surfaced on /api/health for the WUI's help dialog. */
+  readonly gitSha?: string;
 }
 
 interface HttpApiServerContext extends HttpApiServerOptions {
@@ -44,6 +47,15 @@ interface HttpApiServerContext extends HttpApiServerOptions {
    * "Supervisor connection closed before frame arrived" on the first.
    */
   readonly openingSessions: Map<string, Promise<import("./session/session-registry.js").RegisteredSession>>;
+  /**
+   * Active SSE streams keyed by `tabSessionId`. When a new SSE arrives for a
+   * tab that already has one open, the previous one is closed so the browser
+   * promptly frees the underlying TCP connection. Without this, leaked
+   * streams (from session-switching, soft reloads, etc.) accumulate against
+   * Chrome's 6-per-origin HTTP/1.1 connection budget and the next request
+   * from the page stalls indefinitely.
+   */
+  readonly activeSseByTab: Map<string, http.ServerResponse>;
 }
 
 const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
@@ -75,6 +87,7 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
     ...options,
     coldSessionFiles: new Map(),
     openingSessions: new Map(),
+    activeSseByTab: new Map(),
     ...(options.clientEventLogPath ? { clientEventLog: createClientEventLog(options.clientEventLogPath) } : {}),
   };
   return http.createServer((req, res) => {
@@ -112,6 +125,7 @@ async function startDefaultServer(): Promise<void> {
   void cronScheduler.start().catch((error) => console.error("[cron] failed to start scheduler", error));
   const clientEventLogPath = process.env.PI_REMOTE_CLIENT_EVENT_LOG
     ?? path.resolve(process.cwd(), "logs", "client-events.jsonl");
+  const gitSha = resolveGitSha({ cwd: process.cwd(), env: process.env });
   const server = createHttpApiServer({
     registry,
     adapterKind,
@@ -121,6 +135,7 @@ async function startDefaultServer(): Promise<void> {
     cronStore,
     cronScheduler,
     clientEventLogPath,
+    gitSha,
   });
   // Reattach any detached Pi RPC workers that survived a previous API process.
   try {
@@ -133,8 +148,9 @@ async function startDefaultServer(): Promise<void> {
     if (error.code === "EADDRINUSE") {
       console.error(`pi-remote-control API: port ${port} on ${host} is already in use.`);
       console.error(`hint: find the holder with: lsof -ti :${port}    (or: ss -tlnp | grep ${port})`);
-      // Exit cleanly so a supervisor loop can back off rather than crash-loop on
-      // an unhandled 'error' event. Use code 2 so the supervisor can detect this case.
+      // Exit cleanly so a supervisor loop can back off rather than crash-loop
+      // on an unhandled 'error' event. Code 2 is the canonical "bad config"
+      // exit code outer loops can react to.
       process.exit(2);
     }
     console.error(`pi-remote-control API: server error: ${error.message}`);
@@ -153,7 +169,13 @@ async function startDefaultServer(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`received ${signal}, detaching workers...`);
-    const timer = setTimeout(() => { console.warn("detach timed out, exiting"); process.exit(0); }, 3000);
+    // 8s budget (was 3s) to be defensive against many concurrent supervisors
+    // taking slightly longer to FIN their sockets. Detach is parallel via
+    // Promise.all and each socket close is bounded to 100ms, so in practice
+    // detach completes in <1s even for 30+ live sessions — 8s is pure
+    // headroom. Hitting this timeout is a bug worth investigating; the
+    // process exits anyway so the supervisors aren't blocked indefinitely.
+    const timer = setTimeout(() => { console.warn("detach timed out, exiting"); process.exit(0); }, 8000);
     timer.unref();
     void Promise.resolve()
       .then(() => registry.detachAll())
@@ -180,7 +202,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   }
 
   if (req.method === "GET" && url.pathname === "/api/health") {
-    return sendJson(res, 200, { ok: true, adapter: context.adapterKind, projectRoot: context.projectRoot, sessionRoot: context.sessionRoot, defaultCwd: context.defaultCwd ?? process.cwd() });
+    return sendJson(res, 200, {
+      ok: true,
+      adapter: context.adapterKind,
+      projectRoot: context.projectRoot,
+      sessionRoot: context.sessionRoot,
+      defaultCwd: context.defaultCwd ?? process.cwd(),
+      gitSha: context.gitSha ?? "unknown",
+    });
   }
 
   if (req.method === "POST" && url.pathname === "/api/client-event") {
@@ -245,6 +274,21 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && action === "events") {
     const session = await getOrOpenSession(context, sessionId);
+    // Evict any prior SSE for the same browser tab before sending headers.
+    // The WUI passes its per-tab id (sessionStorage-scoped) as a query param;
+    // see src/web/api/http-session-api.ts and the repro in
+    // tests/playwright/sse-connection-pool.spec.ts.
+    const tabSessionId = url.searchParams.get("tabSessionId");
+    if (tabSessionId) {
+      const previous = context.activeSseByTab.get(tabSessionId);
+      if (previous && previous !== res && !previous.writableEnded) {
+        try {
+          previous.write(`event: evicted\ndata: ${JSON.stringify({ reason: "replaced-by-newer-stream" })}\n\n`);
+        } catch { /* socket already gone */ }
+        try { previous.end(); } catch { /* ignore */ }
+      }
+      context.activeSseByTab.set(tabSessionId, res);
+    }
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
@@ -300,6 +344,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     req.on("close", () => {
       clearInterval(heartbeat);
       unsubscribe();
+      // Only drop the active-stream entry if it's still us (the eviction path
+      // above may have already replaced it with a newer response object).
+      if (tabSessionId && context.activeSseByTab.get(tabSessionId) === res) {
+        context.activeSseByTab.delete(tabSessionId);
+      }
       void context.clientEventLog?.append({
         serverTs: Date.now(),
         kind: "sse-close",
@@ -570,6 +619,7 @@ export function toDashboardMessages(messages: readonly SessionMessage[]) {
     ...(message.details ? { details: message.details } : {}),
     ...(message.stopReason ? { stopReason: message.stopReason } : {}),
     ...(message.errorMessage ? { error: message.errorMessage } : {}),
+    ...(message.thinking ? { thinking: message.thinking } : {}),
   }));
 }
 

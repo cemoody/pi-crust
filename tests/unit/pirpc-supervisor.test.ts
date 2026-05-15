@@ -236,4 +236,51 @@ describe("pirpc-supervisor", () => {
     try { sup.kill("SIGTERM"); } catch {}
     await new Promise<void>((resolve) => { sup.once("exit", () => resolve()); setTimeout(resolve, 1500).unref(); });
   });
+
+  /**
+   * Regression: when a second supervisor is spawned for a sessionId that
+   * already has a live supervisor (a real-world race between the api's
+   * reattach and a concurrent openSession call), the duplicate MUST NOT
+   * exit silently — the spawning adapter is blocking on `${token}.ready`
+   * and would otherwise fail with ENOENT. Instead, the duplicate writes its
+   * own .ready file pointing at the EXISTING supervisor's socket, marked
+   * `redirected: true`, so the adapter transparently connects to the
+   * already-running supervisor.
+   *
+   * Previously regressed once already after a refactor; this test pins it.
+   */
+  it("duplicate supervisor for the same session writes a redirect .ready file pointing at the live supervisor's socket", async () => {
+    const { runtime, executable } = await makeFakePi({ initialEvents: 0, sessionId: "shared-session" });
+    const runtimeDir = path.join(runtime, "rt");
+
+    // First supervisor: claims the session.
+    const supA = startSupervisor({ fakeExe: executable, cwd: runtime, runtimeDir, workerToken: "tok-A" });
+    const readyA = await waitForReady(path.join(runtimeDir, "workers", "tok-A.ready"));
+    expect(readyA.sessionId).toBe("shared-session");
+
+    // Second supervisor for the same session: should detect supA, write a
+    // redirect ready file, and exit cleanly.
+    const supB = startSupervisor({ fakeExe: executable, cwd: runtime, runtimeDir, workerToken: "tok-B" });
+    const readyB = await waitForReady(path.join(runtimeDir, "workers", "tok-B.ready"));
+
+    // Redirect points at A's socket and is flagged as redirected.
+    expect(readyB.socketPath).toBe(readyA.socketPath);
+    expect((readyB as { redirected?: boolean }).redirected).toBe(true);
+    expect(readyB.pid).toBe(readyA.pid);
+
+    // supB should terminate on its own; supA should still be serving.
+    await new Promise<void>((resolve) => { supB.once("exit", () => resolve()); setTimeout(resolve, 5000).unref(); });
+    expect(supB.killed || typeof supB.exitCode === "number").toBe(true);
+    expect(supA.exitCode).toBeNull();
+
+    // A's socket is still functional: a fresh client can hello/handshake.
+    const client = await connectClient(readyA.socketPath);
+    client.send({ t: "hello", resumeFromSeq: null });
+    const ack = await client.waitFor((f) => f.t === "hello");
+    expect((ack as { sessionId?: string }).sessionId).toBe("shared-session");
+    await client.end();
+
+    try { supA.kill("SIGTERM"); } catch {}
+    await new Promise<void>((resolve) => { supA.once("exit", () => resolve()); setTimeout(resolve, 1500).unref(); });
+  });
 });

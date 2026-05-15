@@ -52,6 +52,32 @@ describe("resolveCemoodyArtifactExtension", () => {
     expect(result).toBeUndefined();
   });
 
+  it("returns undefined when Pi settings already install a local pi-artifact", async () => {
+    const settingsPath = path.join(tmpRoot, "settings.json");
+    await fs.writeFile(settingsPath, JSON.stringify({ packages: ["npm:pi-web-access", "../../pi-artifact"] }));
+
+    const pkgRoot = path.join(tmpRoot, "node_modules", "@cemoody", "pi-artifact");
+    await fs.mkdir(path.join(pkgRoot, "src"), { recursive: true });
+    await fs.writeFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "@cemoody/pi-artifact" }));
+    await fs.writeFile(path.join(pkgRoot, "src", "index.ts"), "export default () => {};\n");
+
+    const result = await resolveCemoodyArtifactExtension({ env: {}, searchRoots: [tmpRoot], piSettingsPath: settingsPath });
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined when Pi settings already install npm:@cemoody/pi-artifact", async () => {
+    const settingsPath = path.join(tmpRoot, "settings.json");
+    await fs.writeFile(settingsPath, JSON.stringify({ packages: ["npm:@cemoody/pi-artifact"] }));
+
+    const pkgRoot = path.join(tmpRoot, "node_modules", "@cemoody", "pi-artifact");
+    await fs.mkdir(path.join(pkgRoot, "src"), { recursive: true });
+    await fs.writeFile(path.join(pkgRoot, "package.json"), JSON.stringify({ name: "@cemoody/pi-artifact" }));
+    await fs.writeFile(path.join(pkgRoot, "src", "index.ts"), "export default () => {};\n");
+
+    const result = await resolveCemoodyArtifactExtension({ env: {}, searchRoots: [tmpRoot], piSettingsPath: settingsPath });
+    expect(result).toBeUndefined();
+  });
+
   it("walks up from a search root to find node_modules/@cemoody/pi-artifact and reads pi.extensions[0]", async () => {
     // Construct: tmpRoot/project/sub/deep, with the pi-artifact package
     // installed at tmpRoot/project/node_modules/@cemoody/pi-artifact.

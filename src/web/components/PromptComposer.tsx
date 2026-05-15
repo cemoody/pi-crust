@@ -40,6 +40,19 @@ export function PromptComposer(props: PromptComposerProps) {
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [pasteWarning, setPasteWarning] = useState<string | null>(null);
 
+  // Monotonic generation counter for attachment state. Bumped every time
+  // the local attachments list is cleared (on submit or session change).
+  // In-flight async paths (image downscale, paste, etc.) capture the gen
+  // at start and drop their result if it no longer matches — prevents a
+  // late-resolving paste from "popping back" into the composer after the
+  // user already submitted.
+  const attachmentGenRef = useRef(0);
+
+  function clearAttachments() {
+    attachmentGenRef.current += 1;
+    setAttachments([]);
+  }
+
   useEffect(() => {
     if (!pasteWarning) return;
     const t = setTimeout(() => setPasteWarning(null), 6_000);
@@ -51,6 +64,11 @@ export function PromptComposer(props: PromptComposerProps) {
 
   useEffect(() => {
     setDraft(storageGet(storageKey) ?? "");
+    // Attachments are not session-scoped, so changing sessions must drop
+    // the previous session's pending attachments. Otherwise the user
+    // reports the image "stays attached" after navigating to another
+    // session and has to click Remove manually.
+    clearAttachments();
   }, [storageKey]);
 
   useEffect(() => {
@@ -91,7 +109,7 @@ export function PromptComposer(props: PromptComposerProps) {
     setDraft("");
     if (mode === "bash" || mode === "hidden-bash") {
       await props.onBash(mode === "hidden-bash" ? text.slice(2) : text.slice(1), mode === "bash");
-      setAttachments([]);
+      clearAttachments();
       return;
     }
     if (text.startsWith("/") && props.onSlashCommand) {
@@ -100,14 +118,17 @@ export function PromptComposer(props: PromptComposerProps) {
       const name = spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex);
       const argv = spaceIndex === -1 ? "" : trimmed.slice(spaceIndex + 1);
       await props.onSlashCommand(name, argv);
-      setAttachments([]);
+      clearAttachments();
       return;
     }
+    // Capture the attachments snapshot before clearing them locally so
+    // an in-flight onPrompt's await doesn't see them mutate underneath.
+    const snapshot = attachments;
+    clearAttachments();
     if (kind === "steer") await props.onSteer(text);
     else if (kind === "follow-up") await props.onFollowUp(text);
     else if (props.isStreaming) await props.onFollowUp(text);
-    else await props.onPrompt(text, attachments);
-    setAttachments([]);
+    else await props.onPrompt(text, snapshot);
   }
 
   function completeFile(file: string) {
@@ -129,14 +150,20 @@ export function PromptComposer(props: PromptComposerProps) {
 
   async function addFiles(files: FileList | readonly File[] | null) {
     if (!files) return;
+    // Snapshot the attachment generation at the start of the user-visible
+    // operation. If a submit/clear bumps it before file processing finishes,
+    // we drop the results so a slow-resolving paste can't pop back into the
+    // composer after the user has already sent.
+    const gen = attachmentGenRef.current;
     const results = await Promise.allSettled(Array.from(files).map(fileToAttachment));
+    if (gen !== attachmentGenRef.current) return;
     const next = results
       .filter((result): result is PromiseFulfilledResult<ComposerAttachment> => result.status === "fulfilled")
       .map((result) => result.value);
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
     if (next.length > 0) {
-      void addAttachments(next);
+      void addAttachments(next, gen);
       if (failures.length > 0) {
         setPasteWarning(`Attached ${next.length} item${next.length === 1 ? "" : "s"}, but could not read ${failures.length} other pasted item${failures.length === 1 ? "" : "s"}.`);
       } else {
@@ -171,9 +198,14 @@ export function PromptComposer(props: PromptComposerProps) {
     };
   }
 
-  async function addAttachments(next: readonly ComposerAttachment[]) {
+  async function addAttachments(next: readonly ComposerAttachment[], sourceGen?: number) {
     if (next.length === 0) return;
+    // The optional sourceGen lets callers (addFiles, handleClipboardPaste)
+    // pin the gen they captured at the start of the user gesture. If they
+    // don't pass one we snapshot here.
+    const gen = sourceGen ?? attachmentGenRef.current;
     const shrunk = await Promise.all(next.map(maybeShrinkAttachment));
+    if (gen !== attachmentGenRef.current) return;
     setAttachments((current) => [...current, ...shrunk]);
     setPasteWarning(null);
   }
@@ -195,6 +227,7 @@ export function PromptComposer(props: PromptComposerProps) {
   }
 
   async function handleClipboardPaste(data: DataTransfer, preventDefault: () => void, insertTextWhenNotFocused: boolean) {
+    const gen = attachmentGenRef.current;
     const files = clipboardFiles(data);
     if (files.length > 0) {
       preventDefault();
@@ -205,7 +238,7 @@ export function PromptComposer(props: PromptComposerProps) {
     const htmlAttachments = imageAttachmentsFromHtml(data.getData("text/html"));
     if (htmlAttachments.length > 0) {
       preventDefault();
-      void addAttachments(htmlAttachments);
+      void addAttachments(htmlAttachments, gen);
       return;
     }
 
@@ -213,7 +246,7 @@ export function PromptComposer(props: PromptComposerProps) {
     const textAttachment = imageAttachmentFromText(text);
     if (textAttachment) {
       preventDefault();
-      void addAttachments([textAttachment]);
+      void addAttachments([textAttachment], gen);
       return;
     }
 

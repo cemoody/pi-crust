@@ -1,5 +1,5 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
-import type { CloneSessionResult, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ForkMessageOption, ForkSessionResult, ModelOption, NewSessionInput, PromptAttachment, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import type { CloneSessionResult, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ForkMessageOption, ForkSessionResult, ModelOption, NewSessionInput, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
 import { recordClientEvent, getTabSessionId } from "../utils/client-telemetry.js";
 
 const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "";
@@ -8,6 +8,10 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
   async getDefaultCwd(): Promise<string> {
     const health = await request<{ defaultCwd: string }>("/api/health");
     return health.defaultCwd;
+  }
+
+  async getServerInfo(): Promise<ServerInfo> {
+    return request<ServerInfo>("/api/health");
   }
 
   async listSessions(cwd?: string): Promise<readonly SessionCardData[]> {
@@ -61,7 +65,14 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
 
   streamEvents(sessionId: string, onEvent: (event: unknown) => void): () => void {
     const openedAt = Date.now();
-    const source = new EventSource(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/events`);
+    // Pass the per-tab id so the server can evict an older SSE for the same
+    // tab when this tab re-opens one (e.g. on rapid session-switching). Without
+    // this, leaked streams accumulate against Chrome's 6-per-origin HTTP/1.1
+    // connection budget and new requests stall. See tests/playwright/
+    // sse-connection-pool.spec.ts for the repro.
+    const tab = getTabSessionId();
+    const qs = tab ? `?tabSessionId=${encodeURIComponent(tab)}` : "";
+    const source = new EventSource(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/events${qs}`);
     source.onmessage = (event) => {
       try {
         onEvent(JSON.parse(event.data));

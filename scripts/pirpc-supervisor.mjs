@@ -223,6 +223,49 @@ async function main() {
     if (server || !sessionId) return;
     socketPath = path.join(sessionsDir, `${sessionId}.sock`);
     statusPath = path.join(sessionsDir, `${sessionId}.json`);
+    // Refuse to steal an active socket from another live supervisor for the
+    // same session. If the existing supervisor is alive, exit ourselves; the
+    // duplicate spawn is benign (the original keeps serving the session).
+    try {
+      const text = await fsp.readFile(statusPath, "utf8");
+      const status = JSON.parse(text);
+      if (status && typeof status.pid === "number" && status.pid !== process.pid) {
+        let alive = false;
+        try { process.kill(status.pid, 0); alive = true; } catch (err) {
+          if (err && err.code === "EPERM") alive = true;
+        }
+        if (alive && typeof status.socketPath === "string") {
+          // Redirect the spawning adapter to the existing supervisor by
+          // writing our own .ready file that points at the existing socket.
+          // Without this, the adapter's waitForReadyFile would time out (or
+          // worse, fail with ENOENT) and the openSession call would error.
+          const readyPath = path.join(workersDir, `${workerToken}.ready`);
+          try {
+            await atomicWriteJson(readyPath, {
+              sessionId,
+              socketPath: status.socketPath,
+              statusPath,
+              pid: status.pid,
+              redirected: true,
+            });
+          } catch {}
+          emitEvent({
+            type: "supervisor_duplicate_exit",
+            sessionId,
+            existingPid: status.pid,
+            pid: process.pid,
+          });
+          // Mark these paths as not-ours so cleanupExit won't unlink them.
+          socketPath = null;
+          statusPath = null;
+          // Terminate our (now-superfluous) pi child before exiting so it
+          // doesn't race the existing supervisor's pi over the session file.
+          // shutdown() kills the child then calls cleanupExit().
+          shutdown();
+          return;
+        }
+      }
+    } catch { /* no existing status, or unreadable: proceed */ }
     try { await fsp.unlink(socketPath); } catch {}
     server = net.createServer((socket) => onConnection(socket));
     await new Promise((resolve, reject) => {
@@ -333,8 +376,20 @@ async function main() {
     exiting = true;
     try { if (currentClient && !currentClient.destroyed) currentClient.end(); } catch {}
     try { server?.close(); } catch {}
-    try { if (socketPath) fs.unlinkSync(socketPath); } catch {}
-    try { if (statusPath) fs.unlinkSync(statusPath); } catch {}
+    // Only remove the shared per-session files if we are still the owner
+    // recorded in statusPath. Otherwise another supervisor for this sessionId
+    // has taken over and is the rightful owner of those paths.
+    let owns = false;
+    if (statusPath) {
+      try {
+        const status = JSON.parse(fs.readFileSync(statusPath, "utf8"));
+        owns = status && status.pid === process.pid;
+      } catch { /* missing or corrupt: treat as not-ours to be safe */ }
+    }
+    if (owns) {
+      try { if (socketPath) fs.unlinkSync(socketPath); } catch {}
+      try { if (statusPath) fs.unlinkSync(statusPath); } catch {}
+    }
     setTimeout(() => process.exit(code), 50).unref();
   }
 

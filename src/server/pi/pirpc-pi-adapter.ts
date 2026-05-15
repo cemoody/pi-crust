@@ -754,11 +754,20 @@ export interface CemoodyArtifactResolveOptions {
   readonly searchRoots?: readonly string[];
   /** Env source. Defaults to `process.env`; override in tests. */
   readonly env?: Record<string, string | undefined>;
+  /** Pi settings path. Defaults to `$HOME/.pi/agent/settings.json`; override in tests. */
+  readonly piSettingsPath?: string;
 }
 
 export async function resolveCemoodyArtifactExtension(options: CemoodyArtifactResolveOptions = {}): Promise<string | undefined> {
   const env = options.env ?? process.env;
   if (env.PI_REMOTE_DISABLE_CEMOODY_ARTIFACT === "1") return undefined;
+
+  // If the user's normal Pi configuration already installs pi-artifact (for
+  // example `../../pi-artifact` during local development), don't pass the
+  // bundled @cemoody/pi-artifact as an extra `--extension`. Pi will load the
+  // configured package itself, and double-loading registers `display` twice.
+  if (await piSettingsAlreadyIncludesArtifact(options.piSettingsPath, env)) return undefined;
+
   // Honor an explicit override path (useful for local development against a
   // sibling checkout of cemoody/pi-artifact).
   const override = env.PI_REMOTE_CEMOODY_ARTIFACT_PATH;
@@ -802,6 +811,22 @@ export async function resolveCemoodyArtifactExtension(options: CemoodyArtifactRe
   return undefined;
 }
 
+async function piSettingsAlreadyIncludesArtifact(
+  configuredPath: string | undefined,
+  env: Record<string, string | undefined>,
+): Promise<boolean> {
+  const settingsPath = configuredPath
+    ?? (env.HOME ? path.join(env.HOME, ".pi", "agent", "settings.json") : undefined);
+  if (!settingsPath) return false;
+  try {
+    const parsed = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+    const packages = Array.isArray(parsed?.packages) ? parsed.packages : [];
+    return packages.some((source: unknown) => typeof source === "string" && /(^|[/@:])pi-artifact($|[/#?])/i.test(source));
+  } catch {
+    return false;
+  }
+}
+
 export function toSessionMessages(messages: readonly unknown[]): SessionMessage[] {
   const result: SessionMessage[] = [];
   const toolCallIndexes = new Map<string, number>();
@@ -826,18 +851,22 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
     }
 
     if (role === "assistant") {
-      const text = contentText(message.content).trim();
+      const { text: rawText, thinking } = contentTextAndThinking(message.content);
+      const text = rawText.trim();
       const stopReason = typeof message.stopReason === "string" ? message.stopReason : undefined;
       const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage : undefined;
-      // Emit an assistant entry whenever we have visible text OR when the
-      // turn ended in an error / non-trivial stopReason. Without this the
-      // WUI sees nothing for failed turns and looks "frozen".
-      const shouldEmit = text.length > 0 || stopReason === "error" || errorMessage !== undefined;
+      // Emit an assistant entry whenever we have visible text OR thinking
+      // OR when the turn ended in an error / non-trivial stopReason.
+      // Without this the WUI sees nothing for failed turns and looks
+      // "frozen".
+      const trimmedThinking = thinking.trim();
+      const shouldEmit = text.length > 0 || trimmedThinking.length > 0 || stopReason === "error" || errorMessage !== undefined;
       if (shouldEmit) {
         result.push({
           role: "assistant",
           content: text,
           timestamp,
+          ...(trimmedThinking ? { thinking: trimmedThinking } : {}),
           ...(stopReason ? { stopReason } : {}),
           ...(errorMessage ? { errorMessage } : {}),
         });
@@ -864,6 +893,11 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
             args,
             status: "running",
             output: "",
+            // The assistant turn's timestamp is when the toolCall was
+            // emitted — the best proxy for 'tool started' we have at the
+            // JSONL reload path. Streaming overlays a more precise
+            // Date.now() via the SSE event reducer.
+            startedAt: timestamp,
           },
         });
         toolCallIndexes.set(id, index);
@@ -897,6 +931,7 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
               ...previous.tool,
               status: message.isError ? "error" : "success",
               output,
+              completedAt: timestamp,
             },
           };
           continue;
@@ -914,19 +949,31 @@ function contentText(content: unknown): string {
 }
 
 function contentTextAndImages(content: unknown): { text: string; images: NonNullable<SessionMessage["images"]> } {
-  if (typeof content === "string") return { text: content, images: [] };
-  if (!Array.isArray(content)) return { text: content === undefined ? "" : JSON.stringify(content), images: [] };
+  // Reuse the unified extractor and drop thinking on the floor for callers
+  // (user / system / toolResult) that don't surface a separate thinking
+  // field. Assistant messages go through contentTextAndThinking instead.
+  const { text, images } = contentTextAndThinking(content);
+  return { text, images };
+}
+
+function contentTextAndThinking(content: unknown): { text: string; thinking: string; images: NonNullable<SessionMessage["images"]> } {
+  if (typeof content === "string") return { text: content, thinking: "", images: [] };
+  if (!Array.isArray(content)) return { text: content === undefined ? "" : JSON.stringify(content), thinking: "", images: [] };
   const text: string[] = [];
+  const thinking: string[] = [];
   const images: { data: string; mimeType: string }[] = [];
   for (const block of content) {
     if (!isRecord(block)) continue;
+    // Order matters for stop-reason-error edge cases: a thinking block
+    // with no following text still produces an entry, but the user-visible
+    // bubble stays empty (thinking renders in its own collapsed widget).
+    if (typeof block.thinking === "string") thinking.push(block.thinking);
     if (typeof block.text === "string") text.push(block.text);
-    if (typeof block.thinking === "string") text.push(block.thinking);
     if (block.type === "image" && typeof block.data === "string") {
       images.push({ data: block.data, mimeType: String(block.mimeType ?? "image/png") });
     }
   }
-  return { text: text.join("\n"), images };
+  return { text: text.join("\n"), thinking: thinking.join("\n\n"), images };
 }
 
 function parseForkResult(data: unknown): ForkSessionResult {

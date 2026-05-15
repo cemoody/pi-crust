@@ -9,7 +9,11 @@ test('can select a listed cold session and send hello without unknown-session er
   await page.getByLabel('Prompt draft').fill('hello');
   await page.getByRole('button', { name: 'Send' }).click();
 
-  await expect(page.getByText('Mock response to: hello')).toBeVisible();
+  // exact: true so this doesn't strict-mode-collide with the
+  // "Mock response to: hello from mobile" replies the mobile-screenshots
+  // suite leaves in the shared mock seed when both specs run in the same
+  // playwright invocation.
+  await expect(page.getByText('Mock response to: hello', { exact: true })).toBeVisible();
   await expect(page.getByText(/Unknown session/)).toHaveCount(0);
 });
 
@@ -335,6 +339,7 @@ test('can create a new session and send hello', async ({ page }) => {
   await page.getByLabel('Prompt draft').fill('hello');
   await page.getByRole('button', { name: 'Send' }).click();
 
-  await expect(page.getByText('Mock response to: hello')).toBeVisible();
+  // exact: true — see note on the cold-session counterpart above.
+  await expect(page.getByText('Mock response to: hello', { exact: true })).toBeVisible();
   await expect(page.getByText(/Unknown session/)).toHaveCount(0);
 });
