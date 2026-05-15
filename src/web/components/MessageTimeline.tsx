@@ -204,10 +204,7 @@ function renderMessage(message: TimelineMessage, hideThinking: boolean) {
       ) : null}
 
       {message.thinking && !hideThinking ? (
-        <details className="thinking-block">
-          <summary>Thinking</summary>
-          <pre>{message.thinking}</pre>
-        </details>
+        <ThinkingCard thinking={message.thinking} />
       ) : null}
 
       {isArtifact ? (
@@ -416,6 +413,7 @@ function OrphanToolResult({ text }: { readonly text: string }) {
   return (
     <details className="orphan-tool-result tool-card success" aria-label="tool result">
       <summary>
+        <span className="disclosure" aria-hidden="true">▸</span>
         <span className="tool-icon" aria-hidden="true">✓</span>
         <span className="tool-line"><strong>Tool result</strong></span>
         <span className="tool-status-text">done</span>
@@ -429,6 +427,7 @@ function ToolCard({ tool }: { readonly tool: TimelineToolDetails }) {
   return (
     <details className={`tool-card ${tool.status}`} aria-label={`tool ${tool.name}`}>
       <summary>
+        <span className="disclosure" aria-hidden="true">▸</span>
         <span className="tool-icon" aria-hidden="true">{toolIcon(tool.status)}</span>
         <span className="tool-line">
           <strong>{verbForName(tool.name)}</strong>
@@ -437,10 +436,68 @@ function ToolCard({ tool }: { readonly tool: TimelineToolDetails }) {
         </span>
         <span className="tool-status-text">{statusLabel(tool)}</span>
       </summary>
-      {tool.output ? <pre>{tool.output}</pre> : null}
+      <ToolInputBlock tool={tool} />
+      {tool.output ? <pre className="tool-output">{tool.output}</pre> : null}
       {tool.artifact ? <ArtifactPreview artifact={tool.artifact} /> : null}
     </details>
   );
+}
+
+function ThinkingCard({ thinking }: { readonly thinking: string }) {
+  // Visually parallels ToolCard so 'thinking' steps and tool calls share
+  // a single anatomy: chevron + icon + verb + status-text + body. Still
+  // tagged with .thinking-block so existing CSS / tests targeting that
+  // class continue to apply.
+  return (
+    <details className="thinking-block tool-card thinking" aria-label="thinking step">
+      <summary>
+        <span className="disclosure" aria-hidden="true">▸</span>
+        <span className="tool-icon" aria-hidden="true">✦</span>
+        <span className="tool-line">
+          <strong>Thought</strong>
+        </span>
+      </summary>
+      <pre className="thinking-body">{thinking}</pre>
+    </details>
+  );
+}
+
+function ToolInputBlock({ tool }: { readonly tool: TimelineToolDetails }) {
+  const command = formatToolInput(tool);
+  if (!command) return null;
+  return (
+    <section className="tool-input" aria-label="Tool input">
+      <span className="tool-input-label">Input</span>
+      <pre className="tool-input-body">{command}</pre>
+    </section>
+  );
+}
+
+function formatToolInput(tool: TimelineToolDetails): string {
+  // For bash and similar shell-style tools the meaningful input is the
+  // command. For everything else we fall back to a pretty-printed args
+  // object (sans falsy values) so users see exactly what the agent
+  // invoked the tool with.
+  if (tool.name === "bash" && typeof tool.args.command === "string") {
+    return tool.args.command;
+  }
+  if (tool.name === "read" && typeof tool.args.path === "string") {
+    return tool.args.path;
+  }
+  if (tool.name === "write" && typeof tool.args.path === "string") {
+    const content = typeof tool.args.content === "string" ? tool.args.content : "";
+    return content ? `${tool.args.path}\n\n${content}` : tool.args.path;
+  }
+  if (tool.name === "edit" && typeof tool.args.path === "string") {
+    return tool.args.path;
+  }
+  const keys = Object.keys(tool.args ?? {}).filter((k) => tool.args[k] !== undefined && tool.args[k] !== null && tool.args[k] !== "");
+  if (keys.length === 0) return "";
+  try {
+    return JSON.stringify(tool.args, null, 2);
+  } catch {
+    return String(tool.args);
+  }
 }
 
 function ArtifactPreview({ artifact }: { readonly artifact: TimelineArtifact }) {
@@ -595,13 +652,14 @@ function statusLabel(tool: TimelineToolDetails): string {
 function formatToolDuration(tool: TimelineToolDetails): string | null {
   if (tool.startedAt === undefined || tool.completedAt === undefined) return null;
   const ms = Math.max(0, tool.completedAt - tool.startedAt);
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = ms / 1000;
-  if (seconds < 10) return `${seconds.toFixed(1)}s`;
-  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (ms < 1000) return `${ms} ms`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds} sec`;
   const minutes = Math.floor(seconds / 60);
-  const remSeconds = Math.round(seconds - minutes * 60);
-  return `${minutes}m ${remSeconds}s`;
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes - hours * 60;
+  return remMinutes === 0 ? `${hours} hr` : `${hours} hr ${remMinutes} min`;
 }
 
 const TOOL_VERBS: Record<string, string> = {

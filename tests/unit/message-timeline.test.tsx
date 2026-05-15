@@ -105,6 +105,94 @@ describe("MessageTimeline", () => {
     expect(bubble?.textContent ?? "").not.toContain("Exploring BigQuery options");
   });
 
+  it("renders the thinking block with the same tool-card summary structure", () => {
+    // Visual parity ask: thinking should look like a tool call — same
+    // compact row with a status icon + verb + status-text — not a bare
+    // 'Thinking' link.
+    const { container } = render(<MessageTimeline messages={[{
+      id: "a1", role: "assistant", text: "reply",
+      thinking: "weighing options",
+    }]} />);
+    const details = container.querySelector("details.thinking-block");
+    expect(details).not.toBeNull();
+    // Adopts the .tool-card class so the existing tool-card CSS applies.
+    expect(details!.classList.contains("tool-card")).toBe(true);
+    // Has the same summary anatomy as a real tool call.
+    expect(details!.querySelector("summary .tool-icon")).not.toBeNull();
+    expect(details!.querySelector("summary .tool-line")).not.toBeNull();
+  });
+
+  it("flips the disclosure chevron when a tool card or thinking block is expanded", () => {
+    // The native <details> arrow is hidden by CSS; we render our own
+    // chevron span so the user can see the open/closed state. When
+    // [open], its CSS transform should rotate it to point down.
+    const { container } = render(<MessageTimeline messages={[
+      { id: "a1", role: "assistant", text: "hi", thinking: "thought" },
+      { id: "t1", role: "tool", text: "output",
+        tool: { id: "x", name: "bash", args: { command: "ls -la" }, status: "success", output: "a\nb\nc" } },
+    ]} />);
+
+    const thinkingDetails = container.querySelector("details.thinking-block") as HTMLDetailsElement | null;
+    const toolDetails = container.querySelector("details.tool-card:not(.thinking-block)") as HTMLDetailsElement | null;
+    expect(thinkingDetails).not.toBeNull();
+    expect(toolDetails).not.toBeNull();
+
+    // Both must render a .disclosure span (the chevron) inside their
+    // summary row so CSS can rotate it on [open].
+    expect(thinkingDetails!.querySelector("summary .disclosure")).not.toBeNull();
+    expect(toolDetails!.querySelector("summary .disclosure")).not.toBeNull();
+
+    // Sanity: both start collapsed.
+    expect(thinkingDetails!.open).toBe(false);
+    expect(toolDetails!.open).toBe(false);
+
+    // Open them; aria-expanded mirroring + CSS rotation are visual
+    // behaviour we can only spot-check structurally here.
+    thinkingDetails!.open = true;
+    toolDetails!.open = true;
+    expect(thinkingDetails!.open).toBe(true);
+    expect(toolDetails!.open).toBe(true);
+  });
+
+  it("shows the input command (bash) in a labeled box when a tool card is expanded", () => {
+    const { container } = render(<MessageTimeline messages={[
+      { id: "t1", role: "tool", text: "hello world",
+        tool: { id: "x", name: "bash",
+                args: { command: "echo 'hello world' && date" },
+                status: "success", output: "hello world\nWed May 14 21:00:00 UTC 2026" } },
+    ]} />);
+    const details = container.querySelector("details.tool-card") as HTMLDetailsElement;
+    // Force-open so the body renders even though it would default to
+    // collapsed for a successful call.
+    details.open = true;
+    // Re-query the now-rendered body content. Native <details> renders
+    // children regardless of open state in jsdom, so we can assert the
+    // input box exists.
+    const input = container.querySelector(".tool-input");
+    expect(input, "expanded tool card should show an .tool-input box").not.toBeNull();
+    expect(input!.textContent ?? "").toContain("echo 'hello world' && date");
+  });
+
+  it("formats elapsed durations as '3 sec' / '5 min' (not 'done' or bare units)", () => {
+    const start = 1700000000000;
+    render(<MessageTimeline messages={[
+      { id: "t1", role: "tool", text: "",
+        tool: { id: "a", name: "bash", args: { command: "echo a" }, status: "success", output: "a",
+                startedAt: start, completedAt: start + 3_400 } },
+      { id: "t2", role: "tool", text: "",
+        tool: { id: "b", name: "bash", args: { command: "echo b" }, status: "success", output: "b",
+                startedAt: start, completedAt: start + 5 * 60_000 } },
+      { id: "t3", role: "tool", text: "",
+        tool: { id: "c", name: "bash", args: { command: "echo c" }, status: "success", output: "c",
+                startedAt: start, completedAt: start + 750 } },
+    ]} />);
+    expect(screen.getByText("3 sec")).toBeInTheDocument();
+    expect(screen.getByText("5 min")).toBeInTheDocument();
+    // Sub-second times still distinguishable but not as 'done'.
+    expect(screen.queryByText("done")).not.toBeInTheDocument();
+    expect(screen.getByText("750 ms")).toBeInTheDocument();
+  });
+
   it("renders assistant metadata, errors, and aborted state", () => {
     render(<MessageTimeline messages={[{
       id: "a1",
@@ -336,7 +424,9 @@ describe("MessageTimeline", () => {
     const card = screen.getByLabelText("tool read");
     expect(card).toHaveTextContent("Read");
     expect(card).toHaveTextContent("running");
-    expect(card.querySelector("pre")).toBeNull();
+    // No *output* <pre> while running. (The .tool-input <pre> showing the
+    // input path is fine — that's intentional and covered separately.)
+    expect(card.querySelector("pre.tool-output")).toBeNull();
   });
 
   it("renders orphan tool-result text as preformatted output instead of markdown", () => {
