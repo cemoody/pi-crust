@@ -180,26 +180,39 @@ describe("SessionDashboard", () => {
     expect(screen.getByText("Select or create a session.")).toBeInTheDocument();
   });
 
-  it("orders active status-polled sessions before idle sessions in Recent sort", async () => {
+  it("does not reorder the sidebar when status polling reports fresh timestamps or a streaming status", async () => {
+    // Regression pin for the sidebar-thrash bug introduced by PR #77 and
+    // reverted here. Two distinct triggers we have to be defensive about,
+    // both fired together when this fails:
+    //   (a) status polls take whatever lastActivity the snapshot reports,
+    //       overwriting the client-side value and shuffling Recent order
+    //       on every 4s poll for every session;
+    //   (b) status itself was used as the primary sort key, so a session
+    //       flipping streaming ↔ idle yanked rows up by N slots and back.
+    // Real activity events (prompt, SSE, fork, rename) still move rows
+    // through other code paths.
     const statusPoll = deferredPromise<readonly SessionCardData[]>();
     const api = {
       ...makeApi([
-        { id: "idle-newer", cwd: "/repo/idle", sessionName: "Idle newer", status: "idle", lastActivity: 20 },
-        { id: "active-older", cwd: "/repo/active", sessionName: "Active older", status: "idle", lastActivity: 10 },
+        { id: "newer", cwd: "/repo/newer", sessionName: "Newer", status: "idle", lastActivity: 20 },
+        { id: "older", cwd: "/repo/older", sessionName: "Older", status: "idle", lastActivity: 10 },
       ]),
       listSessionStatuses: vi.fn(() => statusPoll.promise),
     } satisfies SessionDashboardApi;
     render(<SessionDashboard api={api} />);
-    await screen.findByText("Idle newer");
-    expect(sessionListButtonNames()).toEqual(["Idle newer", "Active older"]);
+    await screen.findByText("Newer");
+    expect(sessionListButtonNames()).toEqual(["Newer", "Older"]);
 
+    // Snapshot reports: Older's lastActivity jumped past Newer's (Cause B)
+    // AND Older is now streaming while Newer is idle (Cause A). With the
+    // pre-fix code this would have put Older at the top on both counts.
     statusPoll.resolve([
-      { id: "idle-newer", cwd: "/repo/idle", sessionName: "Idle newer", status: "idle", lastActivity: 20 },
-      { id: "active-older", cwd: "/repo/active", sessionName: "Active older", status: "streaming", lastActivity: 10 },
+      { id: "newer", cwd: "/repo/newer", sessionName: "Newer", status: "idle", lastActivity: 21 },
+      { id: "older", cwd: "/repo/older", sessionName: "Older", status: "streaming", lastActivity: 999 },
     ]);
     await waitFor(() => expect(api.listSessionStatuses).toHaveBeenCalled());
 
-    await waitFor(() => expect(sessionListButtonNames()).toEqual(["Active older", "Idle newer"]));
+    expect(sessionListButtonNames()).toEqual(["Newer", "Older"]);
   });
 
   it("the inline name input disappears once the first message is sent", async () => {

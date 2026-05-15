@@ -259,8 +259,13 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     return [...filtered].sort((a, b) => {
       if (sortMode === "name") return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
       if (sortMode === "cwd") return a.cwd.localeCompare(b.cwd);
-      const activeDelta = sessionActivityRank(a.status) - sessionActivityRank(b.status);
-      if (activeDelta !== 0) return activeDelta;
+      // Status is intentionally NOT a primary sort key. PR #77 added
+      // sessionActivityRank() as the leading comparator and the sidebar
+      // started thrashing: any session transitioning streaming -> idle
+      // (or compacting/retrying flicker) would yank rows up by 5+ slots
+      // and back. Status is already surfaced visually via the per-row
+      // status dot; we keep the row position stable by sorting on
+      // recency alone, with a stable name tiebreaker.
       const recentDelta = b.lastActivity - a.lastActivity;
       if (recentDelta !== 0) return recentDelta;
       return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
@@ -1570,10 +1575,6 @@ function CronGlyph() {
   );
 }
 
-function sessionActivityRank(status: SessionCardData["status"]): number {
-  return status === "streaming" || status === "waiting_for_approval" || status === "compacting" || status === "retrying" ? 0 : 1;
-}
-
 function mergeSessionStatusSnapshot(
   current: readonly SessionCardData[],
   snapshot: readonly SessionCardData[],
@@ -1592,10 +1593,13 @@ function mergeSessionStatusSnapshot(
       ...(next.model === undefined ? {} : { model: next.model }),
       ...(next.tokenSummary === undefined ? {} : { tokenSummary: next.tokenSummary }),
       ...(next.stats === undefined ? {} : { stats: next.stats }),
-      // The backend status snapshot now reports the session index timestamp,
-      // not the time this poll observed the session. Use it so real activity
-      // from another tab/process can still move a row in Recent ordering.
-      lastActivity: next.lastActivity,
+      // Status polling should update the row's live state without treating
+      // 'we observed this session' as real user/agent activity. The sidebar's
+      // Recent sort uses lastActivity, so preserving it here keeps idle (and
+      // streaming) rows from jumping around every poll. Real activity events
+      // (prompt sent, SSE updates, fork/clone, rename) update lastActivity
+      // through other code paths.
+      lastActivity: session.lastActivity,
     };
   });
   for (const session of snapshot) {
