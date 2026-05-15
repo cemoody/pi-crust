@@ -446,17 +446,32 @@ function ThinkingCard({ thinking }: { readonly thinking: string }) {
   // a single anatomy: chevron + icon + verb + status-text + body. Still
   // tagged with .thinking-block so existing CSS / tests targeting that
   // class continue to apply.
+  const preview = thinkingPreview(thinking);
   return (
     <details className="thinking-block tool-card thinking" aria-label="thinking step">
       <summary>
         <span className="tool-icon" aria-hidden="true">💡</span>
         <span className="tool-line">
           <strong>Thought</strong>
+          {preview ? <> · <span className="tool-args thinking-preview">{preview}</span></> : null}
         </span>
       </summary>
       <pre className="thinking-body">{thinking}</pre>
     </details>
   );
+}
+
+function thinkingPreview(thinking: string): string {
+  // First non-empty line, collapsed whitespace. Markdown bold-headers that
+  // models often emit (e.g. **Considering options**) get unwrapped so the
+  // preview reads as prose rather than punctuation. The .tool-args style
+  // already truncates overflow with an ellipsis, so we don't slice here.
+  for (const rawLine of thinking.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    return line.replace(/^\*\*(.+?)\*\*$/, "$1").replace(/\s+/g, " ");
+  }
+  return "";
 }
 
 function ToolInputBlock({ tool }: { readonly tool: TimelineToolDetails }) {

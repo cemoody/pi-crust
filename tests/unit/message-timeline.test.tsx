@@ -72,7 +72,10 @@ describe("MessageTimeline", () => {
       text: "answer",
       thinking: "private reasoning",
     }]} />);
-    expect(screen.getByText("private reasoning")).toBeInTheDocument();
+    // 'private reasoning' now appears in two places: the collapsed body
+    // and the inline summary preview. Both should disappear when
+    // thinking is hidden.
+    expect(screen.getAllByText("private reasoning").length).toBeGreaterThan(0);
 
     rerender(<MessageTimeline hideThinking messages={[{
       id: "a1",
@@ -120,6 +123,25 @@ describe("MessageTimeline", () => {
     // Has the same summary anatomy as a real tool call.
     expect(details!.querySelector("summary .tool-icon")).not.toBeNull();
     expect(details!.querySelector("summary .tool-line")).not.toBeNull();
+  });
+
+  it("renders a one-line preview of the thinking content in the summary row", () => {
+    // UX ask: a fully collapsed 'Thought' row hides what the model was
+    // actually reasoning about. Mirror how tool calls expose a short
+    // .tool-args preview after the verb (e.g. 'Read · /path/to/file')
+    // so users get a glance at the first line without expanding.
+    const { container } = render(<MessageTimeline messages={[{
+      id: "a1", role: "assistant", text: "reply",
+      thinking: "Considering whether to use BigQuery\n\nNext step would be...",
+    }]} />);
+    const preview = container.querySelector(
+      "details.thinking-block summary .tool-line .thinking-preview",
+    );
+    expect(preview, "summary should include a .thinking-preview span").not.toBeNull();
+    expect(preview!.textContent ?? "").toBe("Considering whether to use BigQuery");
+    // Adopts the .tool-args class so it picks up the existing
+    // lower-priority styling (secondary color, ellipsis on overflow).
+    expect(preview!.classList.contains("tool-args")).toBe(true);
   });
 
   it("uses a lightbulb glyph for the thinking-card status icon", () => {
