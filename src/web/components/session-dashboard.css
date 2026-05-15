@@ -99,7 +99,9 @@
 }
 
 .sidebar-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
   padding: 7px 8px;
@@ -113,6 +115,16 @@
   font-weight: 500;
   cursor: pointer;
   letter-spacing: -0.01em;
+}
+
+.sidebar-menu-item > svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.sidebar-menu-item.active > svg,
+.sidebar-menu-item:hover > svg {
+  color: var(--black-900);
 }
 
 .sidebar-menu-item:hover {
