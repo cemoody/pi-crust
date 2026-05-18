@@ -117,6 +117,38 @@ export class PiRpcAdapter implements PiAdapter {
     });
   }
 
+  async forkSession(source: PiSessionHandle, entryId: string): Promise<{ readonly result: ForkSessionResult; readonly handle: PiSessionHandle }> {
+    if (!(source instanceof PiRpcSessionHandle)) throw new Error("PiRpcAdapter can only fork Pi RPC sessions");
+    const sourceManager = SessionManager.open(source.sessionFile, this.options.sessionDir);
+    const selectedEntry = sourceManager.getEntry(entryId) as any;
+    if (!selectedEntry) throw new Error("Invalid entry ID for forking");
+    if (selectedEntry.type !== "message" || selectedEntry.message?.role !== "user") {
+      throw new Error("Invalid entry ID for forking");
+    }
+    const selectedText = userMessageText(selectedEntry.message.content);
+    let forkedSessionFile: string | undefined;
+    if (selectedEntry.parentId) {
+      forkedSessionFile = sourceManager.createBranchedSession(String(selectedEntry.parentId));
+      if (forkedSessionFile) await ensureSessionManagerFileExists(sourceManager, forkedSessionFile);
+    } else {
+      const sessionManager = SessionManager.create(source.cwd, this.options.sessionDir);
+      forkedSessionFile = sessionManager.newSession({ parentSession: source.sessionFile });
+      if (forkedSessionFile) await ensureSessionManagerFileExists(sessionManager, forkedSessionFile);
+    }
+    if (!forkedSessionFile) throw new Error("Failed to create forked session");
+    const handle = await PiRpcSessionHandle.spawn({
+      cwd: source.cwd,
+      sessionFile: forkedSessionFile,
+      piCommand: this.piCommand,
+      supervisorScript: this.supervisorScript,
+      workerRegistry: this.workerRegistry,
+      ...(this.options.sessionDir === undefined ? {} : { sessionDir: this.options.sessionDir }),
+      ...(this.options.extraArgs === undefined ? {} : { extraArgs: this.options.extraArgs }),
+      ...(this.options.artifactExtension === undefined ? {} : { artifactExtension: this.options.artifactExtension }),
+    });
+    return { result: { cancelled: false, text: selectedText }, handle };
+  }
+
   async listSessions(cwd?: string): Promise<readonly SessionListItem[]> {
     const sessions = cwd === undefined
       ? await SessionManager.listAll()
@@ -974,6 +1006,27 @@ function contentTextAndThinking(content: unknown): { text: string; thinking: str
     }
   }
   return { text: text.join("\n"), thinking: thinking.join("\n\n"), images };
+}
+
+async function ensureSessionManagerFileExists(sessionManager: SessionManager, sessionFile: string): Promise<void> {
+  try {
+    await fs.access(sessionFile);
+    return;
+  } catch { /* create below */ }
+  await fs.mkdir(path.dirname(sessionFile), { recursive: true });
+  const header = sessionManager.getHeader();
+  if (!header) throw new Error("Forked session is missing a header");
+  const entries = [header, ...sessionManager.getEntries()];
+  await fs.writeFile(sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+}
+
+function userMessageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return content === undefined ? "" : JSON.stringify(content);
+  return content
+    .map((block) => isRecord(block) && typeof block.text === "string" ? block.text : "")
+    .filter(Boolean)
+    .join("\n");
 }
 
 function parseForkResult(data: unknown): ForkSessionResult {

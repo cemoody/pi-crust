@@ -146,6 +146,10 @@ export class SessionRegistry {
 
   async forkSession(sessionId: string, entryId: string): Promise<{ readonly result: ForkSessionResult; readonly session: RegisteredSession }> {
     const registered = this.getSession(sessionId);
+    if (this.adapter.forkSession) {
+      const { result, handle } = await this.adapter.forkSession(registered.handle, entryId);
+      return { result, session: result.cancelled ? registered : this.register(handle) };
+    }
     if (!registered.handle.fork) throw new Error("Session adapter does not support forking");
     const result = await registered.handle.fork(entryId);
     return { result, session: result.cancelled ? registered : this.replaceSessionId(sessionId, registered.handle) };

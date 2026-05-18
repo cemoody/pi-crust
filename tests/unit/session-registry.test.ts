@@ -95,6 +95,67 @@ describe("SessionRegistry", () => {
     await expect(reopened.handle.getMessages()).resolves.toHaveLength(2);
   });
 
+  it("forking a session keeps the source session alive and creates an independent fork", async () => {
+    const { registry, projectA } = await makeRegistry();
+    const source = await registry.createSession({ cwd: projectA, sessionName: "source" });
+    await registry.prompt(source.id, "original prompt");
+    const forkPoint = (await registry.getForkMessages(source.id))[0];
+    expect(forkPoint).toBeDefined();
+
+    const { result, session: fork } = await registry.forkSession(source.id, forkPoint!.entryId);
+
+    expect(result).toMatchObject({ cancelled: false, text: "original prompt" });
+    expect(fork.id).not.toBe(source.id);
+    expect(registry.hotSessionCount).toBe(2);
+
+    await registry.prompt(source.id, "continue source");
+    await registry.prompt(fork.id, "continue fork");
+
+    await expect(source.handle.getMessages()).resolves.toEqual([
+      expect.objectContaining({ role: "user", content: "original prompt" }),
+      expect.objectContaining({ role: "assistant", content: "Mock response to: original prompt" }),
+      expect.objectContaining({ role: "user", content: "continue source" }),
+      expect.objectContaining({ role: "assistant", content: "Mock response to: continue source" }),
+    ]);
+    await expect(fork.handle.getMessages()).resolves.toEqual([
+      expect.objectContaining({ role: "user", content: "continue fork" }),
+      expect.objectContaining({ role: "assistant", content: "Mock response to: continue fork" }),
+    ]);
+  });
+
+  it("forking a session does not mutate the source handle identity", async () => {
+    const { registry, projectA } = await makeRegistry();
+    const source = await registry.createSession({ cwd: projectA, sessionName: "source" });
+    await registry.prompt(source.id, "original prompt");
+    const forkPoint = (await registry.getForkMessages(source.id))[0]!;
+    const originalSourceId = source.id;
+    const originalSourceFile = source.sessionFile;
+
+    const { session: fork } = await registry.forkSession(source.id, forkPoint.entryId);
+
+    expect(source.id).toBe(originalSourceId);
+    expect(source.sessionFile).toBe(originalSourceFile);
+    expect(source.handle.id).toBe(originalSourceId);
+    expect(source.handle.sessionFile).toBe(originalSourceFile);
+    expect(fork.id).not.toBe(originalSourceId);
+    expect(registry.hasSession(originalSourceId)).toBe(true);
+    expect(registry.hasSession(fork.id)).toBe(true);
+  });
+
+  it("forking a session keeps source subscribers attached to the source instead of moving them to the fork", async () => {
+    const { registry, projectA } = await makeRegistry();
+    const source = await registry.createSession({ cwd: projectA, sessionName: "source" });
+    await registry.prompt(source.id, "original prompt");
+    const forkPoint = (await registry.getForkMessages(source.id))[0]!;
+    const sourceEvents: string[] = [];
+    registry.subscribe(source.id, (event) => sourceEvents.push(event.type));
+
+    const { session: fork } = await registry.forkSession(source.id, forkPoint.entryId);
+    await registry.prompt(fork.id, "fork-only prompt");
+
+    expect(sourceEvents).toEqual([]);
+  });
+
   it("deletes the persisted session file so deleted sessions do not reappear in lists", async () => {
     const { registry, projectA } = await makeRegistry();
     const created = await registry.createSession({ cwd: projectA });

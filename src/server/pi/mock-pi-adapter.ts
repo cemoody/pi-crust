@@ -56,6 +56,11 @@ export class MockPiAdapter implements PiAdapter {
     return this.models;
   }
 
+  async forkSession(source: PiSessionHandle, entryId: string): Promise<{ readonly result: ForkSessionResult; readonly handle: PiSessionHandle }> {
+    if (!(source instanceof MockPiSessionHandle)) throw new Error("MockPiAdapter can only fork mock sessions");
+    return source.createFork(entryId);
+  }
+
   async createSession(options: CreateSessionOptions): Promise<PiSessionHandle> {
     await fs.mkdir(this.sessionRoot, { recursive: true });
     const id = crypto.randomUUID();
@@ -179,12 +184,31 @@ class MockPiSessionHandle implements PiSessionHandle {
   }
 
   async fork(entryId: string): Promise<ForkSessionResult> {
+    const { result, handle } = await this.createFork(entryId);
+    if (!result.cancelled) {
+      const fork = await readSession(handle.sessionFile);
+      this.id = fork.id;
+      this.cwd = fork.cwd;
+      this.sessionFile = fork.sessionFile;
+      this.sessionName = fork.sessionName;
+      this.messages = [...fork.messages];
+      this.lastActivity = fork.lastActivity;
+    }
+    return result;
+  }
+
+  async createFork(entryId: string): Promise<{ readonly result: ForkSessionResult; readonly handle: MockPiSessionHandle }> {
     const index = this.findForkMessageIndex(entryId);
     if (index === -1) throw new Error(`Unknown fork entry: ${entryId}`);
     const selected = this.messages[index]!;
-    const nextMessages = this.messages.slice(0, index);
-    await this.replaceWithMessages(nextMessages, `Fork of ${this.sessionName ?? shortId(this.id)}`);
-    return { cancelled: false, text: selected.content };
+    const persisted = await this.persistedCopy(
+      this.messages.slice(0, index),
+      `Fork of ${this.sessionName ?? shortId(this.id)}`,
+    );
+    return {
+      result: { cancelled: false, text: selected.content },
+      handle: new MockPiSessionHandle(persisted, this.sessionRoot, this.assistantResponse),
+    };
   }
 
   async clone(): Promise<CloneSessionResult> {
@@ -253,13 +277,26 @@ class MockPiSessionHandle implements PiSessionHandle {
   }
 
   private async replaceWithMessages(messages: SessionMessage[], sessionName: string): Promise<void> {
+    const persisted = await this.persistedCopy(messages, sessionName);
+    this.id = persisted.id;
+    this.sessionFile = persisted.sessionFile;
+    this.messages = [...persisted.messages];
+    this.sessionName = persisted.sessionName;
+    this.lastActivity = persisted.lastActivity;
+  }
+
+  private async persistedCopy(messages: readonly SessionMessage[], sessionName: string): Promise<PersistedMockSession> {
     const id = crypto.randomUUID();
-    this.id = id;
-    this.sessionFile = path.join(this.sessionRoot, `${Date.now()}_${id}.mock-session.json`);
-    this.messages = messages;
-    this.sessionName = sessionName;
-    this.lastActivity = Date.now();
-    await this.persist();
+    const persisted: PersistedMockSession = {
+      id,
+      cwd: this.cwd,
+      sessionFile: path.join(this.sessionRoot, `${Date.now()}_${id}.mock-session.json`),
+      messages: [...messages],
+      sessionName,
+      lastActivity: Date.now(),
+    };
+    await writeSession(persisted);
+    return persisted;
   }
 
   private async persist(): Promise<void> {

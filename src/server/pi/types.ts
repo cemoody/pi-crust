@@ -156,6 +156,14 @@ export interface PiAdapter {
   openSession(options: OpenSessionOptions): Promise<PiSessionHandle>;
   listSessions(cwd?: string): Promise<readonly SessionListItem[]>;
   listModels(): Promise<readonly ModelInfo[]>;
+  /**
+   * Create an independent fork of a hot source session.
+   *
+   * Implementations should return a new handle backed by a distinct worker/session
+   * and must not mutate or replace the source handle. Adapters that do not
+   * implement this fall back to the legacy session-replacement handle.fork API.
+   */
+  forkSession?(source: PiSessionHandle, entryId: string): Promise<{ readonly result: ForkSessionResult; readonly handle: PiSessionHandle }>;
   /** Reattach to a detached worker the API server discovered at boot. */
   reattachSession?(options: ReattachSessionOptions): Promise<PiSessionHandle>;
 }
