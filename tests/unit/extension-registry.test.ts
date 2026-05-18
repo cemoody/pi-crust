@@ -207,6 +207,20 @@ describe("PRC extension registry harness", () => {
     expect(host.diagnostics).toEqual([{ extensionId: "bad", level: "error", message: "boom" }]);
   });
 
+  it("dispatches built-in API compatibility routes outside the extension namespace", async () => {
+    const host = createPrcExtensionHost();
+    await host.activate({
+      id: "core.schedule",
+      factory: (prc) => {
+        prc.server.api.get("/api/cron/:id", (request) => ({ id: request.params.id, ok: true }));
+      },
+    });
+
+    const response = await host.serverRoutes.dispatch(ReadableRequest.empty("GET") as never, new URL("http://localhost/api/cron/job-1"));
+
+    expect(response).toEqual({ status: 200, body: { id: "job-1", ok: true } });
+  });
+
   it("dispatches extension server routes with path params and JSON bodies", async () => {
     const host = createPrcExtensionHost();
     await host.activate({

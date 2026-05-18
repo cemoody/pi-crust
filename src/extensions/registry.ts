@@ -7,6 +7,7 @@ import type {
   PrcExtensionFactory,
   PrcServerRouteContribution,
   PrcServerRouteHandler,
+  PrcServerRouteMount,
   PrcServerRouteRequest,
   PrcServerRouteResponse,
 } from "./api.js";
@@ -33,6 +34,7 @@ export interface RegisteredActivityView extends PrcActivityViewContribution {
 
 export interface RegisteredServerRoute extends PrcServerRouteContribution {
   readonly extensionId: string;
+  readonly mount: PrcServerRouteMount;
 }
 
 export class CommandRegistry {
@@ -100,7 +102,7 @@ export class ServerRouteRegistry {
 
   register(extensionId: string, route: PrcServerRouteContribution): Disposable {
     const normalized = normalizeRoute(route);
-    if (this.routes.some((existing) => existing.extensionId === extensionId && existing.method === normalized.method && existing.path === normalized.path)) {
+    if (this.routes.some((existing) => existing.mount === normalized.mount && existing.extensionId === extensionId && existing.method === normalized.method && existing.path === normalized.path)) {
       throw new Error(`Server route already registered: ${normalized.method} ${extensionId}${normalized.path}`);
     }
     const registered: RegisteredServerRoute = { ...normalized, extensionId };
@@ -124,15 +126,21 @@ export class ServerRouteRegistry {
   }
 
   private match(method: string, pathname: string): { route: RegisteredServerRoute; params: Record<string, string> } | undefined {
+    const normalizedMethod = method.toUpperCase();
+    const apiRoute = this.routes
+      .filter((route) => route.mount === "api" && route.method === normalizedMethod)
+      .map((route) => ({ route, params: matchRoutePath(route.path, pathname) }))
+      .find((candidate): candidate is { route: RegisteredServerRoute; params: Record<string, string> } => candidate.params !== undefined);
+    if (apiRoute) return apiRoute;
+
     const prefix = "/api/extensions/";
     if (!pathname.startsWith(prefix)) return undefined;
     const rest = pathname.slice(prefix.length);
     const slash = rest.indexOf("/");
     const extensionId = decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash));
     const routePath = slash === -1 ? "/" : rest.slice(slash);
-    const normalizedMethod = method.toUpperCase();
     return this.routes
-      .filter((route) => route.extensionId === extensionId && route.method === normalizedMethod)
+      .filter((route) => route.mount === "extension" && route.extensionId === extensionId && route.method === normalizedMethod)
       .map((route) => ({ route, params: matchRoutePath(route.path, routePath) }))
       .find((candidate): candidate is { route: RegisteredServerRoute; params: Record<string, string> } => candidate.params !== undefined);
   }
@@ -172,7 +180,8 @@ export class PrcExtensionHost implements Disposable {
   }
 
   private createContext(extensionId: string, track: (disposable: Disposable) => Disposable): PrcExtensionContext {
-    const route = (method: string, path: string, handler: PrcServerRouteHandler) => track(this.serverRoutes.register(extensionId, { method, path, handler }));
+    const route = (method: string, path: string, handler: PrcServerRouteHandler) => track(this.serverRoutes.register(extensionId, { method, path, handler, mount: "extension" }));
+    const apiRoute = (method: string, path: string, handler: PrcServerRouteHandler) => track(this.serverRoutes.register(extensionId, { method, path, handler, mount: "api" }));
     return {
       extensionId,
       commands: { register: (command) => track(this.commands.register(extensionId, command)) },
@@ -184,6 +193,12 @@ export class PrcExtensionHost implements Disposable {
           put: (path, handler) => route("PUT", path, handler),
           delete: (path, handler) => route("DELETE", path, handler),
         },
+        api: {
+          get: (path, handler) => apiRoute("GET", path, handler),
+          post: (path, handler) => apiRoute("POST", path, handler),
+          put: (path, handler) => apiRoute("PUT", path, handler),
+          delete: (path, handler) => apiRoute("DELETE", path, handler),
+        },
       },
     };
   }
@@ -193,8 +208,8 @@ export function createPrcExtensionHost(): PrcExtensionHost {
   return new PrcExtensionHost();
 }
 
-function normalizeRoute(route: PrcServerRouteContribution): PrcServerRouteContribution {
-  return { ...route, method: route.method.toUpperCase(), path: route.path.startsWith("/") ? route.path : `/${route.path}` };
+function normalizeRoute(route: PrcServerRouteContribution): PrcServerRouteContribution & { mount: PrcServerRouteMount } {
+  return { ...route, method: route.method.toUpperCase(), path: route.path.startsWith("/") ? route.path : `/${route.path}`, mount: route.mount ?? "extension" };
 }
 
 function normalizeRouteResponse(result: unknown): PrcServerRouteResponse {

@@ -43,6 +43,14 @@ describe("HTTP API extension routes", () => {
     expect(missing.status).toBe(404);
   });
 
+  it("serves built-in API compatibility routes contributed by extensions", async () => {
+    const baseUrl = await startExtensionServer("core.schedule", (prc) => {
+      prc.server.api.get("/api/cron-test", () => ({ ok: true, source: prc.extensionId }));
+    });
+
+    await expect(fetchJson(`${baseUrl}/api/cron-test`)).resolves.toEqual({ ok: true, source: "core.schedule" });
+  });
+
   it("runs extension commands through the HTTP API", async () => {
     const baseUrl = await startExtensionServer("command-test", (prc) => {
       prc.commands.register({ id: "command-test.echo", title: "Echo", slashName: "echo", run: (input) => ({ input, ok: true }) });

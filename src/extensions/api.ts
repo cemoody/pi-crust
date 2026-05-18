@@ -40,10 +40,13 @@ export type PrcServerRouteHandler = (
   request: PrcServerRouteRequest,
 ) => unknown | PrcServerRouteResponse | Promise<unknown | PrcServerRouteResponse>;
 
+export type PrcServerRouteMount = "extension" | "api";
+
 export interface PrcServerRouteContribution {
   readonly method: string;
   readonly path: string;
   readonly handler: PrcServerRouteHandler;
+  readonly mount?: PrcServerRouteMount;
 }
 
 export interface PrcExtensionContext {
@@ -56,6 +59,13 @@ export interface PrcExtensionContext {
   };
   readonly server: {
     readonly routes: {
+      get(path: string, handler: PrcServerRouteHandler): Disposable;
+      post(path: string, handler: PrcServerRouteHandler): Disposable;
+      put(path: string, handler: PrcServerRouteHandler): Disposable;
+      delete(path: string, handler: PrcServerRouteHandler): Disposable;
+    };
+    /** Built-in/server-side extensions may register stable API compatibility routes. */
+    readonly api: {
       get(path: string, handler: PrcServerRouteHandler): Disposable;
       post(path: string, handler: PrcServerRouteHandler): Disposable;
       put(path: string, handler: PrcServerRouteHandler): Disposable;

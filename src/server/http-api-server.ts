@@ -301,6 +301,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     return sendJson(res, 404, { error: "extension route not found" });
   }
 
+  const apiExtensionResponse = await context.extensions?.serverRoutes.dispatch(req, url);
+  if (apiExtensionResponse) return sendJsonWithHeaders(res, apiExtensionResponse.status ?? 200, apiExtensionResponse.body, apiExtensionResponse.headers);
+
   if (url.pathname.startsWith("/api/cron")) {
     return handleCron(req, res, url, context);
   }
