@@ -8,7 +8,7 @@ function renderPanel() {
   const handlers = {
     onLogin: vi.fn(), onLogout: vi.fn(), onApiKey: vi.fn(), onModelSelect: vi.fn(), onThinkingSelect: vi.fn(),
     onToolToggle: vi.fn(), onSaveSetting: vi.fn(), onReloadResources: vi.fn(), onPackageInstall: vi.fn(),
-    onPackageRemove: vi.fn(), onThemeSelect: vi.fn(),
+    onPackageRemove: vi.fn(), onThemeSelect: vi.fn(), onExtensionToggle: vi.fn(), onExtensionsReload: vi.fn(),
   };
   render(<ConfigurationPanel
     authProviders={[{ provider: "anthropic", status: "logged-out", warning: "extra usage may apply" }]}
@@ -21,6 +21,7 @@ function renderPanel() {
     themes={[{ name: "dark", tokens: { accent: "#fff" } }]}
     hotkeys={[{ action: "send", key: "Enter" }]}
     versions={[{ name: "pi", version: "0.74.0" }]}
+    extensions={[{ id: "core.schedule", title: "Schedule", enabled: true, source: "bundled" }, { id: "bad", enabled: false, source: "project", diagnostics: ["boom"] }]}
     {...handlers}
   />);
   return handlers;
@@ -30,7 +31,7 @@ describe("ConfigurationPanel", () => {
   it("shows auth states and warning and handles login/logout/api key", () => {
     const handlers = renderPanel();
     expect(screen.getByLabelText("Auth panel")).toHaveTextContent("logged-out");
-    expect(screen.getByRole("alert")).toHaveTextContent("extra usage");
+    expect(screen.getByLabelText("Auth panel")).toHaveTextContent("extra usage");
     fireEvent.click(screen.getByRole("button", { name: "Login" }));
     fireEvent.click(screen.getByRole("button", { name: "Logout" }));
     fireEvent.change(screen.getByLabelText("anthropic API key"), { target: { value: "sk-test" } });
@@ -62,6 +63,17 @@ describe("ConfigurationPanel", () => {
     fireEvent.change(screen.getByLabelText("Setting value"), { target: { value: "dark" } });
     fireEvent.click(screen.getByRole("button", { name: "Save setting" }));
     expect(handlers.onSaveSetting).toHaveBeenCalledWith("theme", "dark");
+  });
+
+  it("shows extension settings, reloads extensions, and toggles extensions", () => {
+    const handlers = renderPanel();
+    expect(screen.getByLabelText("Extension management")).toHaveTextContent("Schedule (bundled)");
+    expect(screen.getByLabelText("Extension management")).toHaveTextContent("bad (project)");
+    expect(screen.getByLabelText("Extension management")).toHaveTextContent("boom");
+    fireEvent.click(screen.getByRole("button", { name: "Reload extensions" }));
+    fireEvent.click(screen.getByLabelText(/Schedule/));
+    expect(handlers.onExtensionsReload).toHaveBeenCalled();
+    expect(handlers.onExtensionToggle).toHaveBeenCalledWith("core.schedule", false);
   });
 
   it("handles themes, resources, packages, hotkeys, and versions", () => {

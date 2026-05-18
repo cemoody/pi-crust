@@ -11,12 +11,22 @@ export type PrcPackageSetting = string | {
   readonly extensions?: readonly string[];
 };
 
+export interface PackageCommandRunner {
+  (command: string, args: readonly string[], options: { readonly cwd: string }): Promise<void>;
+}
+
 export interface PackageInstallOptions {
   readonly configDir: string;
   readonly cwd?: string;
   /** Store paths relative to configDir when possible. Defaults to true. */
   readonly relative?: boolean;
+  readonly runner?: PackageCommandRunner;
 }
+
+export type ParsedPackageSource =
+  | { readonly type: "local"; readonly source: string }
+  | { readonly type: "npm"; readonly spec: string; readonly packageName: string }
+  | { readonly type: "git"; readonly url: string; readonly ref?: string };
 
 export interface PackageResolveOptions {
   readonly cwd: string;
@@ -67,8 +77,11 @@ export async function writePrcSettings(configDir: string, settings: PrcSettings)
 
 export async function installExtensionPackage(source: string, options: PackageInstallOptions): Promise<PrcSettings> {
   const cwd = options.cwd ?? process.cwd();
-  const absoluteSource = path.resolve(cwd, source);
-  await assertPackageSourceExists(absoluteSource);
+  const parsed = parsePackageSource(source);
+  const absoluteSource = parsed.type === "local"
+    ? path.resolve(cwd, parsed.source)
+    : await installRemotePackageSource(parsed, options);
+  if (parsed.type === "local") await assertPackageSourceExists(absoluteSource);
   const settings = await readPrcSettings(options.configDir);
   const storedSource = options.relative === false ? absoluteSource : relativeOrAbsolute(options.configDir, absoluteSource);
   const existing = [...(settings.packages ?? [])];
@@ -78,6 +91,58 @@ export async function installExtensionPackage(source: string, options: PackageIn
   const next: PrcSettings = { ...settings, packages: existing };
   await writePrcSettings(options.configDir, next);
   return next;
+}
+
+export function parsePackageSource(source: string): ParsedPackageSource {
+  if (source.startsWith("npm:")) {
+    const spec = source.slice("npm:".length);
+    return { type: "npm", spec, packageName: npmPackageName(spec) };
+  }
+  if (source.startsWith("git:")) {
+    const value = source.slice("git:".length);
+    const at = value.lastIndexOf("@");
+    if (at > value.indexOf("/")) return { type: "git", url: value.slice(0, at), ref: value.slice(at + 1) };
+    return { type: "git", url: value };
+  }
+  if (/^https:\/\/github\.com\/.+\/.+/.test(source) || /^git@github\.com:.+\/.+/.test(source)) return { type: "git", url: source };
+  return { type: "local", source };
+}
+
+async function installRemotePackageSource(parsed: Exclude<ParsedPackageSource, { type: "local" }>, options: PackageInstallOptions): Promise<string> {
+  const runner = options.runner ?? defaultPackageRunner;
+  if (parsed.type === "npm") {
+    const prefix = path.join(options.configDir, "packages", "npm");
+    await fs.mkdir(prefix, { recursive: true });
+    await runner("npm", ["install", "--prefix", prefix, parsed.spec], { cwd: options.configDir });
+    return path.join(prefix, "node_modules", parsed.packageName);
+  }
+  const target = path.join(options.configDir, "packages", "git", safePackageDirName(parsed.url));
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  try { await fs.stat(target); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    await runner("git", ["clone", parsed.url, target], { cwd: options.configDir });
+  }
+  if (parsed.ref) await runner("git", ["checkout", parsed.ref], { cwd: target });
+  return target;
+}
+
+async function defaultPackageRunner(command: string, args: readonly string[], options: { readonly cwd: string }): Promise<void> {
+  const { spawn } = await import("node:child_process");
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, [...args], { cwd: options.cwd, stdio: "inherit" });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`${command} exited with ${code}`)));
+  });
+}
+
+function npmPackageName(spec: string): string {
+  if (spec.startsWith("@")) return spec.split("@").slice(0, 2).join("@");
+  return spec.split("@")[0] ?? spec;
+}
+
+function safePackageDirName(source: string): string {
+  return source.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "repo";
 }
 
 export async function removeExtensionPackage(source: string, options: PackageInstallOptions): Promise<PrcSettings> {

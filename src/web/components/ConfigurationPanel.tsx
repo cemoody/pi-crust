@@ -6,6 +6,13 @@ export interface ToolInfo { readonly name: string; readonly enabled: boolean; re
 export interface ResourceDiagnostic { readonly kind: string; readonly name: string; readonly status: "loaded" | "error"; readonly detail?: string; }
 export interface PackageInfo { readonly source: string; readonly resources: readonly string[]; }
 export interface ThemeInfo { readonly name: string; readonly tokens: Record<string, string>; }
+export interface ExtensionSettingsInfo {
+  readonly id: string;
+  readonly title?: string;
+  readonly enabled: boolean;
+  readonly source: "built-in" | "bundled" | "project" | "global" | "explicit";
+  readonly diagnostics?: readonly string[];
+}
 
 export interface ConfigurationPanelProps {
   readonly authProviders: readonly { readonly provider: string; readonly status: "logged-in" | "logged-out" | "api-key"; readonly warning?: string }[];
@@ -18,6 +25,7 @@ export interface ConfigurationPanelProps {
   readonly themes: readonly ThemeInfo[];
   readonly hotkeys: readonly { readonly action: string; readonly key: string }[];
   readonly versions: readonly { readonly name: string; readonly version: string }[];
+  readonly extensions?: readonly ExtensionSettingsInfo[];
   readonly onLogin: (provider: string) => void;
   readonly onLogout: (provider: string) => void;
   readonly onApiKey: (provider: string, key: string) => void;
@@ -29,6 +37,8 @@ export interface ConfigurationPanelProps {
   readonly onPackageInstall: (source: string) => void;
   readonly onPackageRemove: (source: string) => void;
   readonly onThemeSelect: (name: string) => void;
+  readonly onExtensionToggle?: (id: string, enabled: boolean) => void;
+  readonly onExtensionsReload?: () => void;
 }
 
 export function ConfigurationPanel(props: ConfigurationPanelProps) {
@@ -98,6 +108,23 @@ export function ConfigurationPanel(props: ConfigurationPanelProps) {
         <h3>Resources</h3>
         <button type="button" onClick={props.onReloadResources}>Reload resources</button>
         {props.resources.map((resource) => <p key={`${resource.kind}:${resource.name}`}>{resource.kind}: {resource.name} - {resource.status} {resource.detail}</p>)}
+      </section>
+
+      <section aria-label="Extension management">
+        <h3>Extensions</h3>
+        <button type="button" onClick={() => props.onExtensionsReload?.()}>Reload extensions</button>
+        {(props.extensions ?? []).length === 0 ? <p>No extensions loaded.</p> : null}
+        {(props.extensions ?? []).map((extension) => (
+          <label key={extension.id}>
+            <input
+              type="checkbox"
+              checked={extension.enabled}
+              onChange={(event) => props.onExtensionToggle?.(extension.id, event.target.checked)}
+            />
+            {extension.title ?? extension.id} ({extension.source})
+            {extension.diagnostics?.length ? <span role="alert"> {extension.diagnostics.join("; ")}</span> : null}
+          </label>
+        ))}
       </section>
 
       <section aria-label="Package management">

@@ -48,8 +48,10 @@ export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOpti
   const explicitInputs = await loadExplicitExtensionInputs(explicitPaths, options.cwd, packageDiagnostics);
 
   const settings = await readPrcSettings(options.configDir);
-  const project = await resolvePackageExtensions(settings.projectPackages ? { projectPackages: settings.projectPackages } : {}, { cwd: options.cwd });
-  const global = await resolvePackageExtensions(settings.packages ? { packages: settings.packages } : {}, { cwd: options.configDir });
+  const projectDiscovered = await discoverPackages(path.join(options.cwd, ".pi", "remote-control", "extensions"));
+  const globalDiscovered = await discoverPackages(path.join(options.configDir, "extensions"));
+  const project = await resolvePackageExtensions(settings.projectPackages || projectDiscovered.length ? { projectPackages: [...(settings.projectPackages ?? []), ...projectDiscovered] } : {}, { cwd: options.cwd });
+  const global = await resolvePackageExtensions(settings.packages || globalDiscovered.length ? { packages: [...(settings.packages ?? []), ...globalDiscovered] } : {}, { cwd: options.configDir });
   const bundled = await resolvePackageExtensions(options.bundledPackagePaths?.length ? { packages: options.bundledPackagePaths } : {}, { cwd: options.cwd });
   packageDiagnostics.push(...project.diagnostics, ...global.diagnostics, ...bundled.diagnostics);
 
@@ -74,6 +76,19 @@ export function defaultPrcConfigDir(env: NodeJS.ProcessEnv = process.env): strin
 
 function parseExtensionEnv(value: string | undefined): string[] {
   return value?.split(",").map((entry) => entry.trim()).filter(Boolean) ?? [];
+}
+
+async function discoverPackages(directory: string): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory() || /\.[cm]?[jt]sx?$/.test(entry.name))
+      .map((entry) => path.join(directory, entry.name))
+      .sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 async function loadExplicitExtensionInputs(paths: readonly string[], cwd: string, diagnostics: PackageDiagnostic[]): Promise<ActivateExtensionInput[]> {

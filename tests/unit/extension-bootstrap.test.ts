@@ -64,6 +64,25 @@ describe("PRC extension bootstrap integration", () => {
     expect(prompts).toEqual([{ sessionId: "created-session", prompt: "hello" }]);
   });
 
+  it("auto-discovers project and global extension directories", async () => {
+    const home = await makeHome();
+    const projectPackage = await writeLocalExtensionPackage(path.join(home.projectRoot, ".pi", "remote-control", "extensions"), {
+      name: "project-discovered",
+      extensionCode: "export default function activate(prc) { prc.commands.register({ id: 'discovered.project', title: 'Project', run: () => 'project' }); }\n",
+    });
+    const globalPackage = await writeLocalExtensionPackage(path.join(home.configDir, "extensions"), {
+      name: "global-discovered",
+      extensionCode: "export default function activate(prc) { prc.commands.register({ id: 'discovered.global', title: 'Global', run: () => 'global' }); }\n",
+    });
+
+    const result = await bootstrapPrcExtensions({ configDir: home.configDir, cwd: home.projectRoot });
+
+    expect(projectPackage).toContain("project-discovered");
+    expect(globalPackage).toContain("global-discovered");
+    await expect(result.host.commands.run("discovered.project")).resolves.toBe("project");
+    await expect(result.host.commands.run("discovered.global")).resolves.toBe("global");
+  });
+
   it("loads bundled package paths through the same package resolver as installed extensions", async () => {
     const home = await makeHome();
     const packageDir = await writeLocalExtensionPackage(home.root, {
