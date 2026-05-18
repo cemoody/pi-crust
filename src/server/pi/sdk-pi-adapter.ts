@@ -92,7 +92,10 @@ export class SdkPiAdapter implements PiAdapter {
         sessionFile,
         ...(sessionName === undefined ? {} : { sessionName }),
         ...(item.firstMessage === undefined ? {} : { firstMessage: String(item.firstMessage) }),
-        lastActivity: typeof item.timestamp === "number" ? item.timestamp : Date.parse(String(item.timestamp ?? Date.now())),
+        createdAt: coerceTimestamp(item.created) ?? null,
+        // SessionManager exposes `modified`, not `timestamp`. Avoid falling
+        // back to Date.now() here: observing the session list is not activity.
+        lastActivity: coerceTimestamp(item.modified) ?? coerceTimestamp(item.timestamp) ?? coerceTimestamp(item.created) ?? 0,
       };
     }));
   }

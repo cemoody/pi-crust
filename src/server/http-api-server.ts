@@ -389,7 +389,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && (action === "state" || action === undefined)) {
     const session = await getOrOpenSession(context, sessionId);
-    return sendJson(res, 200, toSessionCard(await session.handle.getState()));
+    const metadata = await readSessionTimelineMetadata(session.sessionFile);
+    return sendJson(res, 200, toSessionCard(await session.handle.getState(), metadata));
   }
 
   if (req.method === "GET" && action === "fork-messages") {
@@ -628,9 +629,10 @@ async function listSessionCards(context: HttpApiServerContext, cwd?: string) {
 }
 
 async function sessionCardWithLiveState(context: HttpApiServerContext, session: SessionListItem) {
+  const metadata = await readSessionTimelineMetadata(session.sessionFile);
   if (context.registry.hasSession(session.id)) {
     try {
-      const card = toSessionCard(await context.registry.getSession(session.id).handle.getState());
+      const card = toSessionCard(await context.registry.getSession(session.id).handle.getState(), metadata);
       return {
         ...card,
         // getState() is an observation and some adapters report Date.now()
@@ -643,10 +645,73 @@ async function sessionCardWithLiveState(context: HttpApiServerContext, session: 
       // while this status snapshot was being assembled.
     }
   }
-  return toSessionListCard(session);
+  return toSessionListCard(session, metadata);
 }
 
-function toSessionListCard(session: SessionListItem) {
+interface SessionTimelineMetadata {
+  readonly createdAt: number | null;
+  readonly lastUserActivity: number | null;
+}
+
+interface CachedSessionTimelineMetadata {
+  readonly mtimeMs: number;
+  readonly size: number;
+  readonly metadata: SessionTimelineMetadata;
+}
+
+const sessionTimelineMetadataCache = new Map<string, CachedSessionTimelineMetadata>();
+
+async function readSessionTimelineMetadata(sessionFile: string): Promise<SessionTimelineMetadata> {
+  let createdAt: number | null = null;
+  let lastUserActivity: number | null = null;
+  if (!sessionFile) return { createdAt, lastUserActivity };
+  try {
+    const stat = await fsp.stat(sessionFile);
+    const cached = sessionTimelineMetadataCache.get(sessionFile);
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.metadata;
+    const content = await fsp.readFile(sessionFile, "utf8");
+    for (const line of content.split("\n")) {
+      if (!line.trim()) continue;
+      let entry: unknown;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (!isRecord(entry)) continue;
+      if (entry.type === "session" && createdAt === null) {
+        createdAt = coerceTime(entry.timestamp);
+        continue;
+      }
+      if (entry.type !== "message" || !isRecord(entry.message)) continue;
+      if (entry.message.role !== "user") continue;
+      const timestamp = coerceTime(entry.message.timestamp) ?? coerceTime(entry.timestamp);
+      if (timestamp === null) continue;
+      lastUserActivity = Math.max(lastUserActivity ?? 0, timestamp);
+    }
+    const metadata = { createdAt, lastUserActivity };
+    sessionTimelineMetadataCache.set(sessionFile, { mtimeMs: stat.mtimeMs, size: stat.size, metadata });
+    return metadata;
+  } catch {
+    // Missing/unreadable historical session files degrade to null metadata.
+  }
+  return { createdAt, lastUserActivity };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function coerceTime(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? time : null;
+  }
+  return null;
+}
+
+function toSessionListCard(session: SessionListItem, metadata: SessionTimelineMetadata = { createdAt: null, lastUserActivity: null }) {
   return {
     id: session.id,
     cwd: session.cwd,
@@ -655,11 +720,13 @@ function toSessionListCard(session: SessionListItem) {
     status: "idle",
     model: undefined,
     tokenSummary: undefined,
-    lastActivity: Number.isFinite(session.lastActivity) ? session.lastActivity : Date.now(),
+    createdAt: metadata.createdAt ?? session.createdAt ?? null,
+    lastUserActivity: metadata.lastUserActivity ?? session.lastUserActivity ?? null,
+    lastActivity: Number.isFinite(session.lastActivity) ? session.lastActivity : (metadata.lastUserActivity ?? metadata.createdAt ?? 0),
   };
 }
 
-function toSessionCard(state: Awaited<ReturnType<import("./pi/types.js").PiSessionHandle["getState"]>>) {
+function toSessionCard(state: Awaited<ReturnType<import("./pi/types.js").PiSessionHandle["getState"]>>, metadata: SessionTimelineMetadata = { createdAt: null, lastUserActivity: null }) {
   return {
     id: state.id,
     cwd: state.cwd,
@@ -670,6 +737,8 @@ function toSessionCard(state: Awaited<ReturnType<import("./pi/types.js").PiSessi
       ? undefined
       : `${formatTokens(state.totalTokens)} tokens`,
     stats: state.stats,
+    createdAt: metadata.createdAt ?? state.createdAt ?? null,
+    lastUserActivity: metadata.lastUserActivity ?? state.lastUserActivity ?? null,
     lastActivity: state.lastActivity,
   };
 }

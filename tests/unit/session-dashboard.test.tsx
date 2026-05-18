@@ -256,6 +256,106 @@ describe("SessionDashboard", () => {
     expect(sessionListButtonNames()).toEqual(["Newer", "Older"]);
   });
 
+  describe("Recent sort contract: server-authored last user input", () => {
+    it("orders by lastUserActivity, not assistant/tool/status activity, so a 24h worker does not outrank a fresh user prompt", async () => {
+      if (typeof window !== "undefined" && window.localStorage) window.localStorage.clear();
+
+      render(<SessionDashboard api={makeApi([
+        {
+          id: "long-worker",
+          cwd: "/repo/worker",
+          sessionName: "Agent working for 24h",
+          status: "streaming",
+          // Assistant/tool activity is very recent, but the user has not
+          // touched this session in a long time. This must not win Recent.
+          lastActivity: 1_000_000,
+          lastUserActivity: 100,
+          createdAt: 50,
+        },
+        {
+          id: "cron-today",
+          cwd: "/repo/cron",
+          sessionName: "cron: qxo briefing",
+          status: "idle",
+          lastActivity: 200_000,
+          // Scheduled prompts are still user-input messages, but older than
+          // the user's fresh WGNR prompt below.
+          lastUserActivity: 500,
+          createdAt: 400,
+        },
+        {
+          id: "wgnr",
+          cwd: "/repo/wgnr",
+          sessionName: "wgnr-pi vs prc",
+          status: "compacting",
+          lastActivity: 600,
+          lastUserActivity: 900,
+          createdAt: 300,
+        },
+      ])} />);
+
+      await screen.findByText("wgnr-pi vs prc");
+      expect(sessionListButtonNames()).toEqual([
+        "wgnr-pi vs prc",
+        "cron: qxo briefing",
+        "Agent working for 24h",
+      ]);
+    });
+
+    it("lets a status snapshot promote a session when the server has observed a newer user input", async () => {
+      if (typeof window !== "undefined" && window.localStorage) window.localStorage.clear();
+      const statusPoll = deferredPromise<readonly SessionCardData[]>();
+      const api = {
+        ...makeApi([
+          { id: "old-top", cwd: "/repo/a", sessionName: "Previously recent", status: "idle", lastActivity: 200, lastUserActivity: 200, createdAt: 1 },
+          { id: "wgnr", cwd: "/repo/w", sessionName: "wgnr-pi vs prc", status: "idle", lastActivity: 100, lastUserActivity: 100, createdAt: 1 },
+        ]),
+        listSessionStatuses: vi.fn(() => statusPoll.promise),
+      } satisfies SessionDashboardApi;
+
+      render(<SessionDashboard api={api} />);
+      await screen.findByText("Previously recent");
+      expect(sessionListButtonNames()).toEqual(["Previously recent", "wgnr-pi vs prc"]);
+
+      statusPoll.resolve([
+        { id: "old-top", cwd: "/repo/a", sessionName: "Previously recent", status: "idle", lastActivity: 300, lastUserActivity: 200, createdAt: 1 },
+        { id: "wgnr", cwd: "/repo/w", sessionName: "wgnr-pi vs prc", status: "compacting", lastActivity: 9_999, lastUserActivity: 900, createdAt: 1 },
+      ]);
+
+      await waitFor(() => expect(api.listSessionStatuses).toHaveBeenCalled());
+      expect(sessionListButtonNames()).toEqual(["wgnr-pi vs prc", "Previously recent"]);
+    });
+
+    it("does not let stale browser localStorage pin an old session above newer server-side user input", async () => {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.clear();
+        window.localStorage.setItem("pi-remote-control:lastUserActivityById:v1", JSON.stringify({
+          "stale-local": 10_000,
+        }));
+      }
+
+      render(<SessionDashboard api={makeApi([
+        { id: "stale-local", cwd: "/repo/old", sessionName: "Stale localStorage winner", status: "idle", lastActivity: 100, lastUserActivity: 100, createdAt: 1 },
+        { id: "server-new", cwd: "/repo/new", sessionName: "Server newer prompt", status: "idle", lastActivity: 200, lastUserActivity: 900, createdAt: 1 },
+      ])} />);
+
+      await screen.findByText("Server newer prompt");
+      expect(sessionListButtonNames()).toEqual(["Server newer prompt", "Stale localStorage winner"]);
+    });
+
+    it("uses createdAt as a deterministic tie-breaker for sessions with identical scheduled input timestamps", async () => {
+      if (typeof window !== "undefined" && window.localStorage) window.localStorage.clear();
+
+      render(<SessionDashboard api={makeApi([
+        { id: "older-cron", cwd: "/repo/cron", sessionName: "Alpha older cron", status: "idle", lastActivity: 1_000, lastUserActivity: 500, createdAt: 100 },
+        { id: "newer-cron", cwd: "/repo/cron", sessionName: "Beta newer cron", status: "idle", lastActivity: 1_000, lastUserActivity: 500, createdAt: 200 },
+      ])} />);
+
+      await screen.findByText("Alpha older cron");
+      expect(sessionListButtonNames()).toEqual(["Beta newer cron", "Alpha older cron"]);
+    });
+  });
+
   it("Recent sort: localStorage persistence preserves user-driven order across reloads", async () => {
     if (typeof window !== "undefined" && window.localStorage) window.localStorage.clear();
 

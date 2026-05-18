@@ -224,6 +224,8 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
               ...(refreshed.model === undefined ? {} : { model: refreshed.model }),
               ...(refreshed.tokenSummary === undefined ? {} : { tokenSummary: refreshed.tokenSummary }),
               ...(refreshed.stats === undefined ? {} : { stats: refreshed.stats }),
+              ...(refreshed.createdAt === undefined ? {} : { createdAt: refreshed.createdAt }),
+              ...(refreshed.lastUserActivity === undefined ? {} : { lastUserActivity: refreshed.lastUserActivity }),
               lastActivity: options.preserveLastActivity ? session.lastActivity : refreshed.lastActivity,
             };
           }));
@@ -293,16 +295,15 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     return [...filtered].sort((a, b) => {
       if (sortMode === "name") return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
       if (sortMode === "cwd") return a.cwd.localeCompare(b.cwd);
-      // 'Recent' is defined as the last time *the user* drove activity
-      // into the session on this client (handlePrompt / handleBash /
-      // create / fork / clone). Server-driven ticks (LLM streaming,
-      // tool executions, status polls, session-index mtime drift) do
-      // not change this value, so the row does NOT move while the agent
-      // is working. Status colors on the bubble still reflect live state.
-      const userA = lastUserActivityById[a.id] ?? a.lastActivity;
-      const userB = lastUserActivityById[b.id] ?? b.lastActivity;
-      const recentDelta = userB - userA;
+      // 'Recent' is defined as the last time the user authored input in
+      // the session. Prefer the server-computed session-history timestamp
+      // so prompts sent from another tab/API still reorder correctly. The
+      // client map is only an optimistic/back-compat fallback when the
+      // server does not expose lastUserActivity yet.
+      const recentDelta = recentSortKey(b, lastUserActivityById) - recentSortKey(a, lastUserActivityById);
       if (recentDelta !== 0) return recentDelta;
+      const createdDelta = (b.createdAt ?? 0) - (a.createdAt ?? 0);
+      if (createdDelta !== 0) return createdDelta;
       return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
     });
   }, [namedOnly, query, sessions, sortMode, lastUserActivityById]);
@@ -426,7 +427,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         alt: attachment.name,
       })),
     });
-    setSessions((current) => current.map((session) => session.id === sessionId ? { ...session, status: "streaming" } : session));
+    setSessions((current) => current.map((session) => session.id === sessionId ? { ...session, status: "streaming", lastUserActivity: now } : session));
     try {
       const messages = await api.prompt(sessionId, text, attachments.map(toPromptAttachment));
       if (Array.isArray(messages) && messages.length > 0) {
@@ -628,6 +629,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       customLabel: includeInContext ? "Shell command" : "Hidden shell command",
       text: `$ ${command}\nSending to Pi...`,
     });
+    setSessions((current) => current.map((session) => session.id === sessionId ? { ...session, lastUserActivity: now } : session));
     try {
       const messages = await api.bash(sessionId, command, includeInContext);
       setMessagesBySession((current) => ({ ...current, [sessionId]: messages.map(toTimelineMessage) }));
@@ -1475,6 +1477,16 @@ function readSessionFromUrl(): string | null {
 // degrade silently to an empty map.
 const USER_ACTIVITY_STORAGE_KEY = "pi-remote-control:lastUserActivityById:v1";
 
+function recentSortKey(session: SessionCardData, optimisticUserActivityById: Record<string, number>): number {
+  if (typeof session.lastUserActivity === "number" && Number.isFinite(session.lastUserActivity)) {
+    return session.lastUserActivity;
+  }
+  const optimistic = optimisticUserActivityById[session.id];
+  if (typeof optimistic === "number" && Number.isFinite(optimistic)) return optimistic;
+  if (typeof session.createdAt === "number" && Number.isFinite(session.createdAt)) return session.createdAt;
+  return session.lastActivity;
+}
+
 function loadUserActivityMap(): Record<string, number> {
   if (typeof window === "undefined") return {};
   try {
@@ -1671,12 +1683,11 @@ function mergeSessionStatusSnapshot(
       ...(next.model === undefined ? {} : { model: next.model }),
       ...(next.tokenSummary === undefined ? {} : { tokenSummary: next.tokenSummary }),
       ...(next.stats === undefined ? {} : { stats: next.stats }),
-      // Status polling should update the row's live state without treating
-      // 'we observed this session' as real user/agent activity. The sidebar's
-      // Recent sort uses lastActivity, so preserving it here keeps idle (and
-      // streaming) rows from jumping around every poll. Real activity events
-      // (prompt sent, SSE updates, fork/clone, rename) update lastActivity
-      // through other code paths.
+      ...(next.createdAt === undefined ? {} : { createdAt: next.createdAt }),
+      ...(next.lastUserActivity === undefined ? {} : { lastUserActivity: next.lastUserActivity }),
+      // Status polling should update the row's live state and server-authored
+      // lastUserActivity, but observing a session is not activity. Preserve
+      // lastActivity so assistant/tool/status churn does not move rows.
       lastActivity: session.lastActivity,
     };
   });

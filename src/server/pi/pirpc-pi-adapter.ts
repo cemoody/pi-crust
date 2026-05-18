@@ -159,7 +159,10 @@ export class PiRpcAdapter implements PiAdapter {
       sessionFile: String(item.path),
       ...(item.name === undefined ? {} : { sessionName: String(item.name) }),
       ...(item.firstMessage === undefined ? {} : { firstMessage: String(item.firstMessage) }),
-      lastActivity: typeof item.timestamp === "number" ? item.timestamp : Date.parse(String(item.timestamp ?? Date.now())),
+      createdAt: dateLikeToTime(item.created) ?? null,
+      // SessionManager exposes `modified`, not `timestamp`. Avoid falling
+      // back to Date.now() here: observing the session list is not activity.
+      lastActivity: dateLikeToTime(item.modified) ?? dateLikeToTime(item.timestamp) ?? dateLikeToTime(item.created) ?? 0,
     }));
   }
 
@@ -1047,6 +1050,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function dateLikeToTime(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : undefined;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? time : undefined;
+  }
+  return undefined;
 }
 
 function sumNumbers(record: Record<string, unknown> | undefined, keys: readonly string[]): number {

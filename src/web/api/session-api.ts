@@ -8,6 +8,15 @@ export interface SessionCardData {
   readonly status: SessionCardStatus;
   readonly tokenSummary?: string;
   readonly stats?: SessionCardStats;
+  /**
+   * Timestamp of the most recent user-authored input in the session history.
+   * This is distinct from lastActivity, which may include assistant/tool work
+   * or adapter observation time and therefore is not stable enough for the
+   * sidebar's user-recency sort.
+   */
+  readonly lastUserActivity?: number | null;
+  /** Timestamp of the session header/creation time, used as a deterministic fallback. */
+  readonly createdAt?: number | null;
   readonly lastActivity: number;
 }
 

@@ -8,6 +8,8 @@ export interface SessionListItem {
   readonly sessionFile: string;
   readonly sessionName?: string;
   readonly firstMessage?: string;
+  readonly lastUserActivity?: number | null;
+  readonly createdAt?: number | null;
   readonly lastActivity: number;
 }
 
@@ -22,6 +24,8 @@ export interface SessionState {
   readonly messageCount: number;
   readonly totalTokens?: number;
   readonly stats?: SessionStats;
+  readonly lastUserActivity?: number | null;
+  readonly createdAt?: number | null;
   readonly lastActivity: number;
 }
 
