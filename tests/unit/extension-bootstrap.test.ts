@@ -42,6 +42,26 @@ describe("PRC extension bootstrap integration", () => {
     await expect(result.host.commands.run("shared")).resolves.toBe("explicit");
   });
 
+  it("loads bundled package paths through the same package resolver as installed extensions", async () => {
+    const home = await makeHome();
+    const packageDir = await writeLocalExtensionPackage(home.root, {
+      name: "bundled-extension",
+      extensionCode: "export default function activate(prc) { prc.commands.register({ id: 'bundled.hello', title: 'Bundled', run: () => 'bundled' }); prc.activity.registerView({ id: 'bundled.panel', title: 'Bundled' }); }\n",
+      manifest: {
+        name: "bundled-extension",
+        version: "0.0.0-test",
+        piRemoteControl: { extension: "./index.mjs", web: "./web.mjs" },
+      },
+    });
+    await fs.writeFile(path.join(packageDir, "web.mjs"), "export default function Web() {}\n", "utf8");
+
+    const result = await bootstrapPrcExtensions({ configDir: home.configDir, cwd: home.projectRoot, bundledPackagePaths: [packageDir] });
+
+    await expect(result.host.commands.run("bundled.hello")).resolves.toBe("bundled");
+    expect(result.host.activity.get("bundled.panel")?.extensionId).toBe("bundled-extension");
+    expect(result.host.getWebAsset("bundled-extension")?.filePath).toBe(path.join(packageDir, "web.mjs"));
+  });
+
   it("honors PI_REMOTE_EXTENSIONS and PI_REMOTE_NO_EXTENSIONS", async () => {
     const home = await makeHome();
     const envFile = path.join(home.root, "env-extension.mjs");

@@ -22,6 +22,8 @@ export interface BootstrapPrcExtensionsOptions {
   readonly cwd: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly builtIns?: readonly BuiltInPrcExtension[];
+  /** Bundled package directories loaded by default through the same package resolver as installed extensions. */
+  readonly bundledPackagePaths?: readonly string[];
   readonly explicitExtensionPaths?: readonly string[];
   readonly noExtensions?: boolean;
   readonly dataDir?: string;
@@ -44,15 +46,18 @@ export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOpti
   const settings = await readPrcSettings(options.configDir);
   const project = await resolvePackageExtensions(settings.projectPackages ? { projectPackages: settings.projectPackages } : {}, { cwd: options.cwd });
   const global = await resolvePackageExtensions(settings.packages ? { packages: settings.packages } : {}, { cwd: options.configDir });
-  packageDiagnostics.push(...project.diagnostics, ...global.diagnostics);
+  const bundled = await resolvePackageExtensions(options.bundledPackagePaths?.length ? { packages: options.bundledPackagePaths } : {}, { cwd: options.cwd });
+  packageDiagnostics.push(...project.diagnostics, ...global.diagnostics, ...bundled.diagnostics);
 
   await registerWebAssets(host, project.webExtensions, packageDiagnostics);
   await registerWebAssets(host, global.webExtensions, packageDiagnostics);
+  await registerWebAssets(host, bundled.webExtensions, packageDiagnostics);
   const projectInputs = await loadEntriesAsInputs(project.extensions, packageDiagnostics);
   const globalInputs = await loadEntriesAsInputs(global.extensions, packageDiagnostics);
+  const bundledInputs = await loadEntriesAsInputs(bundled.extensions, packageDiagnostics);
   const builtInInputs = (options.builtIns ?? []).map((extension): ActivateExtensionInput => ({ id: extension.id, factory: extension.factory }));
 
-  await host.activateAll([...explicitInputs, ...projectInputs, ...globalInputs, ...builtInInputs]);
+  await host.activateAll([...explicitInputs, ...projectInputs, ...globalInputs, ...bundledInputs, ...builtInInputs]);
   for (const diagnostic of packageDiagnostics) {
     host.diagnostics.push({ extensionId: diagnostic.source, level: diagnostic.level, message: diagnostic.message });
   }
