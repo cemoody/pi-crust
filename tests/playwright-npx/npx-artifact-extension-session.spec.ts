@@ -54,7 +54,7 @@ test("npx-style fresh install can add artifact image rendering to an existing se
     await expect(page.locator('[data-testid="artifact-image"]')).toHaveJSProperty("naturalWidth", 0);
 
     await page.getByRole("button", { name: "Settings" }).click();
-    await expect(page.getByRole("heading", { name: "Extension settings" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     await page.getByLabel("Extension package source").fill(extensionDir);
     await page.getByRole("button", { name: "Install" }).click();
     await expect(page.getByText("Extension installed and reloaded.")).toBeVisible();

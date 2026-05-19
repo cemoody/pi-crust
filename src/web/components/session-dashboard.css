@@ -86,16 +86,7 @@
   height: 22px;
   flex: 0 0 auto;
   border-radius: 6px;
-  object-fit: cover;
-}
-
-.app-brand-icon-text {
-  display: inline-grid;
-  place-items: center;
-  background: var(--gray-080);
-  color: var(--text-primary);
-  font-size: 15px;
-  line-height: 1;
+  object-fit: contain;
 }
 
 .session-sidebar > header h1 {
@@ -1258,6 +1249,43 @@
   align-items: center;
   gap: 8px;
   min-height: 30px;
+}
+.branding-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.branding-settings-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.branding-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--gray-030);
+}
+.branding-icon-preview {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  object-fit: contain;
+}
+.branding-icon-empty,
+.settings-help {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 .extension-package-install-row {
   display: flex;

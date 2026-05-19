@@ -259,8 +259,8 @@ are pinned by `tests/integration/dev-api-supervisor.test.ts`.
 | `PI_REMOTE_SESSION_ROOT`          | `~/.pi/agent/sessions`                           | where session JSONL files live |
 | `PI_REMOTE_CRON_FILE`             | `~/.pi/agent/cron-jobs.json`                     | cron job store |
 | `PI_REMOTE_CLIENT_EVENT_LOG`      | `<cwd>/logs/client-events.jsonl`                 | client/server telemetry log |
-| `PI_REMOTE_APP_NAME`              | `pi remote`                                      | app name shown in the sidebar title area and browser title |
-| `PI_REMOTE_APP_ICON`              | unset                                            | app title icon; accepts an emoji/text glyph, image URL, absolute/relative path, or data URL |
+| `PI_REMOTE_APP_NAME`              | `pi remote`                                      | default app name shown in the sidebar title area and browser title; can also be changed from Settings |
+| `PI_REMOTE_APP_ICON`              | unset                                            | default app title icon image URL/path/data URL; can also be changed from Settings |
 | `PI_REMOTE_ADAPTER`               | `pirpc`                                          | `pirpc` (default) / `pi-sdk` / `mock` (with `PI_REMOTE_USE_MOCK=1`) |
 | `PI_REMOTE_DISABLE_CEMOODY_ARTIFACT` | unset                                          | set to `1` to skip auto-loading the bundled `@cemoody/pi-artifact` extension (`display()` tool) |
 | `PI_REMOTE_CEMOODY_ARTIFACT_PATH` | unset                                            | override path to a local checkout of `@cemoody/pi-artifact` (entry-point file) |

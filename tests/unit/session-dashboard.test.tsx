@@ -109,7 +109,7 @@ describe("SessionDashboard", () => {
     expect(screen.queryByRole("button", { name: "Schedule" })).not.toBeInTheDocument();
   });
 
-  it("applies server-provided app name and icon branding", async () => {
+  it("applies server-provided app name and image icon URL branding", async () => {
     const api = {
       ...makeApi(),
       getServerInfo: vi.fn(async () => ({
@@ -119,16 +119,18 @@ describe("SessionDashboard", () => {
         sessionRoot: "/tmp/sessions",
         defaultCwd: "/tmp/project",
         appName: "Moody Lab",
-        appIcon: "🚀",
+        appIcon: "https://example.com/logo-wide.png",
       })),
     } satisfies SessionDashboardApi;
     const { container } = render(<SessionDashboard api={api} />);
 
     await screen.findByRole("heading", { name: "Moody Lab" });
 
-    expect(container.querySelector(".app-brand-icon-text")).toHaveTextContent("🚀");
+    const icon = container.querySelector<HTMLImageElement>(".app-brand-icon");
+    expect(icon).toHaveAttribute("src", "https://example.com/logo-wide.png");
+    expect(container.querySelector(".app-brand-icon-text")).not.toBeInTheDocument();
     expect(document.title).toBe("Moody Lab");
-    expect(document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href).toContain("data:image/svg+xml");
+    expect(document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href).toBe("https://example.com/logo-wide.png");
   });
 
   it("shows a loading state on the New session button while the session is being created", async () => {
@@ -198,6 +200,33 @@ describe("SessionDashboard", () => {
     expect(row!.querySelector(".session-name-field")).toBeNull();
   });
 
+  it("saves app branding from settings with an image icon URL", async () => {
+    const api = {
+      ...makeApi(),
+      getExtensionSettings: vi.fn(async () => ({
+        appBranding: { appName: "pi remote", appIconUrl: "" },
+        extensions: { commands: [], activities: [], routes: [], diagnostics: [] },
+      })),
+      setAppBranding: vi.fn(async (branding) => ({
+        appName: branding.appName,
+        appIcon: branding.appIconUrl,
+      })),
+    } satisfies SessionDashboardApi;
+    const { container } = render(<SessionDashboard api={api} />);
+    await screen.findByRole("heading", { name: "pi remote" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await screen.findByRole("heading", { name: "Settings" });
+    fireEvent.change(screen.getByLabelText("App name"), { target: { value: "Mobile Lab" } });
+    fireEvent.change(screen.getByLabelText("App icon image URL"), { target: { value: "https://example.com/mobile-lab.svg" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save branding" }));
+
+    await waitFor(() => expect(api.setAppBranding).toHaveBeenCalledWith({ appName: "Mobile Lab", appIconUrl: "https://example.com/mobile-lab.svg" }));
+    await screen.findByRole("heading", { name: "Mobile Lab" });
+    expect(container.querySelector<HTMLImageElement>(".app-brand-icon")).toHaveAttribute("src", "https://example.com/mobile-lab.svg");
+    expect(document.title).toBe("Mobile Lab");
+  });
+
   it("opens extension settings and toggles extension enablement", async () => {
     const api = {
       ...makeApi(),
@@ -222,7 +251,7 @@ describe("SessionDashboard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
 
-    await screen.findByRole("heading", { name: "Extension settings" });
+    await screen.findByRole("heading", { name: "Settings" });
     expect(screen.getByLabelText("Installed extensions")).toHaveTextContent("bad config");
     fireEvent.click(screen.getByLabelText(/disabled.demo/));
     await waitFor(() => expect(api.setExtensionEnabled).toHaveBeenCalledWith("disabled.demo", true));

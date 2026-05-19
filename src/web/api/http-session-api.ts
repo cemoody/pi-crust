@@ -1,5 +1,5 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
-import type { CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, ModelOption, NewSessionInput, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import type { AppBrandingInfo, AppBrandingSettings, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, ModelOption, NewSessionInput, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
 import { recordClientEvent, getTabSessionId } from "../utils/client-telemetry.js";
 
 const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "";
@@ -37,6 +37,10 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
 
   async setExtensionEnabled(extensionId: string, enabled: boolean): Promise<ExtensionReloadResponse> {
     return request<ExtensionReloadResponse>(`/api/extensions/${encodeURIComponent(extensionId)}/enabled`, { method: "POST", body: { enabled } });
+  }
+
+  async setAppBranding(branding: AppBrandingSettings): Promise<AppBrandingInfo> {
+    return request<AppBrandingInfo>("/api/settings/branding", { method: "POST", body: branding });
   }
 
   async installExtensionPackage(source: string): Promise<ExtensionReloadResponse> {

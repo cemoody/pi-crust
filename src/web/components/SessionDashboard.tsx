@@ -919,13 +919,21 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         </ul>
       </aside>
 
-      <section className="active-session" aria-label={view === "settings" ? "Extension settings" : activeActivity ? activeActivity.title : "Active session"}>
+      <section className="active-session" aria-label={view === "settings" ? "Settings" : activeActivity ? activeActivity.title : "Active session"}>
         {view === "settings" ? (
           <ExtensionManagementPanel
             extensions={extensions}
             settings={extensionSettings}
+            currentAppName={appName}
+            {...(appIcon ? { currentAppIcon: appIcon } : {})}
             onReload={reloadExtensions}
             onNotice={setNotice}
+            {...(api.setAppBranding ? { onSaveBranding: async (branding) => {
+              const result = await api.setAppBranding!(branding);
+              setAppName(result.appName || "pi remote");
+              setAppIcon(result.appIcon);
+              if (api.getExtensionSettings) await refreshExtensionSettings();
+            } } : {})}
             {...(api.setExtensionEnabled ? { onToggle: async (extensionId: string, enabled: boolean) => {
               const result = await api.setExtensionEnabled!(extensionId, enabled);
               setExtensions(result.extensions);
@@ -1120,30 +1128,14 @@ function AppBrand({ appName, appIcon }: { readonly appName: string; readonly app
 }
 
 function BrandIcon({ value }: { readonly value: string }) {
-  if (isImageIcon(value)) {
-    return <img className="app-brand-icon" src={value} alt="" aria-hidden="true" />;
-  }
-  return <span className="app-brand-icon app-brand-icon-text" aria-hidden="true">{value}</span>;
-}
-
-function isImageIcon(value: string): boolean {
-  return /^(data:image\/|https?:\/\/|\/|\.\/|\.\.\/)/.test(value);
+  return <img className="app-brand-icon" src={value} alt="" aria-hidden="true" />;
 }
 
 function updateFavicon(appIcon: string | undefined): void {
   if (typeof document === "undefined") return;
   const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
   if (!link) return;
-  if (!appIcon) {
-    link.href = "/favicon.svg";
-    return;
-  }
-  link.href = isImageIcon(appIcon) ? appIcon : emojiIconDataUrl(appIcon);
-}
-
-function emojiIconDataUrl(value: string): string {
-  const escaped = value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#111827"/><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="36">${escaped}</text></svg>`)}`;
+  link.href = appIcon || "/favicon.svg";
 }
 
 function InlineNameInput(props: {

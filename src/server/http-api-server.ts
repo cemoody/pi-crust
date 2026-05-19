@@ -17,7 +17,7 @@ import { WorkerRegistry } from "./session/worker-registry.js";
 import type { PrcExtensionHost } from "../extensions/registry.js";
 import { defaultPrcConfigDir } from "../extensions/bootstrap.js";
 import { serializeExtensions } from "../extensions/metadata.js";
-import { installExtensionPackage, readPrcSettings, removeExtensionPackage, setExtensionEnabled, writePrcSettings, type PrcSettings } from "../extensions/packages.js";
+import { installExtensionPackage, readPrcSettings, removeExtensionPackage, setExtensionEnabled, writePrcSettings, type PrcAppBrandingSettings, type PrcSettings } from "../extensions/packages.js";
 import { createPrcExtensionRuntime, type PrcExtensionRuntime } from "../extensions/runtime.js";
 
 export interface HttpApiServerOptions {
@@ -92,10 +92,33 @@ function resolveContextGitSha(value: string | (() => string) | undefined): strin
   return "unknown";
 }
 
-function resolveAppBranding(env: NodeJS.ProcessEnv): { readonly appName: string; readonly appIcon?: string } {
+function resolveEnvAppBranding(env: NodeJS.ProcessEnv): { readonly appName: string; readonly appIcon?: string } {
   const appName = env.PI_REMOTE_APP_NAME?.trim() || "pi remote";
   const appIcon = env.PI_REMOTE_APP_ICON?.trim();
   return { appName, ...(appIcon ? { appIcon } : {}) };
+}
+
+async function resolveAppBranding(context: Pick<HttpApiServerContext, "extensionRuntime">): Promise<{ readonly appName: string; readonly appIcon?: string }> {
+  const env = resolveEnvAppBranding(process.env);
+  if (!context.extensionRuntime) return env;
+  const settings = await readPrcSettings(context.extensionRuntime.configDir);
+  return effectiveAppBranding(settings.appBranding, env);
+}
+
+function effectiveAppBranding(
+  settings: PrcAppBrandingSettings | undefined,
+  fallback: { readonly appName: string; readonly appIcon?: string } = resolveEnvAppBranding(process.env),
+): { readonly appName: string; readonly appIcon?: string } {
+  const appName = settings?.appName?.trim() || fallback.appName;
+  const appIcon = settings?.appIconUrl?.trim() || fallback.appIcon;
+  return { appName, ...(appIcon ? { appIcon } : {}) };
+}
+
+function validateAppIconUrl(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (/^(https?:\/\/|data:image\/|\/|\.\/|\.\.\/)/i.test(trimmed)) return trimmed;
+  throw new Error("appIconUrl must be an image URL, path, or data:image URL");
 }
 
 function getExtensionHost(context: Pick<HttpApiServerContext, "extensions" | "extensionRuntime">): PrcExtensionHost | undefined {
@@ -315,7 +338,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       // default 'Working directory' in the New Session dialog, which is
       // friendlier than seeding it with whatever the API was invoked from.
       homeCwd: os.homedir(),
-      ...resolveAppBranding(process.env),
+      ...(await resolveAppBranding(context)),
       gitSha: resolveContextGitSha(context.gitSha),
     });
   }
@@ -332,6 +355,30 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     if (!context.extensionRuntime) return sendJson(res, 400, { error: "extension settings are not configured" });
     const settings = await readPrcSettings(context.extensionRuntime.configDir);
     return sendJson(res, 200, { ...settings, extensions: serializeExtensions(context.extensionRuntime.current) });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/settings/branding") {
+    if (!context.extensionRuntime) return sendJson(res, 400, { error: "settings are not configured" });
+    const body = await readJson(req) as { appName?: unknown; appIconUrl?: unknown };
+    if (body.appName !== undefined && typeof body.appName !== "string") return sendJson(res, 400, { error: "appName must be a string" });
+    if (body.appIconUrl !== undefined && typeof body.appIconUrl !== "string") return sendJson(res, 400, { error: "appIconUrl must be a string" });
+    let appIconUrl: string | undefined;
+    try {
+      appIconUrl = validateAppIconUrl(body.appIconUrl ?? "");
+    } catch (error) {
+      return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    const appName = (body.appName ?? "").trim();
+    const settings = await readPrcSettings(context.extensionRuntime.configDir);
+    const appBranding: PrcAppBrandingSettings = {
+      ...(appName ? { appName } : {}),
+      ...(appIconUrl ? { appIconUrl } : {}),
+    };
+    const next: PrcSettings = Object.keys(appBranding).length > 0
+      ? { ...settings, appBranding }
+      : Object.fromEntries(Object.entries(settings).filter(([key]) => key !== "appBranding")) as PrcSettings;
+    await writePrcSettings(context.extensionRuntime.configDir, next);
+    return sendJson(res, 200, effectiveAppBranding(next.appBranding));
   }
 
   if (req.method === "POST" && url.pathname === "/api/extensions/reload") {

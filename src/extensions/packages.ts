@@ -5,6 +5,13 @@ export interface PrcSettings {
   readonly packages?: readonly PrcPackageSetting[];
   readonly projectPackages?: readonly PrcPackageSetting[];
   readonly disabledExtensions?: readonly string[];
+  readonly appBranding?: PrcAppBrandingSettings;
+}
+
+export interface PrcAppBrandingSettings {
+  readonly appName?: string;
+  /** Image URL/data URL used for the app icon. Text/emoji glyphs are intentionally not supported here. */
+  readonly appIconUrl?: string;
 }
 
 export type PrcPackageSetting = string | {
