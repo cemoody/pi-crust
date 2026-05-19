@@ -7,6 +7,8 @@ name: ci
 #                         (mobile-input-zoom, mobile-screenshots, session-chat)
 #   playwright-promo    : tests/playwright/promo-screenshots.spec.ts against
 #                         playwright.promo.config.ts (README hero suite)
+#   playwright-npx      : tests/playwright-npx/* against
+#                         playwright.npx-extension.config.ts
 #
 # Each playwright job uploads its artifacts so reviewers can see the produced
 # screenshots / video / traces directly from the PR's "Checks" tab.
@@ -122,6 +124,46 @@ jobs:
         with:
           name: playwright-default-html-report
           path: playwright-report/
+          if-no-files-found: ignore
+
+  # ─────────────────────────────────────────────────────────────────────────
+  playwright-npx:
+    name: playwright (npx extension suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: resolve playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: cache playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: install chromium + deps
+        run: npx playwright install --with-deps chromium
+
+      - name: playwright test (npx extension config)
+        run: npx playwright test --config=playwright.npx-extension.config.ts --reporter=list
+
+      - name: upload playwright traces / videos on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-npx-failure-artifacts
+          path: test-results/
           if-no-files-found: ignore
 
   # ─────────────────────────────────────────────────────────────────────────

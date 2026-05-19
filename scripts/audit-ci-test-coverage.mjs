@@ -16,6 +16,7 @@ const buckets = {
   vitest: [],
   playwrightDefault: [],
   playwrightPromo: [],
+  playwrightNpx: [],
 };
 const unowned = [];
 
@@ -27,8 +28,14 @@ for (const file of testFiles) {
     continue;
   }
 
+  if (file.startsWith("tests/playwright-npx/")) {
+    if (/\.spec\.tsx?$/.test(file)) buckets.playwrightNpx.push(file);
+    else unowned.push(`${file} is under tests/playwright-npx but is not a Playwright .spec.ts/.spec.tsx file`);
+    continue;
+  }
+
   if (/\.test\.tsx?$/.test(file)) buckets.vitest.push(file);
-  else unowned.push(`${file} is outside tests/playwright but is not matched by vitest.config.ts`);
+  else unowned.push(`${file} is outside mapped test directories and is not matched by vitest.config.ts`);
 }
 
 if (buckets.playwrightPromo.length !== 1) {
@@ -43,6 +50,8 @@ const requiredWorkflowSnippets = [
   ["default Playwright command", "npx playwright test --reporter=list"],
   ["promo Playwright job", "name: playwright (promo screenshots)"],
   ["promo Playwright command", "npm run promo"],
+  ["npx extension Playwright job", "name: playwright (npx extension suite)"],
+  ["npx extension Playwright command", "npx playwright test --config=playwright.npx-extension.config.ts --reporter=list"],
 ];
 for (const [label, snippet] of requiredWorkflowSnippets) {
   if (!workflow.includes(snippet)) unowned.push(`ci.yml is missing ${label}: ${snippet}`);
@@ -58,6 +67,7 @@ console.log("CI test coverage audit passed:");
 console.log(`- vitest: ${buckets.vitest.length} test file(s)`);
 console.log(`- playwright default: ${buckets.playwrightDefault.length} spec file(s)`);
 console.log(`- playwright promo: ${buckets.playwrightPromo.length} spec file(s)`);
+console.log(`- playwright npx extension: ${buckets.playwrightNpx.length} spec file(s)`);
 console.log(`- total: ${testFiles.length} test file(s)`);
 
 function walk(dir) {
