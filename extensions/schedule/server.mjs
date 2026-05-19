@@ -62,40 +62,109 @@ export default function activate(prc) {
     const job = await store.get(request.params.id);
     if (!job) return { status: 400, body: { error: 'cron job not found' } };
     try {
-      const session = await prc.sessions.createAndPrompt({ cwd: job.cwd, sessionName: `cron: ${job.name}`, prompt: job.prompt });
-      const sessionId = session && typeof session === 'object' && typeof session.id === 'string' ? session.id : '';
-      const updated = await store.update(job.id, {
-        lastRun: Date.now(),
-        lastSessionId: sessionId || null,
-        nextRun: nextRun(job.schedule, new Date())?.getTime() ?? null,
-      });
-      return { job: toCronJobView(updated), sessionId, sessionFile: session?.sessionFile ?? '' };
+      const fired = await fireJob(job, store, prc, { force: true });
+      if (!fired) return { status: 409, body: { error: 'cron job is already firing' } };
+      return { job: toCronJobView(fired.job), sessionId: fired.sessionId, sessionFile: fired.sessionFile };
     } catch (error) {
       return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
     }
   });
 
-  prc.jobs.register({
-    id: 'core.schedule.scheduler',
-    start() {
-      const timer = setInterval(() => tick(store, prc).catch((error) => console.warn('[schedule]', error)), 60_000);
-      timer.unref?.();
-      this.timer = timer;
-    },
-    stop() {
-      if (this.timer) clearInterval(this.timer);
-    },
-  });
+  if (schedulerEnabled()) {
+    prc.jobs.register({
+      id: 'core.schedule.scheduler',
+      start() {
+        const timer = setInterval(() => tick(store, prc).catch((error) => console.warn('[schedule]', error)), 60_000);
+        timer.unref?.();
+        this.timer = timer;
+      },
+      stop() {
+        if (this.timer) clearInterval(this.timer);
+      },
+    });
+  }
 }
 
-async function tick(store, prc) {
-  const now = Date.now();
+async function tick(store, prc, now = Date.now()) {
   for (const job of await store.list()) {
     if (!job.enabled) continue;
     if (job.nextRun !== null && job.nextRun > now) continue;
-    await prc.sessions.createAndPrompt({ cwd: job.cwd, sessionName: `cron: ${job.name}`, prompt: job.prompt });
-    await store.update(job.id, { lastRun: now, nextRun: nextRun(job.schedule, new Date(now + 60_000))?.getTime() ?? null });
+    await fireJob(job, store, prc, { now }).catch((error) => console.warn('[schedule]', error));
   }
+}
+
+async function fireJob(job, store, prc, options = {}) {
+  const force = options.force === true;
+  const now = options.now ?? Date.now();
+  const prompt = prc.sessions?.prompt;
+  if (typeof prc.sessions?.create !== 'function' || typeof prompt !== 'function') {
+    throw new Error('Extension session create/prompt API is not configured');
+  }
+
+  return withStoreLock(store.filePath, async () => {
+    const current = await store.get(job.id);
+    if (!current) throw new Error('cron job not found');
+    if (!current.enabled && !force) return null;
+    if (!force && current.nextRun !== null && current.nextRun > now) return null;
+
+    const session = await prc.sessions.create({ cwd: current.cwd, sessionName: `cron: ${current.name}` });
+    const sessionId = session && typeof session === 'object' && typeof session.id === 'string' ? session.id : '';
+    const updated = await store.update(current.id, {
+      lastRun: now,
+      lastSessionId: sessionId || null,
+      nextRun: nextRun(current.schedule, new Date(now))?.getTime() ?? null,
+    });
+
+    void Promise.resolve(prompt(sessionId, current.prompt))
+      .catch((error) => console.warn(`[schedule] prompt for "${current.name}" failed`, error));
+
+    return { job: updated, sessionId, sessionFile: session?.sessionFile ?? '' };
+  });
+}
+
+async function withStoreLock(storeFile, fn) {
+  const lockDir = `${storeFile}.locks`;
+  await fs.mkdir(lockDir, { recursive: true });
+  const lockFile = path.join(lockDir, 'scheduler.lock');
+  let handle;
+  try {
+    handle = await fs.open(lockFile, 'wx');
+  } catch (error) {
+    if (error?.code === 'EEXIST') {
+      const stale = await isStaleLock(lockFile);
+      if (stale) {
+        await fs.rm(lockFile, { force: true });
+        handle = await fs.open(lockFile, 'wx');
+      } else {
+        return null;
+      }
+    } else {
+      throw error;
+    }
+  }
+  try {
+    await handle.writeFile(`${process.pid}\n${Date.now()}\n`, 'utf8');
+    return await fn();
+  } finally {
+    await handle.close().catch(() => undefined);
+    await fs.rm(lockFile, { force: true }).catch(() => undefined);
+  }
+}
+
+async function isStaleLock(lockFile) {
+  try {
+    const stat = await fs.stat(lockFile);
+    return Date.now() - stat.mtimeMs > 5 * 60_000;
+  } catch {
+    return false;
+  }
+}
+
+function schedulerEnabled() {
+  if (process.env.PI_REMOTE_ENABLE_SCHEDULER === '1') return true;
+  if (process.env.PI_REMOTE_ENABLE_SCHEDULER === '0') return false;
+  if (process.env.PI_REMOTE_USE_MOCK === '1') return false;
+  return true;
 }
 
 function createStore(filePath) {
@@ -209,3 +278,5 @@ function matchesField(value, field, min, max, validateOnly = false) {
     return value >= start && value <= end && (value - start) % step === 0;
   });
 }
+
+export const __test = { createStore, fireJob, schedulerEnabled, tick };
