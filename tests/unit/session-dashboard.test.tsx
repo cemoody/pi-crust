@@ -43,6 +43,13 @@ function deferredPromise<T>() {
   return { promise, resolve };
 }
 
+function branchingCommands() {
+  return [
+    { id: "core.branching.fork", invocationName: "core.branching.fork", title: "Fork session", slashName: "fork", extensionId: "core.branching" },
+    { id: "core.branching.clone", invocationName: "core.branching.clone", title: "Clone session", slashName: "clone", extensionId: "core.branching" },
+  ];
+}
+
 function makeApi(initial: SessionCardData[] = []): SessionDashboardApi {
   let sessions = [...initial];
   return {
@@ -811,19 +818,23 @@ describe("SessionDashboard", () => {
     const forked: SessionCardData = { id: "forked", cwd: "/repo/a", sessionName: "Forked", status: "idle", model: "m", lastActivity: 2 };
     const api = {
       ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
-      async getForkMessages() {
-        return [{ entryId: "entry-1", text: "original prompt text" }];
-      },
-      async forkSession(_sessionId: string, entryId: string) {
-        expect(entryId).toBe("entry-1");
-        return { cancelled: false, text: "original prompt text", session: forked };
+      getExtensions: vi.fn(async () => ({ commands: branchingCommands(), activities: [], routes: [], diagnostics: [] })),
+      runExtensionCommand: vi.fn(async () => ({ result: { prcAction: "openForkDialog" } })),
+      request: async <T,>(url: string, options?: { readonly method?: string; readonly body?: unknown }) => {
+        if (url.endsWith("/fork-messages")) return [{ entryId: "entry-1", text: "original prompt text" }] as T;
+        if (url.endsWith("/fork") && options?.method === "POST") {
+          expect((options.body as { entryId?: string }).entryId).toBe("entry-1");
+          return { cancelled: false, text: "original prompt text", session: forked } as T;
+        }
+        throw new Error(`unexpected request ${url}`);
       },
     } satisfies SessionDashboardApi;
 
     render(<SessionDashboard api={api} />);
     await screen.findByText("Original");
     fireEvent.click(screen.getByRole("button", { name: /Original/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Fork" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Fork" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Fork" }));
 
     await screen.findByRole("dialog", { name: "Fork session" });
     fireEvent.click(screen.getByRole("button", { name: /original prompt text/ }));
@@ -837,18 +848,19 @@ describe("SessionDashboard", () => {
     const forked: SessionCardData = { id: "forked", cwd: "/repo/a", sessionName: "Forked", status: "idle", model: "m", lastActivity: 2 };
     const api = {
       ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
-      async getForkMessages() {
-        return [{ entryId: "entry-1", text: "first prompt" }, { entryId: "entry-2", text: "second prompt" }];
-      },
-      async forkSession(_sessionId: string, entryId: string) {
-        expect(entryId).toBe("entry-2");
-        return { cancelled: false, text: "second prompt", session: forked };
-      },
+      getExtensions: vi.fn(async () => ({ commands: branchingCommands(), activities: [], routes: [], diagnostics: [] })),
+      runExtensionCommand: vi.fn(async (_extensionId: string, invocationName: string, input?: unknown) => {
+        expect(invocationName).toBe("core.branching.fork");
+        expect((input as { argv?: string }).argv).toBe("2");
+        return { result: { prcAction: "openSession", session: forked, draftText: "second prompt", notice: "Forked session. The selected prompt is ready to edit." } };
+      }),
+      request: async <T,>(): Promise<T> => { throw new Error("/fork 2 should run through the branching command"); },
     } satisfies SessionDashboardApi;
 
     render(<SessionDashboard api={api} />);
     await screen.findByText("Original");
     fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Fork" })).toBeEnabled());
     fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/fork 2" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -897,7 +909,7 @@ describe("SessionDashboard", () => {
     expect(await screen.findByRole("button", { name: "Compact" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Tree" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Clone" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Fork" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Fork" })).toBeDisabled();
   });
 
   it("renames the active session via the inline form", async () => {

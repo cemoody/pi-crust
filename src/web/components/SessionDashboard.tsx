@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ExtensionUiRequest, ExtensionUiResponse, WireMessage } from "../../shared/protocol.js";
-import type { DashboardArtifact, DashboardMessage, DashboardToolDetails, ExtensionRegistryInfo, ExtensionSettingsResponse, ForkMessageOption, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
+import type { BranchCloneResult, BranchForkResult, BranchMessageOption, DashboardArtifact, DashboardMessage, DashboardToolDetails, ExtensionRegistryInfo, ExtensionSettingsResponse, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
 import { MessageTimeline, type TimelineMessage } from "./MessageTimeline.js";
 import { ModelPicker } from "./ModelPicker.js";
@@ -78,7 +78,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [promptErrorBySession, setPromptErrorBySession] = useState<Record<string, string | null>>({});
   const [extensionUiBySession, setExtensionUiBySession] = useState<Record<string, ExtensionUiRequest[]>>({});
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
-  const [forkMessages, setForkMessages] = useState<readonly ForkMessageOption[]>([]);
+  const [forkMessages, setForkMessages] = useState<readonly BranchMessageOption[]>([]);
   const [forkBusy, setForkBusy] = useState(false);
   const [forkError, setForkError] = useState<string | null>(null);
   const [draftSeedBySession, setDraftSeedBySession] = useState<Record<string, { readonly id: string; readonly value: string }>>({});
@@ -394,11 +394,9 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const commandSuggestions = useMemo(
     () => unique([
       "model", "settings", "tree", "compact", "session", "new", "clear",
-      ...(api.getForkMessages && api.forkSession ? ["fork"] : []),
-      ...(api.cloneSession ? ["clone"] : []),
       ...extensionSlashCommands,
     ]),
-    [api.cloneSession, api.forkSession, api.getForkMessages, extensionSlashCommands],
+    [extensionSlashCommands],
   );
   const activeActivity = view.startsWith("activity:")
     ? webActivities.find((activity) => activity.id === view.slice("activity:".length))
@@ -569,15 +567,15 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
 
   async function openForkDialog(argv = "") {
     if (!activeSession) return;
-    if (!api.getForkMessages || !api.forkSession) {
-      setNotice("This session adapter does not support /fork yet.");
+    if (!api.request) {
+      setNotice("The branching extension is not available.");
       return;
     }
     setForkBusy(true);
     setForkError(null);
     setForkDialogOpen(true);
     try {
-      const messages = await api.getForkMessages(activeSession.id);
+      const messages = await requestForkMessages(api, activeSession.id);
       setForkMessages(messages);
       const target = argv.trim();
       if (target) {
@@ -596,11 +594,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   }
 
   async function forkFromMessage(entryId: string) {
-    if (!activeSession || !api.forkSession) return;
+    if (!activeSession || !api.request) return;
     setForkBusy(true);
     setForkError(null);
     try {
-      const result = await api.forkSession(activeSession.id, entryId);
+      const result = await requestForkSession(api, activeSession.id, entryId);
       if (result.cancelled) {
         setNotice("Fork cancelled by extension.");
         return;
@@ -624,12 +622,12 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
 
   async function cloneActiveSession() {
     if (!activeSession) return;
-    if (!api.cloneSession) {
-      setNotice("This session adapter does not support /clone yet.");
+    if (!api.request) {
+      setNotice("The branching extension is not available.");
       return;
     }
     try {
-      const result = await api.cloneSession(activeSession.id);
+      const result = await requestCloneSession(api, activeSession.id);
       if (result.cancelled) {
         setNotice("Clone cancelled by extension.");
         return;
@@ -713,14 +711,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         return;
       default: {
         const extensionCommand = extensions.commands.find((command) => command.slashName === name);
-        if (!extensionCommand && name === "fork") {
-          await openForkDialog(argv);
-          return;
-        }
-        if (!extensionCommand && name === "clone") {
-          await cloneActiveSession();
-          return;
-        }
         if (extensionCommand && api.runExtensionCommand) {
           try {
             const response = await api.runExtensionCommand(extensionCommand.extensionId, extensionCommand.invocationName, {
@@ -968,13 +958,13 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                     <button type="button" className="action-icon" aria-label="Compact" title="Compact is not implemented in the web UI yet" disabled>
                       <CompactGlyph />
                     </button>
-                    <button type="button" className="action-icon" aria-label="Fork" title="Fork session from a previous message" onClick={() => void handleSlashCommand("fork", "")}>
+                    <button type="button" className="action-icon" aria-label="Fork" title="Fork session from a previous message" onClick={() => void handleSlashCommand("fork", "")} disabled={!hasExtensionSlashCommand("fork")}>
                       <ForkGlyph />
                     </button>
                     <button type="button" className="action-icon" aria-label="Tree" title="Tree is not implemented in the web UI yet" disabled>
                       <TreeGlyph />
                     </button>
-                    <button type="button" className="action-icon" aria-label="Clone" title="Clone session" onClick={() => void handleSlashCommand("clone", "")} disabled={!api.cloneSession && !hasExtensionSlashCommand("clone")}>
+                    <button type="button" className="action-icon" aria-label="Clone" title="Clone session" onClick={() => void handleSlashCommand("clone", "")} disabled={!hasExtensionSlashCommand("clone")}>
                       <CloneGlyph />
                     </button>
                     <span className="active-actions-sep" aria-hidden="true" />
@@ -1595,6 +1585,21 @@ function isSessionCardData(value: unknown): value is SessionCardData {
     && typeof value.lastActivity === "number";
 }
 
+async function requestForkMessages(api: SessionDashboardApi, sessionId: string): Promise<readonly BranchMessageOption[]> {
+  if (!api.request) throw new Error("The branching extension is not available.");
+  return api.request<readonly BranchMessageOption[]>(`/api/sessions/${encodeURIComponent(sessionId)}/fork-messages`);
+}
+
+async function requestForkSession(api: SessionDashboardApi, sessionId: string, entryId: string): Promise<BranchForkResult> {
+  if (!api.request) throw new Error("The branching extension is not available.");
+  return api.request<BranchForkResult>(`/api/sessions/${encodeURIComponent(sessionId)}/fork`, { method: "POST", body: { entryId } });
+}
+
+async function requestCloneSession(api: SessionDashboardApi, sessionId: string): Promise<BranchCloneResult> {
+  if (!api.request) throw new Error("The branching extension is not available.");
+  return api.request<BranchCloneResult>(`/api/sessions/${encodeURIComponent(sessionId)}/clone`, { method: "POST", body: {} });
+}
+
 function toPromptAttachment(attachment: ComposerAttachment): import("../api/session-api.js").PromptAttachment {
   return {
     type: attachment.type,
@@ -1608,7 +1613,7 @@ function basename(value: string): string {
   return value.split("/").filter(Boolean).at(-1) ?? value;
 }
 
-function resolveForkSelection(messages: readonly ForkMessageOption[], input: string): ForkMessageOption | undefined {
+function resolveForkSelection(messages: readonly BranchMessageOption[], input: string): BranchMessageOption | undefined {
   const maybeIndex = Number(input);
   if (Number.isInteger(maybeIndex) && maybeIndex >= 1 && maybeIndex <= messages.length) return messages[maybeIndex - 1];
   return messages.find((message) => message.entryId === input || message.entryId.startsWith(input));
