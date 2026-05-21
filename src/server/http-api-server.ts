@@ -105,6 +105,31 @@ async function resolveAppBranding(context: Pick<HttpApiServerContext, "extension
   return effectiveAppBranding(settings.appBranding, env);
 }
 
+function applyDottedSetting<T extends Record<string, unknown>>(base: T, key: string, value: unknown): Record<string, unknown> {
+  const segments = key.split(".");
+  // Deep-clone the relevant slice and assign at the leaf.
+  const next: Record<string, unknown> = { ...base };
+  let cursor: Record<string, unknown> = next;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const segment = segments[i]!;
+    const child = cursor[segment];
+    const cloned: Record<string, unknown> = (child && typeof child === "object" && !Array.isArray(child))
+      ? { ...(child as Record<string, unknown>) }
+      : {};
+    cursor[segment] = cloned;
+    cursor = cloned;
+  }
+  const leaf = segments[segments.length - 1]!;
+  if (value === undefined || value === null || value === "") {
+    delete cursor[leaf];
+  } else {
+    cursor[leaf] = value;
+  }
+  return next;
+}
+
+export { applyDottedSetting };
+
 function effectiveAppBranding(
   settings: PrcAppBrandingSettings | undefined,
   fallback: { readonly appName: string; readonly appIcon?: string } = resolveEnvAppBranding(process.env),
@@ -380,6 +405,27 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       : Object.fromEntries(Object.entries(settings).filter(([key]) => key !== "appBranding")) as PrcSettings;
     await writePrcSettings(context.extensionRuntime.configDir, next);
     return sendJson(res, 200, effectiveAppBranding(next.appBranding));
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/settings") {
+    if (!context.extensionRuntime) return sendJson(res, 400, { error: "settings are not configured" });
+    const body = await readJson(req) as { key?: unknown; value?: unknown };
+    if (typeof body.key !== "string" || body.key.trim().length === 0) {
+      return sendJson(res, 400, { error: "key must be a non-empty string" });
+    }
+    const key = body.key.trim();
+    if (!/^[a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*$/.test(key)) {
+      return sendJson(res, 400, { error: "key must be a dotted alphanumeric path (e.g. presentations.templateDirs)" });
+    }
+    const settings = await readPrcSettings(context.extensionRuntime.configDir);
+    const next = applyDottedSetting(settings as unknown as Record<string, unknown>, key, body.value);
+    await writePrcSettings(context.extensionRuntime.configDir, next as PrcSettings);
+    const reload = await context.extensionRuntime.reload();
+    return sendJson(res, reload.applied ? 200 : 400, {
+      settings: next,
+      ...reload,
+      extensions: serializeExtensions(context.extensionRuntime.current),
+    });
   }
 
   if (req.method === "POST" && url.pathname === "/api/extensions/reload") {

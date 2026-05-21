@@ -32,7 +32,7 @@ export interface ConfigurationPanelProps {
   readonly onModelSelect: (provider: string, modelId: string) => void;
   readonly onThinkingSelect: (level: string) => void;
   readonly onToolToggle: (name: string, enabled: boolean) => void;
-  readonly onSaveSetting: (key: string, value: string) => void;
+  readonly onSaveSetting: (key: string, value: unknown) => void;
   readonly onReloadResources: () => void;
   readonly onPackageInstall: (source: string) => void;
   readonly onPackageRemove: (source: string) => void;
@@ -54,10 +54,10 @@ function PresentationTemplateDirs({
   onSaveSetting,
 }: {
   readonly templateDirs: readonly string[];
-  readonly onSaveSetting: (key: string, value: string) => void;
+  readonly onSaveSetting: (key: string, value: unknown) => void;
 }) {
   const [draft, setDraft] = useState("");
-  const save = (next: readonly string[]) => onSaveSetting("presentations.templateDirs", JSON.stringify(next));
+  const save = (next: readonly string[]) => onSaveSetting("presentations.templateDirs", next);
   const add = () => {
     const trimmed = draft.trim();
     if (!trimmed) return;

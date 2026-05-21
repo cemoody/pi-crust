@@ -117,9 +117,9 @@ describe("presentation template directories section", () => {
     const section = screen.getByLabelText("Presentation template directories");
     expect(section.textContent).toContain("/a/b");
     fireEvent.click(screen.getByRole("button", { name: "Remove /a/b" }));
-    expect(onSaveSetting).toHaveBeenLastCalledWith("presentations.templateDirs", JSON.stringify([]));
+    expect(onSaveSetting).toHaveBeenLastCalledWith("presentations.templateDirs", []);
     fireEvent.change(screen.getByLabelText("New template directory"), { target: { value: "/x/y" } });
     fireEvent.click(screen.getByRole("button", { name: "Add directory" }));
-    expect(onSaveSetting).toHaveBeenLastCalledWith("presentations.templateDirs", JSON.stringify(["/a/b","/x/y"]));
+    expect(onSaveSetting).toHaveBeenLastCalledWith("presentations.templateDirs", ["/a/b","/x/y"]);
   });
 });

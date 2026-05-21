@@ -43,6 +43,10 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     return request<AppBrandingInfo>("/api/settings/branding", { method: "POST", body: branding });
   }
 
+  async setSetting(key: string, value: unknown): Promise<ExtensionReloadResponse> {
+    return request<ExtensionReloadResponse>("/api/settings", { method: "POST", body: { key, value } });
+  }
+
   async installExtensionPackage(source: string): Promise<ExtensionReloadResponse> {
     return request<ExtensionReloadResponse>("/api/extensions/packages", { method: "POST", body: { source } });
   }
