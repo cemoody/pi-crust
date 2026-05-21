@@ -9,6 +9,10 @@ export interface PresentationDeck {
   readonly confidential?: string;
   readonly logo?: PresentationImage;
   readonly slides: readonly PresentationSlide[];
+  /** Optional template-pack id (e.g. "brainco"). When set, slides that
+   *  specify a `layout` are pre-rendered by that pack via the host
+   *  extension's template-pack API and injected via `slide.html`. */
+  readonly templatePack?: string;
 }
 
 export interface PresentationSlide {
@@ -33,6 +37,12 @@ export interface PresentationSlide {
    * brand packs) that ship their own calibrated layouts.
    */
   readonly html?: string;
+  /** Optional layout key inside the deck's templatePack (e.g. "title-light").
+   *  Resolved to HTML at render time; ignored when slide.html is already
+   *  provided. */
+  readonly layout?: string;
+  /** Slot values for the chosen layout (e.g. { primary: "Q4", secondary: "..." }). */
+  readonly slots?: Readonly<Record<string, string | number | null | undefined>>;
 }
 
 export interface PresentationBullet {

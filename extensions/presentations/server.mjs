@@ -30,6 +30,15 @@ export default async function activate(prc) {
   // available immediately after activate() resolves).
   await rescanTemplatePacks().catch(() => undefined);
 
+  // Watch each configured dir for pack.json / render.mjs changes and rescan.
+  const watchers = [];
+  const settingsWatch = await startSettingsWatcher();
+  if (settingsWatch) watchers.push(settingsWatch);
+  for (const pack of packs.values()) {
+    const w = await startPackWatcher(pack.dir);
+    if (w) watchers.push(w);
+  }
+
   // ------------------------------------------------------------------
   // Existing per-session presentation route (artifact-style download).
   // ------------------------------------------------------------------
@@ -160,6 +169,24 @@ export default async function activate(prc) {
     };
   }
 
+  async function startSettingsWatcher() {
+    const configDir = configDirOverride
+      ?? process.env.PI_REMOTE_CONFIG_DIR
+      ?? path.join(os.homedir(), '.pi-remote-control');
+    const settingsPath = path.join(configDir, 'settings.json');
+    try {
+      const watcher = (await import('node:fs')).watch(settingsPath, { persistent: false }, debounce(() => { void rescanTemplatePacks().catch(() => undefined); }, 200));
+      return { close: () => watcher.close() };
+    } catch { return null; }
+  }
+
+  async function startPackWatcher(dir) {
+    try {
+      const watcher = (await import('node:fs')).watch(dir, { persistent: false, recursive: false }, debounce(() => { void rescanTemplatePacks().catch(() => undefined); }, 200));
+      return { close: () => watcher.close() };
+    } catch { return null; }
+  }
+
   async function readTemplateDirsFromSettings() {
     const configDir = configDirOverride
       ?? process.env.PI_REMOTE_CONFIG_DIR
@@ -175,8 +202,22 @@ export default async function activate(prc) {
     }
     return [];
   }
+  // Return a dispose() so the extension host can tear down watchers on reload.
+  return {
+    dispose: () => {
+      for (const w of watchers) { try { w.close(); } catch { /* ignore */ } }
+      watchers.length = 0;
+    },
+  };
 } // end activate()
 
+function debounce(fn, ms) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
 
 // --------------------------------------------------------------------
 // Module-scope helpers (pure / stateless)

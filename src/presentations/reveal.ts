@@ -5,7 +5,18 @@ export interface CompilePresentationOptions {
   readonly startSlide?: number;
   readonly title?: string;
   readonly assetResolver?: PresentationAssetResolver;
+  /** Optional resolver for template-pack layouts. When the deck has a
+   *  `templatePack` and a slide has a `layout`, the compiler calls this
+   *  function with (packId, layoutKey, slots) and uses the returned HTML
+   *  as the slide body (equivalent to setting `slide.html`). */
+  readonly templatePackResolver?: TemplatePackResolver;
 }
+
+export type TemplatePackResolver = (
+  packId: string,
+  layoutKey: string,
+  slots: Record<string, string | number | null | undefined>,
+) => string | Promise<string>;
 
 export function compileRevealHtml(deck: PresentationDeck, options: CompilePresentationOptions = {}): string {
   const start = Math.max(0, Math.min(deck.slides.length - 1, options.startSlide ?? 0));
@@ -30,6 +41,34 @@ ${deck.slides.map((slide, index) => renderSlide(deck, slide, index, false, optio
 <script>${presentationScript()}</script>
 </body>
 </html>`;
+}
+
+/**
+ * Async compile path that resolves template-pack layouts before rendering.
+ * Use this when the deck has `templatePack` and slides have `layout`.
+ */
+export async function compileRevealHtmlAsync(
+  deck: PresentationDeck,
+  options: CompilePresentationOptions = {},
+): Promise<string> {
+  const resolved = await resolveLayoutHtml(deck, options.templatePackResolver);
+  return compileRevealHtml(resolved, options);
+}
+
+async function resolveLayoutHtml(
+  deck: PresentationDeck,
+  resolver: TemplatePackResolver | undefined,
+): Promise<PresentationDeck> {
+  if (!resolver || !deck.templatePack) return deck;
+  const out = await Promise.all(
+    deck.slides.map(async (slide, index) => {
+      if (slide.html || !slide.layout) return slide;
+      const slots = { page: index + 1, ...(slide.slots ?? {}) } as Record<string, string | number | null | undefined>;
+      const html = await resolver(deck.templatePack as string, slide.layout, slots);
+      return { ...slide, html };
+    }),
+  );
+  return { ...deck, slides: out };
 }
 
 export function renderStaticSlideHtml(deck: PresentationDeck, slideIndex = 0, options: CompilePresentationOptions = {}): string {

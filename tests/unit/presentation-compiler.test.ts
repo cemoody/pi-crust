@@ -56,3 +56,70 @@ describe("html passthrough slides", () => {
     expect(html).toContain("data-template=\"team-grid\"");
   });
 });
+
+describe("templatePack-aware compile", () => {
+  it("compileRevealHtmlAsync resolves slide.layout via the templatePackResolver", async () => {
+    const { compileRevealHtmlAsync } = await import("../../src/presentations/reveal.js");
+    const packDeck = {
+      title: "Pack deck",
+      templatePack: "brainco",
+      slides: [
+        { layout: "title-light", slots: { primary: "Q4 Strategy" } },
+        { layout: "contents",    slots: { item1Label: "Intro" } },
+      ],
+    } as const;
+
+    const calls: Array<{ packId: string; layout: string; slots: Record<string, unknown> }> = [];
+    const resolver = async (packId: string, layout: string, slots: Record<string, unknown>) => {
+      calls.push({ packId, layout, slots });
+      return `<div class="${layout}">${slots.primary ?? slots.item1Label ?? "?"}</div>`;
+    };
+    const html = await compileRevealHtmlAsync(packDeck, { templatePackResolver: resolver });
+
+    expect(calls.length).toBe(2);
+    expect(calls[0]?.packId).toBe("brainco");
+    expect(calls[0]?.layout).toBe("title-light");
+    expect(calls[0]?.slots.page).toBe(1);
+    expect(calls[1]?.slots.page).toBe(2);
+    expect(html).toContain('<div class="title-light">Q4 Strategy</div>');
+    expect(html).toContain('<div class="contents">Intro</div>');
+  });
+});
+
+describe("templatePack-aware compile with real brainco pack", () => {
+  it("compileRevealHtmlAsync + brainco renderSlide produces a 2-slide BrainCo deck", async () => {
+    const { compileRevealHtmlAsync } = await import("../../src/presentations/reveal.js");
+    let renderBrainCoSlide: ((k: string, s?: Record<string, unknown>) => Promise<string>) | null = null;
+    try {
+      const url = "/home/coder/brainco-templates/render.mjs";
+      // Wrap in eval to keep tsc from statically resolving the path; the
+      // pack lives outside the repo and isn't present on CI.
+      // eslint-disable-next-line no-eval
+      const dynamicImport = eval("(p) => import(p)") as (p: string) => Promise<{ renderBrainCoSlide?: typeof renderBrainCoSlide; renderSlide?: typeof renderBrainCoSlide }>;
+      const mod = await dynamicImport(url);
+      renderBrainCoSlide = mod.renderBrainCoSlide ?? mod.renderSlide ?? null;
+    } catch { /* pack not present on CI; skip */ }
+    if (!renderBrainCoSlide) return;
+
+    const packDeck = {
+      title: "Q4 Strategy",
+      templatePack: "brainco",
+      slides: [
+        { layout: "title-light", slots: { primary: "Q4 Strategy", secondary: "What's next", date: "Nov 2025", client: "ACME" } },
+        { layout: "contents",    slots: { item1Label: "Intro", item2Label: "Plan" } },
+      ],
+    } as const;
+
+    const html = await compileRevealHtmlAsync(packDeck, {
+      templatePackResolver: async (_pack, layout, slots) => renderBrainCoSlide!(layout, slots),
+    });
+
+    expect(html).toContain("Q4 Strategy");
+    expect(html).toContain("What's next");
+    expect(html).toContain("ACME");
+    expect(html).toContain(">Intro<");
+    expect(html).toContain(">Plan<");
+    expect(html).toContain('<p class="page">1</p>');
+    expect(html).toContain('<p class="page">2</p>');
+  });
+});
