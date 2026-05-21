@@ -673,9 +673,20 @@ function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: un
     }
   }, [deckInput]);
   const deck = parsed.deck;
-  const html = useMemo(() => deck ? compileRevealHtml(deck) : "", [deck]);
-  const previewHtml = useMemo(() => deck ? compileRevealHtml(deck, { startSlide: 0, title: `${deck.title} preview` }) : "", [deck]);
-  const markdown = useMemo(() => deck ? presentationFallbackMarkdown(deck) : "", [deck]);
+  const compiled = useMemo((): { html: string; previewHtml: string; markdown: string; error?: string } => {
+    if (!deck) return { html: "", previewHtml: "", markdown: "" };
+    try {
+      return {
+        html: compileRevealHtml(deck),
+        previewHtml: compileRevealHtml(deck, { startSlide: 0, title: `${deck.title} preview` }),
+        markdown: presentationFallbackMarkdown(deck),
+      };
+    } catch (error) {
+      return { html: "", previewHtml: "", markdown: presentationFallbackMarkdown(deck), error: error instanceof Error ? error.message : String(error) };
+    }
+  }, [deck]);
+  const { html, previewHtml, markdown } = compiled;
+  const compileError = compiled.error;
   const downloadUrl = useMemo(() => html ? URL.createObjectURL(new Blob([html], { type: "text/html" })) : "", [html]);
   useEffect(() => () => { if (downloadUrl) URL.revokeObjectURL(downloadUrl); }, [downloadUrl]);
 
@@ -684,6 +695,19 @@ function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: un
       <section className="artifact-preview artifact-data" role="alert">
         <strong>Invalid presentation</strong>
         <pre>{parsed.error}</pre>
+      </section>
+    );
+  }
+
+  if (compileError) {
+    return (
+      <section className="artifact-preview artifact-data" data-testid="artifact-presentation" role="alert" aria-label={deck.title || title}>
+        <strong>Could not render presentation preview</strong>
+        <pre>{compileError}</pre>
+        <details>
+          <summary>Fallback outline</summary>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+        </details>
       </section>
     );
   }

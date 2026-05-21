@@ -47,4 +47,30 @@ describe("presentation artifact rendering", () => {
     expect(screen.queryByTestId("artifact-presentation")).not.toBeInTheDocument();
     expect(screen.getByTestId("artifact-fallback")).toHaveTextContent("Presentation fallback");
   });
+
+  it("renders an inline error card (and does NOT throw) when a slide image has an unsafe absolute path", () => {
+    const unsafeMessage = {
+      ...presentationMessage,
+      id: "m-unsafe",
+      artifact: {
+        ...presentationMessage.artifact,
+        artifacts: [{
+          mime: PRESENTATION_MIME,
+          spec: {
+            title: "Brainco Signals",
+            slides: [
+              { title: "Cover", image: "/tmp/brainco_signals.png" },
+            ],
+          },
+        }],
+      },
+    };
+
+    // Before the fix this throws synchronously out of compileRevealHtml and
+    // blanks the whole React tree. After the fix it renders a localized
+    // alert card with the error message and a fallback outline.
+    expect(() => render(<MessageTimeline messages={[unsafeMessage]} />)).not.toThrow();
+    expect(screen.getByTestId("artifact-presentation")).toHaveAttribute("role", "alert");
+    expect(screen.getByText(/Could not render presentation preview/)).toBeInTheDocument();
+  });
 });
