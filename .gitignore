@@ -12,3 +12,5 @@ coverage/
 .tmp/
 test-results/
 playwright-report/
+logs/
+extension-framework-refactor-plan.md

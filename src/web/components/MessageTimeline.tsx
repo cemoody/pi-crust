@@ -435,21 +435,27 @@ function OrphanToolResult({ text }: { readonly text: string }) {
 }
 
 function ToolCard({ tool }: { readonly tool: TimelineToolDetails }) {
+  // Artifacts (slides, images, html, etc.) are the user-visible *output* of
+  // tool calls like show_presentation / show_artifact. Render them outside
+  // the collapsed <details> so they’re visible at a glance; the input
+  // args and raw text output stay inside the details for debugging.
   return (
-    <details className={`tool-card ${tool.status}`} aria-label={`tool ${tool.name}`}>
-      <summary>
-        <span className="tool-icon" aria-hidden="true">{toolIcon(tool.status)}</span>
-        <span className="tool-line">
-          <strong>{verbForName(tool.name)}</strong>
-          {hasDedicatedVerb(tool.name) ? null : <> <code>{tool.name}</code></>}
-          {summarizeArgs(tool.args) ? <> · <span className="tool-args">{summarizeArgs(tool.args)}</span></> : null}
-        </span>
-        <span className="tool-status-text">{statusLabel(tool)}</span>
-      </summary>
-      <ToolInputBlock tool={tool} />
-      {tool.output ? <pre className="tool-output">{tool.output}</pre> : null}
+    <div className="tool-card-wrapper">
+      <details className={`tool-card ${tool.status}`} aria-label={`tool ${tool.name}`}>
+        <summary>
+          <span className="tool-icon" aria-hidden="true">{toolIcon(tool.status)}</span>
+          <span className="tool-line">
+            <strong>{verbForName(tool.name)}</strong>
+            {hasDedicatedVerb(tool.name) ? null : <> <code>{tool.name}</code></>}
+            {summarizeArgs(tool.args) ? <> · <span className="tool-args">{summarizeArgs(tool.args)}</span></> : null}
+          </span>
+          <span className="tool-status-text">{statusLabel(tool)}</span>
+        </summary>
+        <ToolInputBlock tool={tool} />
+        {tool.output ? <pre className="tool-output">{tool.output}</pre> : null}
+      </details>
       {tool.artifact ? <ArtifactPreview artifact={tool.artifact} /> : null}
-    </details>
+    </div>
   );
 }
 

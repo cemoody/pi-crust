@@ -24,3 +24,27 @@ test("presentation artifact renders preview and present modal", async ({ page })
   await page.getByRole("button", { name: "Close presentation" }).click();
   await expect(page.getByRole("dialog", { name: /Executive Signal Brief presentation/ })).toHaveCount(0);
 });
+
+test("tool-result presentation artifact renders inline after page reload", async ({ page }) => {
+  // Reproduces the bug where /api/sessions/:id/messages dropped the tool
+  // result's details.piRemoteControlArtifact, leaving the WUI showing raw
+  // JSON instead of the inline slide preview after a page reload.
+  await page.goto("/");
+  await page.getByRole("button", { name: /^Tool presentation reload\b/ }).click();
+
+  // Card should render from the persisted /messages payload alone (no
+  // live SSE involved here — the WUI is reading the mock-session JSON
+  // through the API, exactly like a real page reload).
+  await expect(page.locator('[data-testid="artifact-presentation"]')).toBeVisible();
+  await expect(page.locator('[data-testid="artifact-presentation-preview"]')).toBeVisible();
+  // The deck title appears in the card header (outside the iframe).
+  await expect(
+    page.locator('[data-testid="artifact-presentation"] .presentation-card-header').getByText("Tool-result Signal Brief"),
+  ).toBeVisible();
+  await expect(page.locator('[data-testid="artifact-presentation"]').getByText("2 slides")).toBeVisible();
+
+  // Spot-check: opening the Present modal still works.
+  await page.getByRole("button", { name: "Present deck" }).click();
+  await expect(page.getByRole("dialog", { name: /Tool-result Signal Brief presentation/ })).toBeVisible();
+  await page.getByRole("button", { name: "Close presentation" }).click();
+});

@@ -182,3 +182,54 @@ await fs.writeFile(presentationSessionFile, JSON.stringify({
   lastActivity: Date.now(),
 }, null, 2) + '\n');
 console.log(`seeded ${presentationSessionFile}`);
+
+// Fifth seeded session: show_presentation tool result with artifact attached.
+// Reproduces the bug where /api/sessions/:id/messages used to drop the
+// tool result's details.piRemoteControlArtifact, leaving the WUI showing
+// raw JSON instead of the inline slide preview after a page reload.
+const toolPresId = 'seeded-session-tool-presentation';
+const toolPresFile = path.join(root, '0000000000004_seeded-session-tool-presentation.mock-session.json');
+const toolPresDeck = {
+  title: 'Tool-result Signal Brief',
+  subtitle: 'Pi tool show_presentation flow',
+  theme: 'light',
+  slides: [
+    { template: 'title', title: 'Tool-result Signal Brief', subtitle: 'Show_presentation persistence' },
+    { template: 'title-bullets', title: 'Why this test exists', bullets: [
+      'Tool emits details.piRemoteControlArtifact in result',
+      'Server propagates it to message.tool.artifact',
+      'WUI renders the same card after a page reload',
+    ] },
+  ],
+};
+await fs.writeFile(toolPresFile, JSON.stringify({
+  id: toolPresId,
+  cwd,
+  sessionFile: toolPresFile,
+  sessionName: 'Tool presentation reload',
+  messages: [
+    { role: 'user', content: 'Make a tool-result deck', timestamp: 1700000005000 },
+    {
+      role: 'tool',
+      content: 'Displayed presentation deck: Tool-result Signal Brief (2 slides).',
+      timestamp: 1700000005100,
+      tool: {
+        id: 'call_tool_pres',
+        name: 'show_presentation',
+        args: { title: toolPresDeck.title, slides: toolPresDeck.slides },
+        status: 'success',
+        output: 'Displayed presentation deck: Tool-result Signal Brief (2 slides).',
+        startedAt: 1700000005050,
+        completedAt: 1700000005100,
+        artifact: {
+          version: 1,
+          kind: 'presentation',
+          title: toolPresDeck.title,
+          data: toolPresDeck,
+        },
+      },
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${toolPresFile}`);

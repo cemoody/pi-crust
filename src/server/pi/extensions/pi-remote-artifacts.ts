@@ -121,6 +121,31 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "list_presentation_templates",
+    label: "List Presentation Templates",
+    description: "List every template pack configured in PRC and the layout keys each pack exposes. Use this before authoring a deck so you know which (templatePack, layout) values are valid. Returns { packs: [{ id, name, version?, dir, layouts: string[] }] }.",
+    promptSnippet: "list_presentation_templates lists template packs registered via presentations.templateDirs (e.g. brainco). Call before show_presentation when authoring brand-template decks.",
+    promptGuidelines: [
+      "Use list_presentation_templates whenever the user asks for a slide deck and you don't already know which template packs / layouts exist.",
+      "Pick a layout key from the returned list and pass it as `layout` on each slide in show_presentation, along with the matching `templatePack` on the deck.",
+      "If the list is empty, fall back to the generic deck schema in show_presentation (no templatePack, slides use template/title/bullets/etc.).",
+    ],
+    parameters: Type.Object({}),
+    async execute() {
+      const apiBase = resolvePiRemoteApiBase();
+      const result = await getJson<{ packs?: Array<Record<string, unknown>> }>(`${apiBase}/api/presentations/templates`);
+      const packs = Array.isArray(result?.packs) ? result.packs : [];
+      const summary = packs.length === 0
+        ? "No template packs are configured. Add a directory via presentations.templateDirs in Settings, or author with the generic deck schema."
+        : packs.map((p) => `${p.id ?? "?"}: ${(p.layouts as readonly unknown[] | undefined)?.length ?? 0} layout(s)`).join("; ");
+      return {
+        content: [{ type: "text", text: `Template packs available — ${summary}` }],
+        details: { packs },
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "spawn_prc_session",
     label: "Spawn PRC Session",
     description: "Spawn a new Pi Remote Control session and kick it off with a prompt. Use this to delegate independent work to another visible PRC session.",
@@ -195,6 +220,19 @@ function resolvePiRemoteUiBase(apiBase: string): string {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+async function getJson<T = unknown>(url: string): Promise<T> {
+  const response = await fetch(url, { method: "GET", headers: { "Accept": "application/json" } });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : undefined;
+  if (!response.ok) {
+    const message = typeof data === "object" && data !== null && "error" in data
+      ? String((data as { error: unknown }).error)
+      : `HTTP ${response.status}`;
+    throw new Error(`GET ${url} failed: ${message}`);
+  }
+  return data as T;
 }
 
 async function postJson<T = unknown>(url: string, body: unknown): Promise<T> {

@@ -1192,6 +1192,10 @@
   width: 100%;
   margin: 0 auto;
   color: var(--text-secondary);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 32px;
 }
 .extension-activity-body h3 {
   margin: 20px 0 8px;
@@ -1283,6 +1287,23 @@
   object-fit: contain;
 }
 .branding-icon-empty,
+.settings-subhead {
+  margin: 18px 0 6px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+
+.settings-empty {
+  margin: 4px 0 8px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
 .settings-help {
   color: var(--text-secondary);
   font-size: 12px;

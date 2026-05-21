@@ -980,6 +980,7 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
     if (role === "toolResult") {
       const output = contentText(message.content);
       const toolCallId = String(message.toolCallId ?? message.id ?? "");
+      const artifact = extractToolResultArtifact(message.details);
       const index = toolCallIndexes.get(toolCallId);
       if (index !== undefined) {
         const previous = result[index];
@@ -993,6 +994,7 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
               status: message.isError ? "error" : "success",
               output,
               completedAt: timestamp,
+              ...(artifact === undefined ? {} : { artifact }),
             },
           };
           continue;
@@ -1007,6 +1009,20 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
 
 function contentText(content: unknown): string {
   return contentTextAndImages(content).text;
+}
+
+/**
+ * Pull `details.piRemoteControlArtifact` (if present) out of a toolResult
+ * message's persisted details. Used so that artifacts attached to tool
+ * results (show_presentation, show_artifact, etc.) survive a /messages
+ * fetch and re-render correctly after a page reload.
+ */
+function extractToolResultArtifact(details: unknown): unknown {
+  if (!details || typeof details !== "object") return undefined;
+  const value = (details as { piRemoteControlArtifact?: unknown }).piRemoteControlArtifact;
+  if (!value || typeof value !== "object") return undefined;
+  const kind = (value as { kind?: unknown }).kind;
+  return typeof kind === "string" ? value : undefined;
 }
 
 function contentTextAndImages(content: unknown): { text: string; images: NonNullable<SessionMessage["images"]> } {

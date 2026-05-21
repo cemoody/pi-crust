@@ -48,4 +48,30 @@ describe("Pi presentation tool extension", () => {
 
     expect(result.details.piRemoteControlArtifact).toMatchObject({ kind: "presentation", title: "Deck", data: deck });
   });
+
+  it("registers list_presentation_templates that calls the /api/presentations/templates route", async () => {
+    const tools: RegisteredTool[] = [];
+    piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
+    const tool = tools.find((candidate) => candidate.name === "list_presentation_templates");
+    expect(tool).toBeDefined();
+
+    const fetched: string[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      fetched.push(url);
+      return new Response(JSON.stringify({ packs: [
+        { id: "brainco", name: "BrainCo", version: "0.1.0", dir: "/tmp/brainco", layouts: ["title-light", "contents"] },
+      ] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      process.env.PI_REMOTE_API_BASE = "http://127.0.0.1:9999";
+      const result = await tool!.execute("toolCallId", {}) as { content: { text: string }[]; details: { packs: { id: string }[] } };
+      expect(fetched).toContain("http://127.0.0.1:9999/api/presentations/templates");
+      expect(result.details.packs[0]?.id).toBe("brainco");
+      expect(result.content[0]?.text).toMatch(/brainco: 2 layout/);
+    } finally {
+      globalThis.fetch = original;
+      delete process.env.PI_REMOTE_API_BASE;
+    }
+  });
 });
