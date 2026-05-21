@@ -32,13 +32,63 @@ export interface ConfigurationPanelProps {
   readonly onModelSelect: (provider: string, modelId: string) => void;
   readonly onThinkingSelect: (level: string) => void;
   readonly onToolToggle: (name: string, enabled: boolean) => void;
-  readonly onSaveSetting: (key: string, value: string) => void;
+  readonly onSaveSetting: (key: string, value: unknown) => void;
   readonly onReloadResources: () => void;
   readonly onPackageInstall: (source: string) => void;
   readonly onPackageRemove: (source: string) => void;
   readonly onThemeSelect: (name: string) => void;
   readonly onExtensionToggle?: (id: string, enabled: boolean) => void;
   readonly onExtensionsReload?: () => void;
+}
+
+function getTemplateDirs(settings: Record<string, unknown>): readonly string[] {
+  const presentations = settings.presentations;
+  if (!presentations || typeof presentations !== "object") return [];
+  const dirs = (presentations as { templateDirs?: unknown }).templateDirs;
+  if (!Array.isArray(dirs)) return [];
+  return dirs.filter((d): d is string => typeof d === "string" && d.length > 0);
+}
+
+function PresentationTemplateDirs({
+  templateDirs,
+  onSaveSetting,
+}: {
+  readonly templateDirs: readonly string[];
+  readonly onSaveSetting: (key: string, value: unknown) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const save = (next: readonly string[]) => onSaveSetting("presentations.templateDirs", next);
+  const add = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    if (templateDirs.includes(trimmed)) { setDraft(""); return; }
+    save([...templateDirs, trimmed]);
+    setDraft("");
+  };
+  const remove = (dir: string) => save(templateDirs.filter((d) => d !== dir));
+  return (
+    <section aria-label="Presentation template directories">
+      <h3>Presentation templates</h3>
+      <p>Paths listed here are scanned by <code>core.presentations</code> for template packs. Each pack directory must contain a <code>pack.json</code> manifest and a <code>render.mjs</code> entry.</p>
+      <ul>
+        {templateDirs.length === 0 ? <li><em>No template directories configured.</em></li> : null}
+        {templateDirs.map((dir) => (
+          <li key={dir}>
+            <code>{dir}</code>{" "}
+            <button type="button" onClick={() => remove(dir)} aria-label={`Remove ${dir}`}>Remove</button>
+          </li>
+        ))}
+      </ul>
+      <input
+        aria-label="New template directory"
+        placeholder="/path/to/templates"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); add(); } }}
+      />
+      <button type="button" onClick={add}>Add directory</button>
+    </section>
+  );
 }
 
 export function ConfigurationPanel(props: ConfigurationPanelProps) {
@@ -98,6 +148,11 @@ export function ConfigurationPanel(props: ConfigurationPanelProps) {
         <input aria-label="Setting value" value={settingValue} onChange={(event) => setSettingValue(event.target.value)} />
         <button type="button" onClick={() => props.onSaveSetting(settingKey, settingValue)}>Save setting</button>
       </section>
+
+      <PresentationTemplateDirs
+        templateDirs={getTemplateDirs(props.settings)}
+        onSaveSetting={props.onSaveSetting}
+      />
 
       <section aria-label="Theme management">
         <h3>Themes</h3>

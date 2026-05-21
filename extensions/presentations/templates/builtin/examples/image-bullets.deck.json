@@ -1,0 +1,29 @@
+{
+  "title": "Starter image and bullets deck",
+  "subtitle": "Example plot narrative slide",
+  "theme": "light",
+  "confidential": "Confidential and Proprietary",
+  "slides": [
+    {
+      "template": "image-bullets",
+      "title": "Signals are moving in priority markets",
+      "subtitle": "Illustrative plot with supporting takeaways",
+      "bullets": [
+        {
+          "text": "Permit velocity improved",
+          "detail": "Southwest and Southeast branches recovered fastest."
+        },
+        {
+          "text": "Weather exposure shifted east",
+          "detail": "Near-term roofing demand risk is concentrated across coastal metros."
+        },
+        "Pricing pressure remains category-specific"
+      ],
+      "image": {
+        "src": "assets/sample-plot.svg",
+        "alt": "Sample signal trend plot"
+      },
+      "notes": "Use this layout when a chart or generated image needs concise executive interpretation."
+    }
+  ]
+}

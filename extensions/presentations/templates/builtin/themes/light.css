@@ -1,0 +1,10 @@
+/* Starter theme tokens for future template-pack loading. The current compiler
+   has built-in neutral defaults; this file documents the external
+   template-pack shape we will wire through Settings next. */
+:root {
+  --presentation-bg: #f9fafb;
+  --presentation-fg: #111827;
+  --presentation-muted: #6b7280;
+  --presentation-accent: #2563eb;
+  --presentation-card: rgba(255, 255, 255, 0.86);
+}

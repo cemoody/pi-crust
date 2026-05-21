@@ -1,0 +1,8 @@
+{
+  "id": "title",
+  "name": "Title slide",
+  "description": "Opening slide with primary title, subtitle, optional body, and standard footer.",
+  "requiredFields": ["title"],
+  "optionalFields": ["subtitle", "body", "client", "confidential"],
+  "example": "../examples/title.deck.json"
+}

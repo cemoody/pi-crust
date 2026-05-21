@@ -623,3 +623,105 @@
   color: var(--text-secondary);
   padding: 8px 4px;
 }
+
+.presentation-artifact {
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 90, 31, 0.06), rgba(255,255,255,0.72));
+}
+
+.presentation-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.presentation-card-header strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.presentation-card-header span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.presentation-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.presentation-actions button,
+.presentation-actions a {
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--white-000);
+  color: var(--text-primary);
+  padding: 5px 10px;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.presentation-actions button:hover,
+.presentation-actions a:hover { background: var(--gray-080); }
+
+.presentation-preview {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 260px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: #111;
+}
+
+.presentation-fallback-markdown { margin-top: 8px; font-size: 12px; color: var(--text-secondary); }
+.presentation-fallback-markdown summary { cursor: pointer; }
+
+.presentation-modal {
+  position: fixed;
+  inset: 18px;
+  z-index: 1000;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: #111;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0,0,0,.45);
+}
+
+.presentation-modal-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(17,24,39,.96);
+  color: white;
+}
+
+.presentation-modal-toolbar button {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.2);
+  background: rgba(255,255,255,.08);
+  color: white;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.presentation-modal iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #111;
+}

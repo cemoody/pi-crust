@@ -1,0 +1,22 @@
+{
+  "id": "builtin-presentations",
+  "name": "Built-in presentation templates",
+  "version": "0.1.0",
+  "description": "Starter templates for PRC presentation artifacts.",
+  "layouts": [
+    "title",
+    "image-bullets",
+    "bullets"
+  ],
+  "themes": [
+    "light"
+  ],
+  "assets": [
+    "sample-plot.svg"
+  ],
+  "examples": [
+    "title.deck.json",
+    "image-bullets.deck.json",
+    "bullets.deck.json"
+  ]
+}

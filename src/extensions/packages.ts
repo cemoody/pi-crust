@@ -6,6 +6,13 @@ export interface PrcSettings {
   readonly projectPackages?: readonly PrcPackageSetting[];
   readonly disabledExtensions?: readonly string[];
   readonly appBranding?: PrcAppBrandingSettings;
+  /** Configuration block consumed by the core.presentations extension. */
+  readonly presentations?: PrcPresentationsSettings;
+}
+
+export interface PrcPresentationsSettings {
+  /** Absolute or ~-prefixed paths to template-pack directories that the presentations extension should scan on activation. */
+  readonly templateDirs?: readonly string[];
 }
 
 export interface PrcAppBrandingSettings {

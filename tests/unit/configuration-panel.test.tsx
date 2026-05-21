@@ -91,3 +91,35 @@ describe("ConfigurationPanel", () => {
     expect(screen.getByLabelText("Changelog and versions")).toHaveTextContent("pi: 0.74.0");
   });
 });
+
+describe("presentation template directories section", () => {
+  it("lists existing dirs and saves additions as JSON", () => {
+    const onSaveSetting = vi.fn();
+    const handlers = {
+      onLogin: vi.fn(), onLogout: vi.fn(), onApiKey: vi.fn(), onModelSelect: vi.fn(), onThinkingSelect: vi.fn(),
+      onToolToggle: vi.fn(), onSaveSetting, onReloadResources: vi.fn(), onPackageInstall: vi.fn(),
+      onPackageRemove: vi.fn(), onThemeSelect: vi.fn(), onExtensionToggle: vi.fn(), onExtensionsReload: vi.fn(),
+    };
+    render(<ConfigurationPanel
+      authProviders={[]}
+      models={[]}
+      thinkingLevel="medium"
+      tools={[]}
+      settings={{ presentations: { templateDirs: ["/a/b"] } }}
+      resources={[]}
+      packages={[]}
+      themes={[]}
+      hotkeys={[]}
+      versions={[]}
+      extensions={[]}
+      {...handlers}
+    />);
+    const section = screen.getByLabelText("Presentation template directories");
+    expect(section.textContent).toContain("/a/b");
+    fireEvent.click(screen.getByRole("button", { name: "Remove /a/b" }));
+    expect(onSaveSetting).toHaveBeenLastCalledWith("presentations.templateDirs", []);
+    fireEvent.change(screen.getByLabelText("New template directory"), { target: { value: "/x/y" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add directory" }));
+    expect(onSaveSetting).toHaveBeenLastCalledWith("presentations.templateDirs", ["/a/b","/x/y"]);
+  });
+});

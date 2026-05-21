@@ -1,0 +1,8 @@
+{
+  "id": "image-bullets",
+  "name": "Image with bullet points",
+  "description": "Two-column slide with an image or plot on one side and concise bullet points on the other.",
+  "requiredFields": ["title", "image", "bullets"],
+  "optionalFields": ["subtitle", "body", "notes"],
+  "example": "../examples/image-bullets.deck.json"
+}

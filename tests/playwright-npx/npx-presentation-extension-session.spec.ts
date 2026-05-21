@@ -1,0 +1,152 @@
+import { expect, test } from "@playwright/test";
+import { spawn, type ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+
+test("npx-style fresh install can enable presentation artifact rendering for an existing session", async ({ page }) => {
+  test.setTimeout(180_000);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "prc-npx-presentation-e2e-"));
+  let server: ChildProcess | undefined;
+  try {
+    const tarball = await npmPack(root);
+    const home = path.join(root, "home");
+    const configDir = path.join(home, ".pi-remote-control");
+    const projectRoot = path.join(root, "project");
+    const sessionRoot = path.join(root, "sessions");
+    const extensionDir = path.join(root, "external-presentations");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.mkdir(sessionRoot, { recursive: true });
+    await copyPresentationsExtension(extensionDir);
+    await fs.writeFile(path.join(configDir, "settings.json"), `${JSON.stringify({ disabledExtensions: ["core.presentations", "core.branching", "core.schedule"] }, null, 2)}\n`, "utf8");
+    await writePresentationSession({ projectRoot, sessionRoot });
+
+    const port = await freePort();
+    const url = `http://127.0.0.1:${port}`;
+    server = spawn("npm", ["exec", "--yes", `--package=${tarball}`, "--", "pi-remote-control"], {
+      cwd: projectRoot,
+      detached: true,
+      env: {
+        ...process.env,
+        HOME: home,
+        PI_REMOTE_CONFIG_DIR: configDir,
+        PI_REMOTE_PROJECT_ROOT: projectRoot,
+        PI_REMOTE_SESSION_ROOT: sessionRoot,
+        PI_REMOTE_API_PORT: String(port),
+        PI_REMOTE_API_HOST: "127.0.0.1",
+        PI_REMOTE_USE_MOCK: "1",
+        PI_REMOTE_OPEN: "0",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const logs: string[] = [];
+    server.stdout?.on("data", (chunk) => logs.push(String(chunk)));
+    server.stderr?.on("data", (chunk) => logs.push(String(chunk)));
+    await waitForHttp(`${url}/api/health`, logs);
+
+    await page.goto(url);
+    await page.getByRole("button", { name: /^Presentation artifact session\b/ }).click();
+    await expect(page.getByText("Presentation fallback before extension install")).toBeVisible();
+    await expect(page.locator('[data-testid="artifact-presentation"]')).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByLabel("Extension package source").fill(extensionDir);
+    await page.getByRole("button", { name: "Install" }).click();
+    await expect(page.getByText("Extension installed and reloaded.")).toBeVisible();
+    await expect(page.getByText("dev.presentations")).toBeVisible();
+
+    await page.getByRole("button", { name: /^Presentation artifact session\b/ }).click();
+    await expect(page.locator('[data-testid="artifact-presentation"]')).toBeVisible();
+    await expect(page.getByRole("button", { name: "Present deck" })).toBeVisible();
+  } finally {
+    if (server?.pid) {
+      try { process.kill(-server.pid, "SIGTERM"); } catch { server.kill("SIGTERM"); }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try { process.kill(-server.pid, "SIGKILL"); } catch { /* already exited */ }
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+async function npmPack(root: string): Promise<string> {
+  const packDir = path.join(root, "pack");
+  await fs.mkdir(packDir, { recursive: true });
+  await run("npm", ["run", "build"], { cwd: repoRoot });
+  await run("npm", ["pack", "--pack-destination", packDir, "--silent"], { cwd: repoRoot });
+  const packed = (await fs.readdir(packDir)).find((file) => file.endsWith(".tgz"));
+  if (!packed) throw new Error("npm pack did not produce a tarball");
+  return path.join(packDir, packed);
+}
+
+async function copyPresentationsExtension(extensionDir: string): Promise<void> {
+  await fs.cp(path.join(repoRoot, "extensions", "presentations"), extensionDir, { recursive: true });
+  const pkgPath = path.join(extensionDir, "package.json");
+  const pkg = JSON.parse(await fs.readFile(pkgPath, "utf8"));
+  pkg.name = "dev.presentations";
+  await fs.writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+}
+
+async function writePresentationSession(input: { readonly projectRoot: string; readonly sessionRoot: string }): Promise<void> {
+  const sessionId = crypto.randomUUID();
+  const timestamp = Date.now();
+  const sessionFile = path.join(input.sessionRoot, `${timestamp}_${sessionId}.mock-session.json`);
+  await fs.writeFile(sessionFile, `${JSON.stringify({
+    id: sessionId,
+    cwd: input.projectRoot,
+    sessionFile,
+    sessionName: "Presentation artifact session",
+    lastActivity: timestamp + 2,
+    messages: [{ role: "user", content: "Show me a deck", timestamp }, {
+      role: "custom",
+      content: "Presentation generated by Pi.",
+      timestamp: timestamp + 1,
+      customType: "artifact",
+      details: {
+        version: 1,
+        artifactGroupId: "presentation-demo",
+        caption: "Presentation demo",
+        artifacts: [
+          { mime: "application/vnd.pi.presentation+json", spec: { title: "Installable Deck", slides: [{ title: "One" }, { title: "Two", bullets: ["A"] }] } },
+          { mime: "text/plain", text: "Presentation fallback before extension install" },
+        ],
+      },
+    }],
+  }, null, 2)}\n`, "utf8");
+}
+
+async function waitForHttp(url: string, logs: readonly string[]): Promise<void> {
+  const deadline = Date.now() + 120_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try { const response = await fetch(url); if (response.ok) return; lastError = new Error(`HTTP ${response.status}`); }
+    catch (error) { lastError = error; }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Timed out waiting for ${url}. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}\n${logs.join("")}`);
+}
+
+async function run(command: string, args: readonly string[], options: { cwd: string }): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, [...args], { cwd: options.cwd, stdio: "pipe" });
+    let output = "";
+    child.stdout?.on("data", (chunk) => { output += String(chunk); });
+    child.stderr?.on("data", (chunk) => { output += String(chunk); });
+    child.on("error", reject);
+    child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`${command} ${args.join(" ")} failed with ${code}\n${output}`)));
+  });
+}
+
+async function freePort(): Promise<number> {
+  const net = await import("node:net");
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => typeof address === "object" && address ? resolve(address.port) : reject(new Error("no address")));
+    });
+  });
+}

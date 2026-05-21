@@ -1,0 +1,24 @@
+{
+  "title": "Starter bullet deck",
+  "subtitle": "Example narrative slide",
+  "theme": "light",
+  "confidential": "Confidential and Proprietary",
+  "slides": [
+    {
+      "template": "bullets",
+      "title": "What changed this week",
+      "subtitle": "Short executive narrative",
+      "bullets": [
+        {
+          "text": "Demand signals strengthened",
+          "detail": "The strongest changes were concentrated in high-priority metros."
+        },
+        {
+          "text": "Operational focus remains narrow",
+          "detail": "The next step is to validate branch-level actions against sales capacity."
+        },
+        "Recommended path forward: pilot, measure, then scale."
+      ]
+    }
+  ]
+}

@@ -48,6 +48,7 @@ export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOpti
   const host = createPrcExtensionHost({
     ...(options.dataDir === undefined ? {} : { dataDir: options.dataDir }),
     ...(options.sessions === undefined ? {} : { sessions: options.sessions }),
+    configDir: options.configDir,
   });
   const env = options.env ?? process.env;
   if (options.noExtensions || env.PI_REMOTE_NO_EXTENSIONS === "1") return { host, diagnostics: [] };

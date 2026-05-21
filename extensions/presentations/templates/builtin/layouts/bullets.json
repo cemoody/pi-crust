@@ -1,0 +1,8 @@
+{
+  "id": "bullets",
+  "name": "Bullet points",
+  "description": "Simple narrative slide with a title and short bullet list.",
+  "requiredFields": ["title", "bullets"],
+  "optionalFields": ["subtitle", "body", "notes"],
+  "example": "../examples/bullets.deck.json"
+}

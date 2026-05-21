@@ -103,6 +103,8 @@ export interface PrcExtensionContext {
     registerView(view: PrcActivityViewContribution): Disposable;
   };
   readonly storage: PrcStorageApi;
+  /** PRC config dir for the current host (used by extensions that read settings.json). */
+  readonly configDir?: string;
   readonly jobs: {
     register(job: PrcJobContribution): Disposable;
   };

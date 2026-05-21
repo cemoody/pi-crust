@@ -1,0 +1,11 @@
+{
+  "id": "light",
+  "name": "Built-in light theme",
+  "css": "light.css",
+  "tokens": {
+    "background": "#f9fafb",
+    "foreground": "#111827",
+    "muted": "#6b7280",
+    "accent": "#2563eb"
+  }
+}

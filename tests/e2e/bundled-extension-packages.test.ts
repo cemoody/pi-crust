@@ -42,6 +42,27 @@ describe("bundled PRC extension packages", () => {
     expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });
 
+  it("serves presentation files from the bundled presentations extension", async () => {
+    const { baseUrl, home } = await startBundledServer(["presentations"]);
+    const session = await fetchJson<{ id: string; cwd: string }>(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: home.projectRoot }),
+    });
+    const presentationDir = path.join(home.projectRoot, ".pi", "presentations", session.id);
+    await fs.mkdir(presentationDir, { recursive: true });
+    await fs.writeFile(path.join(presentationDir, "deck.html"), "<!doctype html><title>Deck</title>");
+
+    await expect(fetchJson(`${baseUrl}/api/extensions`)).resolves.toMatchObject({
+      routes: expect.arrayContaining([{ extensionId: "core.presentations", method: "GET", path: "/api/sessions/:sessionId/presentations/:file", mount: "api" }]),
+    });
+    const response = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(session.id)}/presentations/deck.html`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    await expect(response.text()).resolves.toContain("Deck");
+  });
+
   it("serves fork and clone routes from the bundled branching extension", async () => {
     const { baseUrl, home } = await startBundledServer(["branching"]);
     const session = await fetchJson<{ id: string }>(`${baseUrl}/api/sessions`, {

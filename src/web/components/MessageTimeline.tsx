@@ -1,6 +1,8 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { PRESENTATION_MIME, coercePresentationDeck, presentationFallbackMarkdown, type PresentationDeck } from "../../presentations/schema.js";
+import { compileRevealHtml } from "../../presentations/reveal.js";
 import { copyTextToClipboard } from "../utils/clipboard.js";
 import "./message-timeline.css";
 
@@ -17,6 +19,7 @@ export interface TimelineArtifactRepresentation {
   readonly text?: string;
   readonly html?: string;
   readonly spec?: unknown;
+  readonly data?: unknown;
   readonly figure?: unknown;
   readonly src?: { readonly kind: "url"; readonly url: string } | { readonly kind: "inline"; readonly svg: string };
   readonly alt?: string;
@@ -40,7 +43,7 @@ export interface TimelineImage {
 
 export interface TimelineArtifact {
   readonly version?: number;
-  readonly kind: "image" | "html" | "markdown" | "json" | "table" | "vega-lite" | string;
+  readonly kind: "image" | "html" | "markdown" | "json" | "table" | "vega-lite" | "presentation" | string;
   readonly title?: string;
   readonly path?: string;
   readonly url?: string;
@@ -88,6 +91,7 @@ export interface MessageTimelineProps {
   readonly hideThinking?: boolean;
   readonly autoScroll?: boolean;
   readonly streaming?: boolean;
+  readonly enabledArtifactMimes?: readonly string[];
 }
 
 // Pixels: if the user is within this many pixels of the bottom, treat as
@@ -95,7 +99,7 @@ export interface MessageTimelineProps {
 // grow between scroll events while streaming.
 const SCROLL_PIN_THRESHOLD_PX = 80;
 
-export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false }: MessageTimelineProps) {
+export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false, enabledArtifactMimes }: MessageTimelineProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
@@ -167,7 +171,7 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
           const showFooter = !isLatest || !streaming;
           return (
             <div key={`turn-${turn.messages[0]?.id ?? turnIndex}`} className="timeline-turn">
-              {turn.messages.map((message) => renderMessage(message, hideThinking))}
+              {turn.messages.map((message) => renderMessage(message, hideThinking, enabledArtifactMimes))}
               {showFooter && turn.messages.length > 0 ? <TurnFooter turn={turn} /> : null}
             </div>
           );
@@ -189,7 +193,7 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
   );
 }
 
-function renderMessage(message: TimelineMessage, hideThinking: boolean) {
+function renderMessage(message: TimelineMessage, hideThinking: boolean, enabledArtifactMimes: readonly string[] | undefined) {
   if (message.role === "tool") {
     return message.tool
       ? <ToolCard key={message.id} tool={message.tool} />
@@ -216,7 +220,7 @@ function renderMessage(message: TimelineMessage, hideThinking: boolean) {
       ) : null}
 
       {isArtifact ? (
-        <ArtifactView artifact={message.artifact!} fallbackText={message.text} />
+        <ArtifactView artifact={message.artifact!} fallbackText={message.text} enabledArtifactMimes={enabledArtifactMimes} />
       ) : (
         <div className="message-bubble">
           <MarkdownLite text={message.text} />
@@ -547,6 +551,9 @@ function ArtifactPreview({ artifact }: { readonly artifact: TimelineArtifact }) 
       </section>
     );
   }
+  if (artifact.kind === "presentation" && artifact.data) {
+    return <PresentationArtifactCard deckInput={artifact.data} title={title} />;
+  }
   return <ArtifactFallback artifact={artifact} />;
 }
 
@@ -567,12 +574,14 @@ function ArtifactFallback({ artifact }: { readonly artifact: TimelineArtifact })
 function ArtifactView({
   artifact,
   fallbackText,
+  enabledArtifactMimes,
 }: {
   readonly artifact: TimelineArtifactDetails;
   readonly fallbackText: string;
+  readonly enabledArtifactMimes: readonly string[] | undefined;
 }) {
   const caption = artifact.caption;
-  const rendered = pickRenderableRepresentation(artifact.artifacts);
+  const rendered = pickRenderableRepresentation(artifact.artifacts, enabledArtifactMimes);
 
   return (
     <figure className="artifact-view" aria-label={caption ?? "Artifact"}>
@@ -584,7 +593,9 @@ function ArtifactView({
 
 function pickRenderableRepresentation(
   reps: readonly TimelineArtifactRepresentation[],
+  enabledArtifactMimes?: readonly string[],
 ): React.ReactNode | null {
+  const isEnabled = (mime: string) => enabledArtifactMimes === undefined || enabledArtifactMimes.includes(mime);
   for (const rep of reps) {
     const mime = rep.mime;
     if (mime === VEGA_LITE_MIME && rep.spec !== undefined) {
@@ -624,6 +635,9 @@ function pickRenderableRepresentation(
         </section>
       );
     }
+    if (mime === PRESENTATION_MIME && isEnabled(PRESENTATION_MIME) && (rep.spec !== undefined || rep.data !== undefined)) {
+      return <PresentationArtifactCard deckInput={rep.spec ?? rep.data} title="Presentation" />;
+    }
     if (mime === "text/html" && typeof rep.html === "string") {
       return (
         <iframe
@@ -641,6 +655,76 @@ function pickRenderableRepresentation(
     }
   }
   return null;
+}
+
+function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: unknown; readonly title: string }) {
+  const [open, setOpen] = useState(false);
+  const parsed = useMemo((): { deck?: PresentationDeck; error?: string } => {
+    try {
+      return { deck: coercePresentationDeck(deckInput) };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  }, [deckInput]);
+  const deck = parsed.deck;
+  const html = useMemo(() => deck ? compileRevealHtml(deck) : "", [deck]);
+  const previewHtml = useMemo(() => deck ? compileRevealHtml(deck, { startSlide: 0, title: `${deck.title} preview` }) : "", [deck]);
+  const markdown = useMemo(() => deck ? presentationFallbackMarkdown(deck) : "", [deck]);
+  const downloadUrl = useMemo(() => html ? URL.createObjectURL(new Blob([html], { type: "text/html" })) : "", [html]);
+  useEffect(() => () => { if (downloadUrl) URL.revokeObjectURL(downloadUrl); }, [downloadUrl]);
+
+  if (!deck) {
+    return (
+      <section className="artifact-preview artifact-data" role="alert">
+        <strong>Invalid presentation</strong>
+        <pre>{parsed.error}</pre>
+      </section>
+    );
+  }
+
+  return (
+    <section className="presentation-artifact" data-testid="artifact-presentation" aria-label={deck.title || title}>
+      <div className="presentation-card-header">
+        <div>
+          <strong>{deck.title || title}</strong>
+          <span>{deck.slides.length} slide{deck.slides.length === 1 ? "" : "s"}</span>
+        </div>
+        <div className="presentation-actions">
+          <button type="button" onClick={() => setOpen(true)}>Present deck</button>
+          <a href={downloadUrl} download={`${slugify(deck.title || title)}.html`}>Download HTML</a>
+        </div>
+      </div>
+      <iframe
+        className="presentation-preview"
+        data-testid="artifact-presentation-preview"
+        sandbox="allow-scripts"
+        srcDoc={previewHtml}
+        title={`${deck.title} preview`}
+      />
+      <details className="presentation-fallback-markdown">
+        <summary>Fallback outline</summary>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+      </details>
+      {open ? (
+        <div className="presentation-modal" role="dialog" aria-modal="true" aria-label={`${deck.title} presentation`}>
+          <div className="presentation-modal-toolbar">
+            <strong>{deck.title}</strong>
+            <button type="button" onClick={() => setOpen(false)} aria-label="Close presentation">×</button>
+          </div>
+          <iframe
+            data-testid="artifact-presentation-modal"
+            sandbox="allow-scripts"
+            srcDoc={html}
+            title={deck.title}
+          />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "presentation";
 }
 
 function ArtifactPlainFallback({

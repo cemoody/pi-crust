@@ -35,6 +35,7 @@ export interface ExtensionWebAsset {
 export interface PrcExtensionHostOptions {
   readonly dataDir?: string;
   readonly sessions?: PrcSessionsApi;
+  readonly configDir?: string;
 }
 
 export interface RegisteredCommand extends PrcCommandContribution {
@@ -229,6 +230,7 @@ export class PrcExtensionHost implements Disposable {
       commands: { register: (command) => track(this.commands.register(extensionId, command)) },
       activity: { registerView: (view) => track(this.activity.registerView(extensionId, view)) },
       storage: { dataFile: (relativePath) => resolveExtensionDataFile(this.options.dataDir, extensionId, relativePath) },
+      ...(this.options.configDir === undefined ? {} : { configDir: this.options.configDir }),
       jobs: { register: (job) => track(createStartedJobDisposable(extensionId, job, this.diagnostics)) },
       sessions: createExtensionSessionsApi(this.options.sessions),
       server: {

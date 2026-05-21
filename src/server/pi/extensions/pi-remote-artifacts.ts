@@ -5,6 +5,8 @@ import { Type } from "typebox";
 const ARTIFACT_DETAIL_KEY = "piRemoteControlArtifact";
 const ARTIFACT_SCHEMA_VERSION = 1;
 
+const PRESENTATION_DETAIL_KIND = "presentation";
+
 type SessionCreateResponse = {
   id?: string;
   sessionFile?: string;
@@ -20,9 +22,10 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
       "Use show_artifact when you create an image, plot, table, report, or other visual result that the user should see in Pi Remote Control.",
       "For plots, prefer writing an image file or returning a Vega-Lite spec via show_artifact instead of pasting a long textual description.",
       "For HTML artifacts, keep the HTML self-contained; Pi Remote Control will render it in a browser sandbox.",
+      "Use show_presentation or show_artifact kind=presentation when the user asks for a slide deck or presentation.",
     ],
     parameters: Type.Object({
-      kind: StringEnum(["image", "html", "markdown", "json", "table", "vega-lite"] as const),
+      kind: StringEnum(["image", "html", "markdown", "json", "table", "vega-lite", "presentation"] as const),
       title: Type.Optional(Type.String({ description: "Short display title for the artifact." })),
       path: Type.Optional(Type.String({ description: "Path to a generated artifact file, relative to cwd or absolute. Use for image/html files." })),
       mimeType: Type.Optional(Type.String({ description: "MIME type for path-backed artifacts, e.g. image/png or text/html." })),
@@ -45,6 +48,72 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
             ...(params.markdown === undefined ? {} : { markdown: params.markdown }),
             ...(params.data === undefined ? {} : { data: params.data }),
             ...(params.alt === undefined ? {} : { alt: params.alt }),
+          },
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "show_presentation",
+    label: "Show Presentation",
+    description: "Display a slide deck in Pi Remote Control. Accepts a structured deck with title and slides; slides can include template, title, subtitle, body, bullets, stats, images, columns, speaker notes, and fragments. To use a brand template pack, set `templatePack` on the deck (e.g. 'brainco') and `layout` + `slots` on each slide.",
+    promptSnippet: "show_presentation displays structured HTML slide decks with preview and present controls in Pi Remote Control. Supports brand template packs via templatePack + layout + slots.",
+    promptGuidelines: [
+      "Use show_presentation when the user asks to create, revise, or present a slide deck.",
+      "Prefer structured deck data over raw HTML so Pi Remote Control can provide preview, present, download, and fallback outline behavior.",
+      "Keep each slide concise: one main title, short bullets, optional stats/images, and speaker notes only when useful.",
+      "If a brand template pack is configured (e.g. brainco), set templatePack on the deck and use layout + slots per slide instead of generic title/bullets fields. Layout keys and slot names are pack-specific.",
+    ],
+    parameters: Type.Object({
+      title: Type.String({ description: "Deck title." }),
+      subtitle: Type.Optional(Type.String({ description: "Optional deck subtitle." })),
+      theme: Type.Optional(Type.String({ description: "Theme name, e.g. light or dark." })),
+      client: Type.Optional(Type.String({ description: "Client or audience label." })),
+      confidential: Type.Optional(Type.String({ description: "Footer confidentiality text." })),
+      templatePack: Type.Optional(Type.String({ description: "Optional template-pack id (e.g. 'brainco'). When set, each slide's layout key is rendered by the pack's renderer." })),
+      slides: Type.Array(Type.Any({ description: "Slide objects. Generic decks can use template/title/subtitle/body/bullets/stats/image/columns/notes/fragments. Template-pack decks should use layout + slots (e.g. { layout: 'title-light', slots: { primary: '...', secondary: '...' } })." }), { minItems: 1 }),
+    }),
+    async execute(_toolCallId, params) {
+      // If the deck specifies a templatePack, pre-resolve each slide's layout
+      // via the PRC template-pack route so the WUI receives slide.html
+      // already baked. This keeps the WUI compile path synchronous.
+      let slides = params.slides as Array<Record<string, unknown>>;
+      if (typeof params.templatePack === "string" && params.templatePack.length > 0) {
+        const apiBase = resolvePiRemoteApiBase();
+        slides = await Promise.all(
+          slides.map(async (slide, index) => {
+            const layout = typeof slide.layout === "string" ? slide.layout : undefined;
+            if (!layout || typeof slide.html === "string") return slide;
+            const slots = { page: index + 1, ...(slide.slots as Record<string, unknown> | undefined ?? {}) };
+            try {
+              const url = `${apiBase}/api/presentations/templates/${encodeURIComponent(params.templatePack as string)}/render/${encodeURIComponent(layout)}`;
+              const response = await postJson<{ readonly html?: string }>(url, { slots });
+              if (response && typeof response.html === "string") return { ...slide, html: response.html };
+            } catch {
+              // Fall through and leave slide as-is; WUI will show the generic outline.
+            }
+            return slide;
+          }),
+        );
+      }
+      const deck = {
+        title: params.title,
+        ...(params.subtitle === undefined ? {} : { subtitle: params.subtitle }),
+        ...(params.theme === undefined ? {} : { theme: params.theme }),
+        ...(params.client === undefined ? {} : { client: params.client }),
+        ...(params.confidential === undefined ? {} : { confidential: params.confidential }),
+        ...(params.templatePack === undefined ? {} : { templatePack: params.templatePack }),
+        slides,
+      };
+      return {
+        content: [{ type: "text", text: `Displayed presentation deck: ${params.title} (${params.slides.length} slide${params.slides.length === 1 ? "" : "s"}).` }],
+        details: {
+          [ARTIFACT_DETAIL_KEY]: {
+            version: ARTIFACT_SCHEMA_VERSION,
+            kind: PRESENTATION_DETAIL_KIND,
+            title: params.title,
+            data: deck,
           },
         },
       };

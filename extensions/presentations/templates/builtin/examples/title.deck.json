@@ -1,0 +1,15 @@
+{
+  "title": "Starter title deck",
+  "subtitle": "Example title slide",
+  "theme": "light",
+  "client": "Client",
+  "confidential": "Confidential and Proprietary",
+  "slides": [
+    {
+      "template": "title",
+      "title": "Primary Title",
+      "subtitle": "Secondary Title",
+      "body": "This executive summary briefly outlines objectives, strategies, outcomes, assumptions, timelines, stakeholders, metrics, risks, opportunities, dependencies, and next steps."
+    }
+  ]
+}

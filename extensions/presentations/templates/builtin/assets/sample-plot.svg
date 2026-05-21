@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-label="Sample signal trend plot">
+  <rect width="960" height="540" rx="32" fill="#ffffff"/>
+  <rect x="72" y="56" width="816" height="388" rx="24" fill="#f7f3ec"/>
+  <g stroke="#d1d5db" stroke-width="2">
+    <line x1="128" y1="120" x2="128" y2="396"/>
+    <line x1="128" y1="396" x2="824" y2="396"/>
+    <line x1="128" y1="304" x2="824" y2="304" opacity="0.55"/>
+    <line x1="128" y1="212" x2="824" y2="212" opacity="0.55"/>
+  </g>
+  <path d="M132 358 C 220 320, 264 326, 328 274 S 454 242, 520 214 S 650 168, 724 178 S 790 154, 824 132" fill="none" stroke="#ff5a1f" stroke-width="12" stroke-linecap="round"/>
+  <path d="M132 372 C 222 352, 272 360, 334 326 S 454 294, 520 288 S 650 250, 724 266 S 790 242, 824 224" fill="none" stroke="#111827" stroke-width="8" stroke-linecap="round" opacity="0.75"/>
+  <text x="96" y="492" font-family="Inter, system-ui, sans-serif" font-size="26" font-weight="700" fill="#111827">Signal trend</text>
+  <text x="278" y="492" font-family="Inter, system-ui, sans-serif" font-size="22" fill="#4b5563">illustrative template asset</text>
+</svg>
