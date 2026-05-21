@@ -228,6 +228,44 @@ describe("PiRpcAdapter", () => {
 
     await registry.disposeAll();
   });
+
+  it("propagates piRemoteControlArtifact from a toolResult details into tool.artifact", () => {
+    const artifact = {
+      version: 1,
+      kind: "presentation",
+      title: "Demo deck",
+      data: { title: "Demo deck", slides: [{ title: "Title" }] },
+    };
+    const messages = toSessionMessages([
+      {
+        role: "assistant",
+        timestamp: 1_000,
+        content: [
+          { type: "toolCall", id: "call_pres", name: "show_presentation", arguments: { title: "Demo deck", slides: [{ title: "Title" }] } },
+        ],
+      },
+      {
+        role: "toolResult",
+        timestamp: 2_000,
+        toolCallId: "call_pres",
+        toolName: "show_presentation",
+        isError: false,
+        content: [{ type: "text", text: "Displayed presentation deck: Demo deck (1 slide)." }],
+        details: { piRemoteControlArtifact: artifact },
+      },
+    ]);
+    expect(messages.length).toBe(1);
+    expect(messages[0]).toMatchObject({
+      role: "tool",
+      tool: expect.objectContaining({
+        name: "show_presentation",
+        status: "success",
+        output: expect.stringContaining("Demo deck"),
+        artifact,
+      }),
+    });
+    expect(toDashboardMessages(messages)[0]?.tool).toMatchObject({ artifact });
+  });
 });
 
 async function readEventually(file: string): Promise<string> {

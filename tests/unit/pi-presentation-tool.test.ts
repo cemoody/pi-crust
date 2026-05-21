@@ -65,7 +65,7 @@ describe("Pi presentation tool extension", () => {
     }) as typeof fetch;
     try {
       process.env.PI_REMOTE_API_BASE = "http://127.0.0.1:9999";
-      const result = await tool!.execute!("toolCallId", {} as never, new AbortController().signal, () => undefined, undefined as never) as { content: { text: string }[]; details: { packs: { id: string }[] } };
+      const result = await tool!.execute("toolCallId", {}) as { content: { text: string }[]; details: { packs: { id: string }[] } };
       expect(fetched).toContain("http://127.0.0.1:9999/api/presentations/templates");
       expect(result.details.packs[0]?.id).toBe("brainco");
       expect(result.content[0]?.text).toMatch(/brainco: 2 layout/);
