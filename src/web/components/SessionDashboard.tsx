@@ -412,6 +412,13 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const activeActivity = view.startsWith("activity:")
     ? webActivities.find((activity) => activity.id === view.slice("activity:".length))
     : undefined;
+  const enabledArtifactMimes = useMemo(() => {
+    const mimes = ["application/vnd.vega-lite.v5+json", "image/*", "text/html", "text/markdown"];
+    if (extensions.routes.some((route) => route.path === "/api/sessions/:sessionId/presentations/:file")) {
+      mimes.push("application/vnd.pi.presentation+json");
+    }
+    return mimes;
+  }, [extensions.routes]);
 
   async function createSession(input?: { readonly cwd?: string; readonly sessionName?: string }) {
     setError(null);
@@ -1000,6 +1007,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
               <MessageTimeline
                 messages={messagesBySession[activeSession.id] ?? []}
                 streaming={activeSession.status === "streaming"}
+                enabledArtifactMimes={enabledArtifactMimes}
               />
               <ExtensionUiHost
                 requests={extensionUiBySession[activeSession.id] ?? []}

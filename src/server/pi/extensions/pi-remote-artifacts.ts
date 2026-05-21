@@ -5,6 +5,8 @@ import { Type } from "typebox";
 const ARTIFACT_DETAIL_KEY = "piRemoteControlArtifact";
 const ARTIFACT_SCHEMA_VERSION = 1;
 
+const PRESENTATION_DETAIL_KIND = "presentation";
+
 type SessionCreateResponse = {
   id?: string;
   sessionFile?: string;
@@ -20,9 +22,10 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
       "Use show_artifact when you create an image, plot, table, report, or other visual result that the user should see in Pi Remote Control.",
       "For plots, prefer writing an image file or returning a Vega-Lite spec via show_artifact instead of pasting a long textual description.",
       "For HTML artifacts, keep the HTML self-contained; Pi Remote Control will render it in a browser sandbox.",
+      "Use show_presentation or show_artifact kind=presentation when the user asks for a slide deck or presentation.",
     ],
     parameters: Type.Object({
-      kind: StringEnum(["image", "html", "markdown", "json", "table", "vega-lite"] as const),
+      kind: StringEnum(["image", "html", "markdown", "json", "table", "vega-lite", "presentation"] as const),
       title: Type.Optional(Type.String({ description: "Short display title for the artifact." })),
       path: Type.Optional(Type.String({ description: "Path to a generated artifact file, relative to cwd or absolute. Use for image/html files." })),
       mimeType: Type.Optional(Type.String({ description: "MIME type for path-backed artifacts, e.g. image/png or text/html." })),
@@ -45,6 +48,47 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
             ...(params.markdown === undefined ? {} : { markdown: params.markdown }),
             ...(params.data === undefined ? {} : { data: params.data }),
             ...(params.alt === undefined ? {} : { alt: params.alt }),
+          },
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "show_presentation",
+    label: "Show Presentation",
+    description: "Display a slide deck in Pi Remote Control. Accepts a structured deck with title and slides; slides can include title, subtitle, body, bullets, stats, images, columns, speaker notes, and fragments.",
+    promptSnippet: "show_presentation displays structured HTML slide decks with preview and present controls in Pi Remote Control.",
+    promptGuidelines: [
+      "Use show_presentation when the user asks to create, revise, or present a slide deck.",
+      "Prefer structured deck data over raw HTML so Pi Remote Control can provide preview, present, download, and fallback outline behavior.",
+      "Keep each slide concise: one main title, short bullets, optional stats/images, and speaker notes only when useful.",
+    ],
+    parameters: Type.Object({
+      title: Type.String({ description: "Deck title." }),
+      subtitle: Type.Optional(Type.String({ description: "Optional deck subtitle." })),
+      theme: Type.Optional(Type.String({ description: "Theme name, e.g. brainco, light, dark." })),
+      client: Type.Optional(Type.String({ description: "Client or audience label." })),
+      confidential: Type.Optional(Type.String({ description: "Footer confidentiality text." })),
+      slides: Type.Array(Type.Any({ description: "Slide objects. Each slide can include template, title, subtitle, body, bullets, stats, image, columns, notes, and fragments." }), { minItems: 1 }),
+    }),
+    async execute(_toolCallId, params) {
+      const deck = {
+        title: params.title,
+        ...(params.subtitle === undefined ? {} : { subtitle: params.subtitle }),
+        ...(params.theme === undefined ? {} : { theme: params.theme }),
+        ...(params.client === undefined ? {} : { client: params.client }),
+        ...(params.confidential === undefined ? {} : { confidential: params.confidential }),
+        slides: params.slides,
+      };
+      return {
+        content: [{ type: "text", text: `Displayed presentation deck: ${params.title} (${params.slides.length} slide${params.slides.length === 1 ? "" : "s"}).` }],
+        details: {
+          [ARTIFACT_DETAIL_KEY]: {
+            version: ARTIFACT_SCHEMA_VERSION,
+            kind: PRESENTATION_DETAIL_KIND,
+            title: params.title,
+            data: deck,
           },
         },
       };

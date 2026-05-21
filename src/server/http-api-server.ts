@@ -242,6 +242,7 @@ async function startDefaultServer(): Promise<void> {
       path.resolve(process.cwd(), "extensions", "schedule"),
       path.resolve(process.cwd(), "extensions", "branching"),
       path.resolve(process.cwd(), "extensions", "artifacts"),
+      path.resolve(process.cwd(), "extensions", "presentations"),
     ],
     sessions: createExtensionSessionApi(registry),
   });
