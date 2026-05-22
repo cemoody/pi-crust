@@ -19,6 +19,7 @@ import { defaultPrcConfigDir } from "../extensions/bootstrap.js";
 import { serializeExtensions } from "../extensions/metadata.js";
 import { installExtensionPackage, readPrcSettings, removeExtensionPackage, setExtensionEnabled, writePrcSettings, type PrcAppBrandingSettings, type PrcSettings } from "../extensions/packages.js";
 import { createPrcExtensionRuntime, type PrcExtensionRuntime } from "../extensions/runtime.js";
+import { defaultArtifactFileRoots, resolveArtifactFile, streamArtifactFile } from "./artifact-file.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -490,6 +491,26 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   if (req.method === "GET" && url.pathname === "/api/sessions/statuses") {
     const cwd = url.searchParams.get("cwd") ?? undefined;
     return sendJson(res, 200, await dedupedListSessionCards(context, cwd));
+  }
+
+  // Serve arbitrary on-disk artifact files (images, html, pdf, video) that
+  // live outside the bundled WUI static root — e.g. /tmp/foo.png produced by
+  // an agent and referenced by `show_artifact`. The candidate path must
+  // resolve (post-realpath) inside the OS tmpdir, the user's home, the
+  // project root, the session root, or the default cwd. See
+  // src/server/artifact-file.ts for the full policy.
+  if (req.method === "GET" && url.pathname === "/api/artifact-file") {
+    const candidate = url.searchParams.get("path");
+    if (!candidate) return sendJson(res, 400, { error: "path query parameter is required" });
+    const result = await resolveArtifactFile(candidate, {
+      allowedRoots: defaultArtifactFileRoots([
+        context.projectRoot,
+        context.sessionRoot,
+        ...(context.defaultCwd ? [context.defaultCwd] : []),
+      ]),
+    });
+    if (!result.ok) return sendJson(res, result.status, { error: result.error });
+    return streamArtifactFile(result.resolution, res);
   }
 
   if (req.method === "POST" && url.pathname === "/api/sessions") {

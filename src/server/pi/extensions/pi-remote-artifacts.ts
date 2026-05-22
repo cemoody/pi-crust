@@ -1,6 +1,8 @@
+import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { defaultArtifactFileRoots, encodeArtifactFilePath, resolveArtifactFile } from "../../artifact-file.js";
 
 const ARTIFACT_DETAIL_KEY = "piRemoteControlArtifact";
 const ARTIFACT_SCHEMA_VERSION = 1;
@@ -35,6 +37,31 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
       alt: Type.Optional(Type.String({ description: "Alt text for image artifacts." })),
     }),
     async execute(_toolCallId, params) {
+      // For file-backed artifact kinds (image, html), validate `path` up-front
+      // so the tool call fails cleanly when the file doesn't exist or lives
+      // outside the allow-list — mirroring how bash tool calls surface
+      // errors. We also rewrite the path into a fetchable URL so the WUI
+      // doesn't try to load /tmp/... as a relative URL against the host
+      // origin (which falls through to the SPA index.html and shows a
+      // broken image).
+      let resolvedAbsPath: string | undefined;
+      let resolvedUrl: string | undefined;
+      let resolvedMimeType: string | undefined;
+      const needsFileBacking = (params.kind === "image" || params.kind === "html") && typeof params.path === "string" && params.path.length > 0;
+      if (needsFileBacking) {
+        const absCandidate = path.isAbsolute(params.path as string)
+          ? (params.path as string)
+          : path.resolve(process.cwd(), params.path as string);
+        const result = await resolveArtifactFile(absCandidate, {
+          allowedRoots: defaultArtifactFileRoots([process.cwd()]),
+        });
+        if (!result.ok) {
+          throw new Error(`show_artifact path is invalid: ${result.error}`);
+        }
+        resolvedAbsPath = result.resolution.absPath;
+        resolvedUrl = `/api/artifact-file?path=${encodeArtifactFilePath(result.resolution.absPath)}`;
+        resolvedMimeType = params.mimeType ?? result.resolution.mimeType;
+      }
       return {
         content: [{ type: "text", text: `Displayed ${params.kind} artifact${params.title ? `: ${params.title}` : ""}.` }],
         details: {
@@ -42,8 +69,13 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
             version: ARTIFACT_SCHEMA_VERSION,
             kind: params.kind,
             ...(params.title === undefined ? {} : { title: params.title }),
-            ...(params.path === undefined ? {} : { path: params.path }),
-            ...(params.mimeType === undefined ? {} : { mimeType: params.mimeType }),
+            ...(resolvedAbsPath !== undefined
+              ? { path: resolvedAbsPath }
+              : (params.path === undefined ? {} : { path: params.path })),
+            ...(resolvedUrl === undefined ? {} : { url: resolvedUrl }),
+            ...(resolvedMimeType !== undefined
+              ? { mimeType: resolvedMimeType }
+              : (params.mimeType === undefined ? {} : { mimeType: params.mimeType })),
             ...(params.html === undefined ? {} : { html: params.html }),
             ...(params.markdown === undefined ? {} : { markdown: params.markdown }),
             ...(params.data === undefined ? {} : { data: params.data }),
