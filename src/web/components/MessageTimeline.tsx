@@ -1,8 +1,9 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, createContext, lazy, useContext, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PRESENTATION_MIME, coercePresentationDeck, presentationFallbackMarkdown, type PresentationDeck } from "../../presentations/schema.js";
 import { compileRevealHtml } from "../../presentations/reveal.js";
+import { compileStandalonePresentationHtml } from "../../presentations/standalone.js";
 import { copyTextToClipboard } from "../utils/clipboard.js";
 import "./message-timeline.css";
 
@@ -92,14 +93,23 @@ export interface MessageTimelineProps {
   readonly autoScroll?: boolean;
   readonly streaming?: boolean;
   readonly enabledArtifactMimes?: readonly string[];
+  /** Active session id; threaded to presentation artifact cards so the
+   *  Download HTML flow can fetch referenced assets from
+   *  `/api/sessions/:sessionId/presentations/:file` and inline them as
+   *  data: URIs, producing a fully self-contained, CDN-shippable file. */
+  readonly sessionId?: string;
 }
+
+/** Context for child artifact cards that need the active session id (e.g.
+ *  the presentation card's Download HTML asset-inlining flow). */
+const TimelineSessionContext = createContext<string | undefined>(undefined);
 
 // Pixels: if the user is within this many pixels of the bottom, treat as
 // "pinned" — new content should auto-scroll. Generous because content can
 // grow between scroll events while streaming.
 const SCROLL_PIN_THRESHOLD_PX = 80;
 
-export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false, enabledArtifactMimes }: MessageTimelineProps) {
+export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false, enabledArtifactMimes, sessionId }: MessageTimelineProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
@@ -156,6 +166,7 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
   const turns = groupTurns(messages);
 
   return (
+    <TimelineSessionContext.Provider value={sessionId}>
     <section
       className="message-timeline"
       aria-label="Message timeline"
@@ -190,6 +201,7 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
         </button>
       ) : null}
     </section>
+    </TimelineSessionContext.Provider>
   );
 }
 
@@ -665,6 +677,7 @@ function pickRenderableRepresentation(
 
 function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: unknown; readonly title: string }) {
   const [open, setOpen] = useState(false);
+  const sessionId = useContext(TimelineSessionContext);
   const parsed = useMemo((): { deck?: PresentationDeck; error?: string } => {
     try {
       return { deck: coercePresentationDeck(deckInput) };
@@ -677,6 +690,8 @@ function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: un
     if (!deck) return { html: "", previewHtml: "", markdown: "" };
     try {
       return {
+        // In-page Present modal stays synchronous — we don't need asset
+        // inlining for an iframe that runs inside the same origin.
         html: compileRevealHtml(deck),
         previewHtml: compileRevealHtml(deck, { startSlide: 0, title: `${deck.title} preview` }),
         markdown: presentationFallbackMarkdown(deck),
@@ -687,7 +702,32 @@ function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: un
   }, [deck]);
   const { html, previewHtml, markdown } = compiled;
   const compileError = compiled.error;
-  const downloadUrl = useMemo(() => html ? URL.createObjectURL(new Blob([html], { type: "text/html" })) : "", [html]);
+
+  // The Download HTML flow compiles a fully self-contained file with every
+  // referenced asset inlined as a data: URI, so the result can be uploaded
+  // to any static CDN (R2 / S3 / etc.) and rendered offline.
+  const [standalone, setStandalone] = useState<{ html: string; error?: string } | null>(null);
+  useEffect(() => {
+    if (!deck) { setStandalone(null); return; }
+    let cancelled = false;
+    setStandalone(null);
+    (async () => {
+      try {
+        const html = await compileStandalonePresentationHtml(
+          deck,
+          sessionId ? { fetchAsset: makeSessionAssetFetcher(sessionId) } : {},
+        );
+        if (!cancelled) setStandalone({ html });
+      } catch (error) {
+        if (!cancelled) setStandalone({ html: "", error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [deck, sessionId]);
+  const downloadUrl = useMemo(
+    () => standalone?.html ? URL.createObjectURL(new Blob([standalone.html], { type: "text/html" })) : "",
+    [standalone?.html],
+  );
   useEffect(() => () => { if (downloadUrl) URL.revokeObjectURL(downloadUrl); }, [downloadUrl]);
 
   if (!deck) {
@@ -721,7 +761,17 @@ function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: un
         </div>
         <div className="presentation-actions">
           <button type="button" onClick={() => setOpen(true)}>Present deck</button>
-          <a href={downloadUrl} download={`${slugify(deck.title || title)}.html`}>Download HTML</a>
+          {downloadUrl ? (
+            <a href={downloadUrl} download={`${slugify(deck.title || title)}.html`}>Download HTML</a>
+          ) : (
+            <span
+              className="presentation-download-pending"
+              aria-disabled="true"
+              title={standalone?.error ?? "Compiling self-contained deck…"}
+            >
+              {standalone?.error ? "Download unavailable" : "Preparing…"}
+            </span>
+          )}
         </div>
       </div>
       <iframe
@@ -755,6 +805,27 @@ function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: un
 
 function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "presentation";
+}
+
+/**
+ * Returns a fetchAsset() implementation that pulls referenced presentation
+ * assets from the per-session route exposed by the presentations extension:
+ *   GET /api/sessions/:sessionId/presentations/:file
+ * The route serves files from `<session.cwd>/.pi/presentations/<sessionId>/`,
+ * which is where show_presentation / pi-remote-control writes deck assets.
+ */
+function makeSessionAssetFetcher(sessionId: string) {
+  // Match the rest of the WUI's API client — honour VITE_PI_REMOTE_API_BASE
+  // so dev/test setups that run the API on a different port work correctly.
+  const apiBase = (import.meta as ImportMeta).env?.VITE_PI_REMOTE_API_BASE ?? "";
+  return async (src: string) => {
+    const url = `${apiBase}/api/sessions/${encodeURIComponent(sessionId)}/presentations/${encodeURIComponent(src)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`asset fetch ${res.status} for ${src}`);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    const mimeType = res.headers.get("content-type")?.split(";")[0]?.trim() || "application/octet-stream";
+    return { data: buf, mimeType };
+  };
 }
 
 function ArtifactPlainFallback({
