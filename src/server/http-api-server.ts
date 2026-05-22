@@ -6,7 +6,7 @@ import fsp from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
-import { contentTextAndThinking, PiRpcAdapter } from "./pi/pirpc-pi-adapter.js";
+import { contentTextAndThinking, PiRpcAdapter, toSessionMessages } from "./pi/pirpc-pi-adapter.js";
 import { MAX_PROMPT_CHARS } from "../shared/limits.js";
 import type { ExtensionUiResponse } from "../shared/protocol.js";
 import type { PromptAttachment, SessionListItem, SessionMessage } from "./pi/types.js";
@@ -1373,7 +1373,20 @@ async function readSessionMessagesTail(
 
       const text = buf.subarray(parseStart).toString("utf8");
       const lines = text.split("\n");
-      const fresh: SessionMessage[] = [];
+      // We collect the *raw* JSONL message bodies in this pass and run
+      // them through toSessionMessages() at the end so the on-disk
+      // pirpc / Anthropic-messages shape (assistant turns with
+      // `content: [...toolCall blocks]` and free-standing
+      // `role: "toolResult"` records) gets fanned out into the same
+      // assistant + role:"tool" + role:"summary" sequence the adapter's
+      // own getMessages() path produces. Without that fan-out,
+      // toDashboardMessages sees `role: "toolResult"`, falls through to
+      // "custom" and the WUI renders the result body as a free-standing
+      // "Extension"-labelled bubble instead of merging the output into
+      // the matching tool row. Regression introduced in PR #102 alongside
+      // this tail-read path; pinned by
+      // tests/playwright/structured-content-tool-calls.spec.ts.
+      const fresh: unknown[] = [];
       for (const line of lines) {
         if (!line.trim()) continue;
         let entry: unknown;
@@ -1383,14 +1396,36 @@ async function readSessionMessagesTail(
           sawSessionShapedRecord = true;
         }
         if (entry.type !== "message" || !isRecord(entry.message)) continue;
-        const message = entry.message as unknown as SessionMessage;
-        if (options.before !== undefined && typeof message.timestamp === "number" && message.timestamp >= options.before) continue;
-        fresh.push(message);
+        // The numeric timestamp lives on the outer wrapper as an ISO
+        // string; the inner message often doesn't carry its own. Coerce
+        // and stamp it onto the message so downstream consumers (the
+        // before-filter here, toSessionMessages, the WUI ordering) all
+        // see a consistent number.
+        const innerMessage = entry.message as Record<string, unknown>;
+        let timestamp: number | undefined;
+        if (typeof innerMessage.timestamp === "number") timestamp = innerMessage.timestamp;
+        else if (typeof entry.timestamp === "string") {
+          const parsed = Date.parse(entry.timestamp);
+          if (!Number.isNaN(parsed)) timestamp = parsed;
+        } else if (typeof entry.timestamp === "number") timestamp = entry.timestamp;
+        if (options.before !== undefined && timestamp !== undefined && timestamp >= options.before) continue;
+        fresh.push(timestamp === undefined ? innerMessage : { ...innerMessage, timestamp });
       }
-      collected.unshift(...fresh);
+      // unshift in collected-but-still-raw form; we flatten once at the
+      // end so toSessionMessages's toolCall/toolResult index works
+      // across the whole window, not per-chunk.
+      collected.unshift(...(fresh as SessionMessage[]));
     }
     if (!sawSessionShapedRecord) return undefined;
-    return collected.slice(-options.limit);
+    // Run the full raw-JSONL window through toSessionMessages so the
+    // adapter's structured-content fan-out (toolCall blocks -> synthetic
+    // role:"tool" entries, toolResult records merged into the matching
+    // tool entry, thinking blocks split into the assistant's `thinking`
+    // field) applies uniformly. THEN apply the limit, since the fan-out
+    // can change the message count (one assistant turn with N toolCall
+    // blocks expands to 1 assistant + N tool rows).
+    const normalized = toSessionMessages(collected);
+    return normalized.slice(-options.limit);
   } finally {
     await fd.close();
   }
