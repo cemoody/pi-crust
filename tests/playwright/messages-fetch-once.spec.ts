@@ -40,6 +40,28 @@ function attachMessagesCounter(page: import("@playwright/test").Page): { snapsho
 // top of the mount fetches.
 const MOUNT_FETCH_BUDGET = 2;
 
+test("initial mount fetches /messages with a ?limit= window, not the entire transcript", async ({ page }) => {
+  // Background: on a 35 MB session, GET /messages without ?limit forces the
+  // server to slurp + JSON.parse the whole jsonl (~19 s of synchronous CPU)
+  // and ships back tens of MB. The server already supports a tail-windowed
+  // read via ?limit (PR #102), but the WUI never used it — so opening a long
+  // session blocked the event loop for the entire ~19 s.
+  // The WUI must pass ?limit on the initial mount fetch.
+  const counter = attachMessagesCounter(page);
+
+  await page.goto("/");
+  await page.getByRole("link", { name: /^Seeded session\b/ }).click();
+  await expect(page.getByText("previously sent hello")).toBeVisible();
+  // Let the mount settle so any debounced fetches finish.
+  await page.waitForTimeout(500);
+
+  const fetches = counter.snapshot();
+  expect(fetches.length, `expected at least one /messages fetch on mount, got: ${JSON.stringify(fetches)}`).toBeGreaterThan(0);
+  for (const url of fetches) {
+    expect(url, `every initial /messages fetch must carry a ?limit= window, got: ${url}`).toMatch(/[?&]limit=\d+/);
+  }
+});
+
 test("reloading the page on an active session does not trigger a third /messages fetch from SSE replay", async ({ page }) => {
   // This is the production-shaped repro: after a session has any recent
   // agent activity, opening it (or reloading the tab) replays the server

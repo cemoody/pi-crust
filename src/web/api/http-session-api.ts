@@ -1,5 +1,5 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
-import type { AppBrandingInfo, AppBrandingSettings, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, ModelOption, NewSessionInput, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import type { AppBrandingInfo, AppBrandingSettings, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, GetMessagesOptions, ModelOption, NewSessionInput, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
 import { recordClientEvent, getTabSessionId } from "../utils/client-telemetry.js";
 
 const API_BASE = import.meta.env.VITE_PI_REMOTE_API_BASE ?? "";
@@ -85,8 +85,12 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     return request<SessionCardData>(`/api/sessions/${encodeURIComponent(sessionId)}/state`);
   }
 
-  async getMessages(sessionId: string): Promise<readonly DashboardMessage[]> {
-    return request<DashboardMessage[]>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
+  async getMessages(sessionId: string, options?: GetMessagesOptions): Promise<readonly DashboardMessage[]> {
+    const query: string[] = [];
+    if (options?.limit !== undefined) query.push(`limit=${encodeURIComponent(options.limit)}`);
+    if (options?.before !== undefined) query.push(`before=${encodeURIComponent(options.before)}`);
+    const suffix = query.length === 0 ? "" : `?${query.join("&")}`;
+    return request<DashboardMessage[]>(`/api/sessions/${encodeURIComponent(sessionId)}/messages${suffix}`);
   }
 
   async prompt(sessionId: string, text: string, attachments: readonly PromptAttachment[] = []): Promise<readonly DashboardMessage[]> {

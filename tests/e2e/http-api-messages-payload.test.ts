@@ -124,6 +124,64 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
     expect(body.length).toBeLessThan(200_000);
   });
 
+  it("does not inline multi-megabyte custom-message details payloads", async () => {
+    // Reproduces the autotime-series-2 hot path: a `show_presentation`
+    // artifact ends up as a `custom` message with a `details` object that
+    // carries the full deck HTML inline (the production session had a
+    // single such message weighing 4.1 MB and the /messages response
+    // ballooned to 28 MB just from details on the last 50 messages).
+    // The server must strip or truncate large details the same way it
+    // already does for inline images and tool output.
+    const bigDeckHtml = "D".repeat(2_500_000); // 2.5 MB
+    const { baseUrl, sessionId } = await startWithMessages([
+      {
+        role: "custom",
+        content: "presentation rendered",
+        timestamp: 1,
+        customType: "presentation",
+        details: {
+          deck: {
+            title: "Big deck",
+            slides: [{ title: "slide 1", html: bigDeckHtml }],
+          },
+        },
+      },
+    ]);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`);
+    expect(response.ok).toBe(true);
+    const body = await response.text();
+
+    // The 2.5 MB inline HTML must not appear verbatim in the timeline JSON.
+    // The server is allowed to substitute a URL the WUI can lazy-fetch.
+    expect(body).not.toContain(bigDeckHtml);
+    expect(body.length).toBeLessThan(200_000);
+  });
+
+  it("keeps the /messages body bounded across many large-details messages", async () => {
+    // 20 presentation cards, each 200 KB of inline detail. Today this is
+    // ~4 MB of JSON for the timeline; after the fix it should be a small
+    // structural payload with lazy-load references.
+    const chunk = "E".repeat(200_000);
+    const messages: SessionMessage[] = Array.from({ length: 20 }, (_, index) => ({
+      role: "custom" as const,
+      content: `card ${index}`,
+      timestamp: index + 1,
+      customType: "presentation",
+      details: { slides: [{ title: `slide ${index}`, html: chunk }] },
+    }));
+    const { baseUrl, sessionId } = await startWithMessages(messages);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`);
+    expect(response.ok).toBe(true);
+    const body = await response.text();
+
+    expect(body.length).toBeLessThan(500_000);
+    const parsed = JSON.parse(body) as Array<{ role: string }> | { messages?: Array<{ role: string }> };
+    const list = Array.isArray(parsed) ? parsed : parsed.messages ?? [];
+    expect(list.length).toBe(20);
+  });
+
   it("does not read the entire session jsonl when ?limit=N is requested", async () => {
     // Build a large session file on disk and use a file-backed adapter so
     // the server has to actually do I/O to materialise messages. The

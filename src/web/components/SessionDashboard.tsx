@@ -3,6 +3,13 @@ import type { Dispatch, SetStateAction } from "react";
 import type { ExtensionUiRequest, ExtensionUiResponse, WireMessage } from "../../shared/protocol.js";
 import type { BranchCloneResult, BranchForkResult, BranchMessageOption, DashboardArtifact, DashboardMessage, DashboardToolDetails, ExtensionRegistryInfo, ExtensionSettingsResponse, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
+
+/** How many recent messages to fetch on initial session-open. Older history
+ *  is paginated on scroll. Sized to comfortably cover a typical viewport
+ *  plus some scroll-back without dragging the whole transcript over the
+ *  network for long sessions (e.g. the autotime-series-2 session whose full
+ *  /messages payload was ~28 MB before this limit was applied). */
+const INITIAL_MESSAGES_LIMIT = 200;
 import { MessageTimeline, type TimelineMessage } from "./MessageTimeline.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { PromptComposer, type ComposerAttachment } from "./PromptComposer.js";
@@ -287,8 +294,16 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     // agent sends a message_end / agent_end event.
     const refreshAll = async (options: { readonly preserveLastActivity?: boolean } = {}) => {
       try {
+        // Bound the initial transcript fetch to the most recent
+        // INITIAL_MESSAGES_LIMIT entries so opening a multi-MB session
+        // doesn't slurp + JSON.parse the whole jsonl on the server (which
+        // would block the Node event loop for tens of seconds and starve
+        // every other request) and doesn't ship tens of MB of JSON over
+        // the wire to be reparsed in the browser. Older history is loaded
+        // on demand when the user scrolls up; new activity is appended via
+        // the SSE event stream (applyRealtimeEvent).
         const [messages, refreshed] = await Promise.all([
-          api.getMessages(activeSessionId),
+          api.getMessages(activeSessionId, { limit: INITIAL_MESSAGES_LIMIT }),
           api.getSession ? api.getSession(activeSessionId) : Promise.resolve(null),
         ]);
         if (cancelled) return;

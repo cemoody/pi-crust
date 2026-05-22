@@ -1,5 +1,14 @@
 export type SessionCardStatus = "idle" | "streaming" | "waiting_for_approval" | "compacting" | "retrying" | "error";
 
+/** Options accepted by api.getMessages(). The server's /messages endpoint
+ *  supports a tail-windowed read so a multi-MB transcript doesn't have to
+ *  ship in one shot — the WUI should pass `limit` on initial mount to keep
+ *  page-open fast even on very long sessions. */
+export interface GetMessagesOptions {
+  readonly limit?: number;
+  readonly before?: number;
+}
+
 export interface SessionCardData {
   readonly id: string;
   readonly cwd: string;
@@ -268,7 +277,7 @@ export interface SessionDashboardApi {
   createSession(input: NewSessionInput): Promise<SessionCardData>;
   renameSession(sessionId: string, name: string): Promise<SessionCardData>;
   deleteSession(sessionId: string): Promise<void>;
-  getMessages(sessionId: string): Promise<readonly DashboardMessage[]>;
+  getMessages(sessionId: string, options?: GetMessagesOptions): Promise<readonly DashboardMessage[]>;
   prompt(sessionId: string, text: string, attachments?: readonly PromptAttachment[]): Promise<readonly DashboardMessage[]>;
   bash(sessionId: string, command: string, includeInContext: boolean): Promise<readonly DashboardMessage[]>;
   abort(sessionId: string): Promise<void>;

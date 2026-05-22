@@ -653,6 +653,24 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     return;
   }
 
+  // Lazy fetch of full custom-message details (e.g. a full presentation
+  // deck) that we strip from /messages payloads when the inline JSON
+  // exceeds MAX_INLINE_DETAILS_BYTES.
+  const detailsMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/details$/);
+  if (req.method === "GET" && detailsMatch) {
+    const session = await getOrOpenSession(context, decodeURIComponent(detailsMatch[1]!));
+    const messageId = decodeURIComponent(detailsMatch[2]!);
+    const allMessages = await session.handle.getMessages();
+    const message = findMessageById(allMessages, messageId);
+    if (!message?.details) return sendJson(res, 404, { error: "details not found" });
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "private, max-age=60",
+    });
+    res.end(JSON.stringify(message.details));
+    return;
+  }
+
   // Lazy fetch of full tool output that we truncate in /messages payloads.
   const toolOutputMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/tool-output$/);
   if (req.method === "GET" && toolOutputMatch) {
@@ -1154,6 +1172,14 @@ export const MAX_MESSAGES_LIMIT = 1000;
  * log.
  */
 export const MAX_INLINE_TOOL_OUTPUT_BYTES = 16 * 1024;
+/**
+ * Custom-message `details` (extension artifacts — e.g. presentation decks
+ * with full slide HTML) over this size are stripped from /messages responses
+ * and replaced with a small stub the WUI can lazy-fetch on demand. Caps the
+ * worst single message at this size and stops a deck-heavy session from
+ * shipping tens of MB of inline JSON on every page mount.
+ */
+export const MAX_INLINE_DETAILS_BYTES = 32 * 1024;
 
 export interface ToDashboardMessagesOptions {
   /** When set, image bytes are stripped from the payload and replaced with a
@@ -1185,7 +1211,7 @@ export function toDashboardMessages(messages: readonly SessionMessage[], options
       images: sessionId && message.images ? stripImagesForTransport(message.images, sessionId, id) : message.images,
       timestamp: message.timestamp,
       ...(message.customType ? { customType: message.customType } : {}),
-      ...(message.details ? { details: message.details } : {}),
+      ...(message.details ? stripDetailsForTransport(message.details, sessionId, id) : {}),
       ...(message.stopReason ? { stopReason: message.stopReason } : {}),
       ...(message.errorMessage ? { error: message.errorMessage } : {}),
       ...(message.thinking ? { thinking: message.thinking } : {}),
@@ -1214,6 +1240,54 @@ function stripToolForTransport(tool: NonNullable<SessionMessage["tool"]>, sessio
   const outputUrl = `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/tool-output`;
   const truncated = `${head}\n\n…[${(fullBytes / 1024).toFixed(0)} KB truncated — full output at ${outputUrl}]…\n\n${tail}`;
   return { ...tool, output: truncated, outputTruncated: true, outputUrl, outputFullBytes: fullBytes };
+}
+
+/**
+ * Strips heavy fields out of a custom-message `details` blob (extension
+ * artifacts: presentation decks, large HTML artifacts, etc.) and replaces
+ * the omitted payload with a stub the WUI can fetch lazily via
+ * /api/sessions/:id/messages/:msgId/details.
+ *
+ * Heuristic: serialise details, measure bytes. If under the threshold,
+ * pass through unchanged. If over, return a stub `{ details: {...},
+ * detailsUrl, detailsTruncated, detailsFullBytes }` with as much top-level
+ * metadata as we can salvage cheaply so the WUI can show a card preview
+ * without the full payload (title / kind / artifact-group-id all fit in a
+ * few hundred bytes).
+ */
+function stripDetailsForTransport(
+  details: Record<string, unknown>,
+  sessionId: string | undefined,
+  messageId: string,
+): { details: Record<string, unknown>; detailsUrl?: string; detailsTruncated?: boolean; detailsFullBytes?: number } {
+  if (!sessionId) return { details };
+  let serialised: string;
+  try { serialised = JSON.stringify(details); } catch { return { details }; }
+  const fullBytes = Buffer.byteLength(serialised, "utf8");
+  if (fullBytes <= MAX_INLINE_DETAILS_BYTES) return { details };
+  const detailsUrl = `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/details`;
+  // Salvage a shallow preview of the details object: keep small scalar fields
+  // and string fields capped at 256 chars; replace large nested values with
+  // a sentinel. Lets the WUI render "presentation: <title>" or similar
+  // without the full deck payload.
+  const preview: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(details)) {
+    if (value === null || value === undefined) { preview[key] = value; continue; }
+    const t = typeof value;
+    if (t === "number" || t === "boolean") { preview[key] = value; continue; }
+    if (t === "string") {
+      const str = value as string;
+      preview[key] = str.length > 256 ? `${str.slice(0, 256)}…[truncated]` : str;
+      continue;
+    }
+    preview[key] = { __omitted: true, kind: Array.isArray(value) ? "array" : "object" };
+  }
+  return {
+    details: preview,
+    detailsUrl,
+    detailsTruncated: true,
+    detailsFullBytes: fullBytes,
+  };
 }
 
 function findMessageById(messages: readonly SessionMessage[], id: string): SessionMessage | undefined {
@@ -1250,6 +1324,12 @@ async function readSessionMessagesTail(
     let position = stat.size;
     let leftover = Buffer.alloc(0);
     const collected: SessionMessage[] = [];
+    // Track whether we saw ANY parseable jsonl record (message OR session
+    // header). If a non-empty file produces zero such records the file
+    // probably isn't a session jsonl at all (e.g. the mock adapter's
+    // pretty-printed .mock-session.json blobs) — fall back to the adapter
+    // rather than silently returning an empty timeline.
+    let sawSessionShapedRecord = false;
 
     while (position > 0 && collected.length < options.limit) {
       const readSize = Math.min(TAIL_CHUNK_SIZE, position);
@@ -1281,13 +1361,18 @@ async function readSessionMessagesTail(
         if (!line.trim()) continue;
         let entry: unknown;
         try { entry = JSON.parse(line); } catch { continue; }
-        if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) continue;
+        if (!isRecord(entry)) continue;
+        if (entry.type === "session" || entry.type === "message" || entry.type === "session_info") {
+          sawSessionShapedRecord = true;
+        }
+        if (entry.type !== "message" || !isRecord(entry.message)) continue;
         const message = entry.message as unknown as SessionMessage;
         if (options.before !== undefined && typeof message.timestamp === "number" && message.timestamp >= options.before) continue;
         fresh.push(message);
       }
       collected.unshift(...fresh);
     }
+    if (!sawSessionShapedRecord) return undefined;
     return collected.slice(-options.limit);
   } finally {
     await fd.close();
