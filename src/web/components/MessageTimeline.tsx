@@ -360,11 +360,28 @@ function TurnFooter({ turn }: { readonly turn: TurnGroup }) {
   );
 }
 
+/**
+ * `message.text` is typed `string` but at runtime can be anything that
+ * flows in from a malformed adapter / payload. Coerce defensively so a
+ * single bad message can't take this whole codepath down (originally
+ * observed as a TypeError in `text.trim` for a session whose text was
+ * an Array; the SessionContentErrorBoundary caught it but the timeline
+ * still failed to render fully). Pairs with safe-markdown.ts coercion.
+ */
+function asTrimmedString(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value == null) return "";
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value);
+  try { return (typeof value === "object" ? JSON.stringify(value) : String(value)).trim(); }
+  catch { return "[unserializable]"; }
+}
+
 function lastAssistantTextOf(turn: TurnGroup): string {
   for (let i = turn.messages.length - 1; i >= 0; i--) {
     const message = turn.messages[i];
-    if (message && message.role === "assistant" && message.text.trim()) {
-      return message.text.trim();
+    if (message && message.role === "assistant") {
+      const trimmed = asTrimmedString(message.text);
+      if (trimmed) return trimmed;
     }
   }
   return "";
@@ -392,10 +409,11 @@ function MoreGlyph() {
 function turnToMarkdown(turn: TurnGroup): string {
   const parts: string[] = [];
   for (const message of turn.messages) {
+    const text = asTrimmedString(message.text);
     if (message.role === "user") {
-      parts.push(`**You:**\n\n${message.text.trim()}`);
+      parts.push(`**You:**\n\n${text}`);
     } else if (message.role === "assistant") {
-      parts.push(`**Assistant:**\n\n${message.text.trim()}`);
+      parts.push(`**Assistant:**\n\n${text}`);
     } else if (message.role === "tool" && message.tool) {
       const tool = message.tool;
       const args = Object.keys(tool.args).length > 0 ? `\n\n\`\`\`json\n${JSON.stringify(tool.args, null, 2)}\n\`\`\`` : "";
@@ -403,9 +421,9 @@ function turnToMarkdown(turn: TurnGroup): string {
       parts.push(`**Tool · ${tool.name}** _(${tool.status})_${args}${output}`);
     } else if (message.role === "summary") {
       const kind = message.summaryKind === "branch" ? "Branch summary" : "Compaction summary";
-      parts.push(`**${kind}:**\n\n${message.text.trim()}`);
+      parts.push(`**${kind}:**\n\n${text}`);
     } else {
-      parts.push(`_${message.customLabel ?? message.role}:_ ${message.text.trim()}`);
+      parts.push(`_${message.customLabel ?? message.role}:_ ${text}`);
     }
   }
   return parts.join("\n\n");
