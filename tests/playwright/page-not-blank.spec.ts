@@ -38,6 +38,7 @@ const SEEDED_SESSIONS = [
   { id: "seeded-session-0001", label: "Seeded session" },
   { id: "seeded-session-blank-bug", label: "Blank-bug repro session" },
   { id: "seeded-session-image-deck", label: "Image-deck presentation" },
+  { id: "seeded-session-kitchen-sink", label: "Kitchen sink session" },
   { id: "seeded-session-longcode", label: "Long code session" },
   { id: "seeded-session-presentation", label: "Presentation artifact session" },
   { id: "seeded-session-structured-content", label: "Structured tool-call session" },
