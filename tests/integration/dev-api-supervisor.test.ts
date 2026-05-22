@@ -223,4 +223,38 @@ describe("dev-api.mjs supervisor", () => {
     expect(laterSpawns).toBe(initialSpawns);
     expect(fullLog()).not.toMatch(/change detected/);
   }, 8_000);
+
+  it("survives a synchronous spawn() failure (ELOOP / ENOENT) and keeps retrying instead of crashing", async () => {
+    // The exact failure mode observed on the dev box: a cyclic symlink in
+    // node_modules (or any other broken binary lookup) makes spawn() throw
+    // synchronously with ELOOP / ENOENT. Before this guard, the throw
+    // escaped scripts/dev-api.mjs entirely and the whole npm-run-dev:api:loop
+    // chain died with no respawn — the api stayed down indefinitely.
+    //
+    // We simulate by pointing the supervisor at a self-referencing symlink
+    // (always ELOOP on resolve).
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dev-api-eloop-"));
+    const cyclic = path.join(tmpDir, "loopme");
+    await fs.symlink(cyclic, cyclic);
+    try {
+      await startSupervisor({
+        cmd: [cyclic],
+        env: { DEV_API_DEBOUNCE_MS: "200", DEV_API_RESTART_MS: "150" },
+      });
+      // Wait for at least 3 spawn attempts — we want to prove the
+      // supervisor keeps looping rather than dying on the first throw.
+      await waitForLog((l) => (l.match(/spawn\(\) threw synchronously/g) ?? []).length >= 3, 4_000);
+
+      const throws = (fullLog().match(/spawn\(\) threw synchronously/g) ?? []).length;
+      expect(throws).toBeGreaterThanOrEqual(3);
+
+      // Crucially: the supervisor process itself must still be alive
+      // and running, NOT exited from an unhandled exception. Test
+      // afterEach kills it, so we just check the child handle.
+      expect(supervisor?.killed).toBeFalsy();
+      expect(supervisor?.exitCode).toBeNull();
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }, 10_000);
 });

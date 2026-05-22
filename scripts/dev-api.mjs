@@ -115,18 +115,48 @@ function killGroup(pid, signal) {
   }
 }
 
+function scheduleRespawn(reason) {
+  if (shuttingDown) return;
+  if (respawnTimer) return; // already queued
+  if (reason) log(`scheduling respawn in ${RESTART_DELAY_MS}ms (${reason})`);
+  respawnTimer = setTimeout(spawnChild, RESTART_DELAY_MS);
+}
+
 function spawnChild() {
   if (shuttingDown) return;
   if (respawnTimer) { clearTimeout(respawnTimer); respawnTimer = null; }
 
-  child = spawn(COMMAND[0], COMMAND.slice(1), {
-    cwd: projectRoot,
-    stdio: "inherit",
-    env: process.env,
-    // New process group: child.pid is the group leader. Lets us signal the
-    // entire tree (npm → sh → tsx → node) atomically via process.kill(-pid).
-    detached: true,
-  });
+  // `spawn()` can throw SYNCHRONOUSLY for immediate failures like ENOENT,
+  // EACCES, or ELOOP (cyclic symlink — e.g. node_modules pointing at
+  // itself). Without this try/catch the exception escapes the supervisor
+  // entirely and the whole `npm run dev:api:loop` chain crashes, leaving
+  // the api down with no respawn. Observed in the wild after a separate
+  // bug recreated the cyclic node_modules symlink.
+  try {
+    child = spawn(COMMAND[0], COMMAND.slice(1), {
+      cwd: projectRoot,
+      stdio: "inherit",
+      env: process.env,
+      // New process group: child.pid is the group leader. Lets us signal the
+      // entire tree (npm → sh → tsx → node) atomically via process.kill(-pid).
+      detached: true,
+    });
+  } catch (err) {
+    log(`spawn() threw synchronously: ${err && err.message ? err.message : err}. Will retry.`);
+    child = null;
+    scheduleRespawn("sync spawn() failure");
+    return;
+  }
+
+  // Even if spawn() returns, the child might be in a half-broken state.
+  // child.pid is undefined when the platform refused the spawn outright.
+  if (!child || child.pid == null) {
+    log(`spawn() returned no pid. Treating as failure; will retry.`);
+    child = null;
+    scheduleRespawn("no pid after spawn");
+    return;
+  }
+
   const pid = child.pid;
   log(`spawned pid=${pid} (pgid=${pid}): ${COMMAND.join(" ")}`);
 
@@ -136,16 +166,29 @@ function spawnChild() {
     // shouldn't happen but we paid the cost once already).
     killGroup(pid, "SIGKILL");
     child = null;
-    if (shuttingDown) return;
-    respawnTimer = setTimeout(spawnChild, RESTART_DELAY_MS);
+    scheduleRespawn();
   });
 
   child.on("error", (err) => {
-    log(`child spawn error: ${err.message}`);
-    // 'error' events are typically followed by 'exit'; the exit handler
-    // will schedule the respawn.
+    // Async spawn errors. The 'exit' handler will schedule the respawn;
+    // this is just for diagnostics.
+    log(`child spawn error (async): ${err && err.message ? err.message : err}`);
   });
 }
+
+// One last belt-and-suspenders: if any unhandled async failure reaches
+// the top of the supervisor, log it and try to keep going rather than
+// letting the process die. The api can't restart if the supervisor is
+// dead, so this is the difference between "glitch survives" and "sysop
+// has to manually `npm run dev:api:loop` again".
+process.on("uncaughtException", (err) => {
+  log(`uncaughtException: ${err && err.stack ? err.stack : err}`);
+  scheduleRespawn("uncaughtException");
+});
+process.on("unhandledRejection", (reason) => {
+  log(`unhandledRejection: ${reason && reason.stack ? reason.stack : reason}`);
+  scheduleRespawn("unhandledRejection");
+});
 
 function triggerRestart(reason) {
   if (shuttingDown) return;
