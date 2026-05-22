@@ -6,7 +6,7 @@ import fsp from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
-import { PiRpcAdapter } from "./pi/pirpc-pi-adapter.js";
+import { contentTextAndThinking, PiRpcAdapter } from "./pi/pirpc-pi-adapter.js";
 import { MAX_PROMPT_CHARS } from "../shared/limits.js";
 import type { ExtensionUiResponse } from "../shared/protocol.js";
 import type { PromptAttachment, SessionListItem, SessionMessage } from "./pi/types.js";
@@ -1194,6 +1194,23 @@ export function toDashboardMessages(messages: readonly SessionMessage[], options
   const sessionId = options.sessionId;
   return messages.map((message, index) => {
     const id = `${message.timestamp}-${index}`;
+    // Normalize structured content arrays into visible-text + thinking +
+    // images. SessionMessage.content is *typed* as `string`, but the
+    // tail-read fast path in readSessionMessagesTail() returns raw JSONL
+    // records whose content is the on-disk array-of-blocks shape (text /
+    // thinking / toolCall / image). Without this fan-out the WUI sees the
+    // array as `text` and the safe-markdown coercion stringifies it into
+    // the bubble — producing literal `[ { "type": "toolCall", ... } ]`
+    // text instead of the expected Markdown body + thinking card + tool
+    // row. Pinned by tests/playwright/structured-content-tool-calls.spec.ts.
+    const normalized = typeof message.content === "string"
+      ? { text: message.content as string, thinking: "", images: [] as readonly { readonly data: string; readonly mimeType: string }[] }
+      : contentTextAndThinking(message.content);
+    // Prefer images extracted from the content array (real pirpc shape)
+    // over message.images, which the adapter only populates on its own
+    // normalization path.
+    const images = normalized.images.length > 0 ? normalized.images : message.images;
+    const thinking = message.thinking ?? (normalized.thinking ? normalized.thinking : undefined);
     return {
       id,
       role: message.role === "assistant"
@@ -1205,16 +1222,16 @@ export function toDashboardMessages(messages: readonly SessionMessage[], options
             : message.role === "summary"
               ? "summary"
               : "custom",
-      text: message.content,
+      text: normalized.text,
       provider: message.role === "assistant" ? "pi" : undefined,
       tool: message.tool ? stripToolForTransport(message.tool, sessionId, id) : undefined,
-      images: sessionId && message.images ? stripImagesForTransport(message.images, sessionId, id) : message.images,
+      images: sessionId && images ? stripImagesForTransport(images, sessionId, id) : images,
       timestamp: message.timestamp,
       ...(message.customType ? { customType: message.customType } : {}),
       ...(message.details ? stripDetailsForTransport(message.details, sessionId, id) : {}),
       ...(message.stopReason ? { stopReason: message.stopReason } : {}),
       ...(message.errorMessage ? { error: message.errorMessage } : {}),
-      ...(message.thinking ? { thinking: message.thinking } : {}),
+      ...(thinking ? { thinking } : {}),
       ...(message.summaryKind ? { summaryKind: message.summaryKind } : {}),
     };
   });

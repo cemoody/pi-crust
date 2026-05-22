@@ -38,7 +38,16 @@ test.describe('structured assistant content on initial session load', () => {
   // /messages payload is empty or malformed. Once it's visible we know
   // the timeline region has had a chance to render.
   async function waitForTimelineMounted(page: import('@playwright/test').Page) {
-    await page.goto(`/?session=${SESSION_ID}`);
+    // Land on the index first so the server-side coldSessionFiles cache
+    // is warmed by the listSessions response before the WUI fires its
+    // first /messages fetch. Without this priming, a deep-link straight
+    // to /?session=<id> on a freshly-booted API races the listSessions
+    // population and the /messages call can come back "Unknown session";
+    // the WUI does not retry that error path (PR #109 stopped the SSE-
+    // driven refetch loop), so the timeline silently stays empty.
+    await page.goto('/');
+    await expect(page.getByRole('link', { name: 'Structured tool-call session' })).toBeVisible();
+    await page.getByRole('link', { name: 'Structured tool-call session' }).click();
     await expect(page.getByRole('heading', { name: 'Structured tool-call session' })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Message timeline' })).toBeVisible();
     // Wait for at least one rendered message bubble so the assertions

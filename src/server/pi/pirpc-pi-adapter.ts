@@ -1053,7 +1053,25 @@ function contentTextAndImages(content: unknown): { text: string; images: NonNull
   return { text, images };
 }
 
-function contentTextAndThinking(content: unknown): { text: string; thinking: string; images: NonNullable<SessionMessage["images"]> } {
+/**
+ * Decompose a SessionMessage `content` payload into its visible-text,
+ * thinking, and image components. Mirrors the on-disk pirpc / Anthropic-
+ * messages content-block shape:
+ *
+ *   string                                 -> { text, thinking:'', images:[] }
+ *   [{type:'text',text}, {type:'thinking',thinking}, {type:'image',data}]
+ *                                          -> per-field decomposition
+ *   anything else                          -> JSON.stringify fallback
+ *
+ * Exported because the /messages HTTP route (toDashboardMessages in
+ * http-api-server.ts) needs the same fan-out as the adapter's own
+ * getMessages() path: PR #102's tail-read fast path bypasses the adapter
+ * entirely, so without this helper a fresh session-load sends array
+ * content straight to the WUI and the safe-markdown coercion in
+ * MessageTimeline stringifies the blocks into the assistant bubble. Pinned
+ * by tests/playwright/structured-content-tool-calls.spec.ts.
+ */
+export function contentTextAndThinking(content: unknown): { text: string; thinking: string; images: NonNullable<SessionMessage["images"]> } {
   if (typeof content === "string") return { text: content, thinking: "", images: [] };
   if (!Array.isArray(content)) return { text: content === undefined ? "" : JSON.stringify(content), thinking: "", images: [] };
   const text: string[] = [];
