@@ -164,7 +164,7 @@ test.describe("Download HTML produces a CDN-shippable single file", () => {
     });
 
     await page.goto("/");
-    await page.getByRole("button", { name: /^Image-deck presentation\b/ }).click();
+    await page.getByRole("link", { name: /^Image-deck presentation\b/ }).click();
     const link = page.getByRole("link", { name: "Download HTML" });
     await link.waitFor();
     const blobHref = await link.getAttribute("href");
