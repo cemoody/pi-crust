@@ -94,6 +94,36 @@ describe("GET /api/sessions/statuses performance", () => {
     expect(bytesRead.total()).toBeLessThan(2_000_000);
   });
 
+  it("only re-reads the appended tail when a session file grows between polls", async () => {
+    // 4 sessions × 1 MB. First /statuses warms the index for all of them.
+    const { baseUrl, projectRoot, sessionFiles } = await buildSessionCorpus({ count: 4, sizeBytes: 1_000_000 });
+    const warmUrl = `${baseUrl}/api/sessions/statuses?cwd=${encodeURIComponent(projectRoot)}`;
+    await (await fetch(warmUrl)).text();
+
+    // Append a fresh user-message line to ONE session, the way the active
+    // session would grow while the user types. Mtime moves forward; the
+    // size+mtime cache key today invalidates and forces a full re-read.
+    const activeFile = sessionFiles[0]!;
+    // Filesystems on some hosts have second-level mtime resolution; nudge so
+    // the cache key is guaranteed to change.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const appendedLine = JSON.stringify({
+      type: "message",
+      message: { role: "user", content: "new prompt", timestamp: 1_700_000_500_000 },
+    }) + "\n";
+    await fsp.appendFile(activeFile, appendedLine, "utf8");
+
+    const bytesRead = trackBytesReadFromSessionFiles(sessionFiles);
+    const response = await fetch(warmUrl);
+    expect(response.ok).toBe(true);
+    await response.text();
+
+    // A correct incremental index only reads ~the appended bytes from the
+    // one changed file (plus a small stat overhead for the untouched ones).
+    // Today the full 1 MB body of the changed file is re-slurped.
+    expect(bytesRead.total()).toBeLessThan(50_000);
+  });
+
   it("does not re-scan every session file on a fresh server process", async () => {
     // Pre-build a corpus. The first server instance warms whatever index is
     // available. A second server instance pointed at the same files should

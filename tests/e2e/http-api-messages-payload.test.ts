@@ -17,11 +17,13 @@
  */
 
 import { EventEmitter } from "node:events";
-import fs from "node:fs/promises";
+import fsp from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const fs = fsp;
 import { createHttpApiServer } from "../../src/server/http-api-server.js";
 import type {
   CreateSessionOptions,
@@ -43,6 +45,7 @@ const servers: http.Server[] = [];
 const tempRoots: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   })));
@@ -121,6 +124,29 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
     expect(body.length).toBeLessThan(200_000);
   });
 
+  it("does not read the entire session jsonl when ?limit=N is requested", async () => {
+    // Build a large session file on disk and use a file-backed adapter so
+    // the server has to actually do I/O to materialise messages. The
+    // implementation may either teach the adapter about windows OR read the
+    // file tail directly in the route handler. Either way the FS bytes
+    // charged to a tail-only request must be O(window), not O(file).
+    const totalMessages = 400;
+    const { baseUrl, sessionId, sessionFile } = await startWithFileBackedMessages(totalMessages);
+
+    const fileStat = await fs.stat(sessionFile);
+    expect(fileStat.size).toBeGreaterThan(5_000_000); // sanity: the file is big enough that a naive full-scan is obvious.
+
+    const bytesRead = trackBytesReadFrom(sessionFile);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=25`);
+    expect(response.ok).toBe(true);
+    await response.text();
+
+    // 25 messages × a few KB each ≈ well under 200 KB. The current
+    // implementation reads the whole multi-MB file via the adapter.
+    expect(bytesRead.total()).toBeLessThan(200_000);
+  });
+
   it("supports paginating very long transcripts via a limit parameter", async () => {
     const messages: SessionMessage[] = Array.from({ length: 250 }, (_, index) => ({
       role: index % 2 === 0 ? "user" as const : "assistant" as const,
@@ -147,6 +173,121 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
 // ---------------------------------------------------------------------------
 // Test harness
 // ---------------------------------------------------------------------------
+
+function trackBytesReadFrom(targetFile: string): { total: () => number } {
+  let totalBytes = 0;
+  const resolved = path.resolve(targetFile);
+  const original = fsp.readFile.bind(fsp);
+  vi.spyOn(fsp, "readFile").mockImplementation(async (filePath: Parameters<typeof fsp.readFile>[0], opts?: Parameters<typeof fsp.readFile>[1]) => {
+    const result = await (original as unknown as (p: typeof filePath, o?: typeof opts) => Promise<string | Buffer>)(filePath, opts);
+    if (typeof filePath === "string" && path.resolve(filePath) === resolved) {
+      totalBytes += typeof result === "string" ? Buffer.byteLength(result, "utf8") : result.byteLength;
+    }
+    return result as never;
+  });
+  return { total: () => totalBytes };
+}
+
+/**
+ * Builds a session whose getMessages() actually reads + parses the on-disk
+ * jsonl, mirroring the production sdk-pi-adapter. Used by the bytes-read
+ * budget test for ?limit so we measure I/O the same way production does.
+ */
+async function startWithFileBackedMessages(messageCount: number): Promise<{ baseUrl: string; sessionId: string; sessionFile: string }> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-msgs-file-"));
+  tempRoots.push(root);
+  const projectRoot = path.join(root, "project");
+  const sessionRoot = path.join(root, "sessions");
+  await fs.mkdir(projectRoot, { recursive: true });
+  await fs.mkdir(sessionRoot, { recursive: true });
+  const sessionFile = path.join(sessionRoot, "file-backed.jsonl");
+
+  const lines: string[] = [];
+  lines.push(JSON.stringify({ type: "session", id: "file-backed-session", cwd: projectRoot, timestamp: 1_700_000_000_000 }));
+  for (let index = 0; index < messageCount; index++) {
+    // Pad each message so the file is comfortably multi-megabyte.
+    const padding = "y".repeat(15_000);
+    lines.push(JSON.stringify({
+      type: "message",
+      message: {
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: `message ${index} ${padding}`,
+        timestamp: 1_700_000_000_000 + index * 1000,
+      },
+    }));
+  }
+  await fs.writeFile(sessionFile, lines.join("\n") + "\n", "utf8");
+
+  const adapter = new FileBackedAdapter(sessionFile, projectRoot);
+  const registry = new SessionRegistry({
+    adapter,
+    pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
+  });
+  await registry.createSession({ cwd: projectRoot, sessionName: "file-backed" });
+  const server = createHttpApiServer({ registry, adapterKind: "test", projectRoot, sessionRoot, defaultCwd: projectRoot });
+  servers.push(server);
+  const baseUrl = await listen(server);
+  return { baseUrl, sessionId: adapter.handle.id, sessionFile };
+}
+
+class FileBackedAdapter implements PiAdapter {
+  readonly handle: FileBackedHandle;
+  constructor(sessionFile: string, projectRoot: string) {
+    this.handle = new FileBackedHandle({ id: "file-backed-session", cwd: projectRoot, sessionFile });
+  }
+  async createSession(_options: CreateSessionOptions): Promise<PiSessionHandle> { return this.handle; }
+  async openSession(_options: OpenSessionOptions): Promise<PiSessionHandle> { return this.handle; }
+  async listSessions(): Promise<readonly SessionListItem[]> {
+    return [{ id: this.handle.id, cwd: this.handle.cwd, sessionFile: this.handle.sessionFile, lastActivity: 0 }];
+  }
+  async listModels(): Promise<readonly ModelInfo[]> {
+    return [{ provider: "test", id: "file-backed", name: "File-backed", available: true }];
+  }
+}
+
+class FileBackedHandle implements PiSessionHandle {
+  readonly id: string;
+  readonly cwd: string;
+  readonly sessionFile: string;
+  sessionName: string | undefined;
+  private readonly emitter = new EventEmitter();
+  constructor(options: { readonly id: string; readonly cwd: string; readonly sessionFile: string }) {
+    this.id = options.id;
+    this.cwd = options.cwd;
+    this.sessionFile = options.sessionFile;
+  }
+  async getState(): Promise<SessionState> {
+    return {
+      id: this.id,
+      cwd: this.cwd,
+      sessionFile: this.sessionFile,
+      status: "idle",
+      messageCount: 0,
+      lastActivity: 0,
+    };
+  }
+  async getMessages(): Promise<readonly SessionMessage[]> {
+    // Mirrors the production sdk-pi-adapter: slurp the whole jsonl, parse it,
+    // and yield every message. The desired implementation should NOT route
+    // tail-only requests through this method.
+    const content = await fsp.readFile(this.sessionFile, "utf8");
+    const messages: SessionMessage[] = [];
+    for (const line of content.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line) as { type?: string; message?: SessionMessage };
+        if (entry.type === "message" && entry.message) messages.push(entry.message);
+      } catch { /* skip */ }
+    }
+    return messages;
+  }
+  async prompt(_message: string, _attachments: readonly PromptAttachment[] = []): Promise<void> {}
+  async abort(): Promise<void> {}
+  async setSessionName(name: string): Promise<SessionState> { this.sessionName = name; return this.getState(); }
+  async setModel(_provider: string, _modelId: string): Promise<SessionState> { return this.getState(); }
+  subscribe(listener: PiEventListener): Unsubscribe { this.emitter.on("event", listener); return () => this.emitter.off("event", listener); }
+  async dispose(): Promise<void> {}
+}
 
 async function startWithMessages(messages: readonly SessionMessage[]): Promise<{ baseUrl: string; sessionId: string }> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-msgs-payload-"));
