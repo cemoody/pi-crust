@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -23,6 +24,10 @@ export interface WorkerRegistryOptions {
 export function defaultRuntimeDir(): string {
   const xdg = process.env.XDG_RUNTIME_DIR;
   if (xdg && xdg.length > 0) return path.join(xdg, "pi-remote-control");
+  // macOS's os.tmpdir() is usually a long /var/folders/... path. Unix-domain
+  // socket paths are limited (about 104 bytes on macOS), so keep the default
+  // runtime root short there.
+  if (process.platform === "darwin") return path.join("/tmp", `pi-remote-control-${process.getuid?.() ?? "user"}`);
   return path.join(os.tmpdir(), "pi-remote-control");
 }
 
@@ -30,16 +35,19 @@ export class WorkerRegistry {
   readonly runtimeDir: string;
   readonly sessionsDir: string;
   readonly workersDir: string;
+  readonly socketDir: string;
 
   constructor(options: WorkerRegistryOptions = {}) {
     this.runtimeDir = options.runtimeDir ?? defaultRuntimeDir();
     this.sessionsDir = path.join(this.runtimeDir, "sessions");
     this.workersDir = path.join(this.runtimeDir, "workers");
+    this.socketDir = path.join(this.runtimeDir, "s");
   }
 
   async ensureDirs(): Promise<void> {
     await fs.mkdir(this.sessionsDir, { recursive: true, mode: 0o700 });
     await fs.mkdir(this.workersDir, { recursive: true, mode: 0o700 });
+    await fs.mkdir(this.socketDir, { recursive: true, mode: 0o700 });
   }
 
   /**
@@ -82,7 +90,7 @@ export class WorkerRegistry {
   }
 
   socketPath(sessionId: string): string {
-    return path.join(this.sessionsDir, `${sessionId}.sock`);
+    return path.join(this.socketDir, socketBasename(sessionId));
   }
 
   workerReadyPath(workerToken: string): string {
@@ -106,6 +114,11 @@ export function isPidAlive(pid: number): boolean {
     if (code === "EPERM") return true;
     return false;
   }
+}
+
+export function socketBasename(sessionId: string): string {
+  const digest = crypto.createHash("sha256").update(sessionId).digest("hex").slice(0, 16);
+  return `${digest}.sock`;
 }
 
 async function safeReaddir(dir: string): Promise<readonly string[]> {

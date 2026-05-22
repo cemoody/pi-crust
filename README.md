@@ -83,8 +83,9 @@ so:
   attachment, automatic downscale of oversized images so providers don't
   reject them.
 - **Pi RPC adapter with detached workers.** Each live session runs as a
-  supervised `pi --mode rpc` subprocess under
-  `${XDG_RUNTIME_DIR:-/tmp/pi-remote-control}/sessions/`. The API server
+  supervised `pi --mode rpc` subprocess under a short runtime directory
+  such as `/tmp/pi-remote-control-501/` (status in `sessions/`, sockets in
+  `s/`). The API server
   can be killed and restarted (or upgraded) without losing live sessions —
   the new API process reattaches and replays missed events via SSE
   `Last-Event-ID`.
@@ -232,8 +233,9 @@ entirely if you ever need the old behavior.
 **Active session safety.** The api's SIGTERM handler `detachAll()`s its
 sessions before exiting, leaving the pirpc supervisor processes alive
 on disk. On the next api boot, `reattachAll()` reconnects to them via
-their `/tmp/pi-remote-control/sessions/<sessionId>.sock` files. This
-behavior is pinned by `tests/e2e/api-restart-resume.test.ts`, which
+their runtime socket files (for example
+`/tmp/pi-remote-control-501/s/<socket-hash>.sock`). This behavior is pinned
+by `tests/e2e/api-restart-resume.test.ts`, which
 restarts the api mid-stream and asserts the final message matches a
 no-restart control run.
 

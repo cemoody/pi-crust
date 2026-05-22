@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
+import { socketBasename } from "../../src/server/session/worker-registry.js";
 
 const supervisorScript = path.resolve(__dirname, "../../scripts/pirpc-supervisor.mjs");
 const tmpDirs: string[] = [];
@@ -262,9 +263,9 @@ describe("pirpc-supervisor", () => {
     const ready = await waitForReady(path.join(runtimeDir, "workers", "tok-move.ready"));
     expect(ready.sessionId).toBe("original-session");
     const oldStatus = path.join(runtimeDir, "sessions", "original-session.json");
-    const oldSocket = path.join(runtimeDir, "sessions", "original-session.sock");
+    const oldSocket = path.join(runtimeDir, "s", socketBasename("original-session"));
     const newStatus = path.join(runtimeDir, "sessions", "forked-session.json");
-    const newSocket = path.join(runtimeDir, "sessions", "forked-session.sock");
+    const newSocket = path.join(runtimeDir, "s", socketBasename("forked-session"));
     await expect(fs.access(oldStatus)).resolves.toBeUndefined();
     await expect(fs.access(oldSocket)).resolves.toBeUndefined();
 
