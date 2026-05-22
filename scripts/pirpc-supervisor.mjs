@@ -32,6 +32,7 @@
 //                           once the supervisor knows the real sessionId)
 //   --ring-size <N>         optional, default 1000
 
+import crypto from "node:crypto";
 import net from "node:net";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -58,6 +59,10 @@ function detachFromTty() {
   try { process.stdin.unref?.(); } catch {}
   try { process.stdout.unref?.(); } catch {}
   try { process.stderr.unref?.(); } catch {}
+}
+
+function socketBasename(sessionId) {
+  return `${crypto.createHash("sha256").update(sessionId).digest("hex").slice(0, 16)}.sock`;
 }
 
 async function atomicWriteJson(target, value) {
@@ -107,8 +112,10 @@ async function main() {
 
   const sessionsDir = path.join(runtimeDir, "sessions");
   const workersDir = path.join(runtimeDir, "workers");
+  const socketDir = path.join(runtimeDir, "s");
   await fsp.mkdir(sessionsDir, { recursive: true, mode: 0o700 });
   await fsp.mkdir(workersDir, { recursive: true, mode: 0o700 });
+  await fsp.mkdir(socketDir, { recursive: true, mode: 0o700 });
 
   // Spawn the real pi RPC child. We own its stdio.
   const child = spawn(piCommand, piArgs, { cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
@@ -278,7 +285,7 @@ async function main() {
 
   async function bindSocket() {
     if (server || !sessionId) return;
-    socketPath = path.join(sessionsDir, `${sessionId}.sock`);
+    socketPath = path.join(socketDir, socketBasename(sessionId));
     statusPath = path.join(sessionsDir, `${sessionId}.json`);
     // Refuse to steal an active socket from another live supervisor for the
     // same session. If the existing supervisor is alive, exit ourselves; the

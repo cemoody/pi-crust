@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { WorkerRegistry, isPidAlive } from "../../src/server/session/worker-registry.js";
+import { WorkerRegistry, defaultRuntimeDir, isPidAlive, socketBasename } from "../../src/server/session/worker-registry.js";
 
 const createdDirs: string[] = [];
 afterEach(async () => {
@@ -26,7 +26,7 @@ describe("WorkerRegistry", () => {
     const aliveStatus = {
       pid: process.pid,
       sessionId: "alive-session",
-      socketPath: path.join(registry.sessionsDir, "alive-session.sock"),
+      socketPath: registry.socketPath("alive-session"),
       sessionFile: path.join(runtimeDir, "alive.jsonl"),
       cwd: runtimeDir,
       lastSeq: 7,
@@ -44,7 +44,7 @@ describe("WorkerRegistry", () => {
     const deadStatus = {
       pid: deadPid,
       sessionId: "dead-session",
-      socketPath: path.join(registry.sessionsDir, "dead-session.sock"),
+      socketPath: registry.socketPath("dead-session"),
       sessionFile: path.join(runtimeDir, "dead.jsonl"),
       cwd: runtimeDir,
       lastSeq: 0,
@@ -66,6 +66,21 @@ describe("WorkerRegistry", () => {
     await expect(fs.access(aliveStatus.socketPath)).resolves.toBeUndefined();
     // Garbage removed.
     await expect(fs.access(path.join(registry.sessionsDir, "garbage.json"))).rejects.toThrow();
+  });
+
+  it("uses short stable socket names to stay under Unix socket path limits", async () => {
+    const runtimeDir = await makeRuntime();
+    const registry = new WorkerRegistry({ runtimeDir });
+    const sessionId = "019e51d8-e9ec-7a38-94f9-203bfe92a7b5";
+
+    expect(socketBasename(sessionId)).toMatch(/^[a-f0-9]{16}\.sock$/);
+    expect(registry.socketPath(sessionId)).toBe(path.join(registry.socketDir, socketBasename(sessionId)));
+    expect(path.basename(registry.socketPath(sessionId))).not.toContain(sessionId);
+  });
+
+  it("uses a short default runtime root on macOS", () => {
+    if (process.platform !== "darwin") return;
+    expect(defaultRuntimeDir()).toMatch(/^\/tmp\/pi-remote-control-/);
   });
 
   it("isPidAlive treats finite alive pids true and zero/negative false", () => {
