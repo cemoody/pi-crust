@@ -609,7 +609,64 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && action === "messages") {
     const session = await getOrOpenSession(context, sessionId);
-    return sendJson(res, 200, toDashboardMessages(await session.handle.getMessages()));
+    const limitRaw = url.searchParams.get("limit");
+    const beforeRaw = url.searchParams.get("before");
+    const limit = limitRaw && /^\d+$/.test(limitRaw) ? Math.min(Number(limitRaw), MAX_MESSAGES_LIMIT) : undefined;
+    const before = beforeRaw && /^-?\d+$/.test(beforeRaw) ? Number(beforeRaw) : undefined;
+    let messages: readonly SessionMessage[];
+    if (limit !== undefined) {
+      // Tail-window query: read only the trailing chunk of the session file
+      // directly so a huge transcript doesn't have to be slurped + parsed in
+      // full. Falls back to the adapter if a tail-read isn't possible (e.g.
+      // session file doesn't exist on disk yet).
+      const tail = await readSessionMessagesTail(session.sessionFile, before === undefined ? { limit } : { limit, before });
+      if (tail === undefined) {
+        messages = (await session.handle.getMessages()).slice(-limit);
+      } else {
+        messages = tail;
+      }
+    } else {
+      messages = await session.handle.getMessages();
+    }
+    return sendJson(res, 200, toDashboardMessages(messages, { sessionId: session.id }));
+  }
+
+  // Lazy fetch of inline image bytes that we strip from /messages payloads
+  // to keep the timeline JSON small. Image URLs are issued by
+  // toDashboardMessages; this route resolves them back to raw bytes.
+  const imageMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/images\/(\d+)$/);
+  if (req.method === "GET" && imageMatch) {
+    const session = await getOrOpenSession(context, decodeURIComponent(imageMatch[1]!));
+    const messageId = decodeURIComponent(imageMatch[2]!);
+    const imageIndex = Number(imageMatch[3]!);
+    const allMessages = await session.handle.getMessages();
+    const message = findMessageById(allMessages, messageId);
+    const image = message?.images?.[imageIndex];
+    if (!image) return sendJson(res, 404, { error: "image not found" });
+    const bytes = Buffer.from(image.data, "base64");
+    res.writeHead(200, {
+      "Content-Type": image.mimeType || "application/octet-stream",
+      "Content-Length": String(bytes.byteLength),
+      "Cache-Control": "private, max-age=300",
+    });
+    res.end(bytes);
+    return;
+  }
+
+  // Lazy fetch of full tool output that we truncate in /messages payloads.
+  const toolOutputMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/tool-output$/);
+  if (req.method === "GET" && toolOutputMatch) {
+    const session = await getOrOpenSession(context, decodeURIComponent(toolOutputMatch[1]!));
+    const messageId = decodeURIComponent(toolOutputMatch[2]!);
+    const allMessages = await session.handle.getMessages();
+    const message = findMessageById(allMessages, messageId);
+    if (!message?.tool) return sendJson(res, 404, { error: "tool output not found" });
+    res.writeHead(200, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "private, max-age=60",
+    });
+    res.end(message.tool.output ?? "");
+    return;
   }
 
   if (req.method === "GET" && (action === "state" || action === undefined)) {
@@ -630,7 +687,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const { promptText, modelAttachments } = await preparePromptAttachments(session.handle, text, attachments);
     await context.registry.prompt(session.id, promptText, modelAttachments);
     const updatedSession = await getOrOpenSession(context, session.id);
-    return sendJson(res, 200, toDashboardMessages(await updatedSession.handle.getMessages()));
+    return sendJson(res, 200, toDashboardMessages(await updatedSession.handle.getMessages(), { sessionId: updatedSession.id }));
   }
 
   if (req.method === "POST" && action === "bash") {
@@ -641,7 +698,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const session = await getOrOpenSession(context, sessionId);
     await context.registry.prompt(session.id, `${body.includeInContext === false ? "Run this hidden shell command for operator context only" : "Run this shell command and consider its output"}: ${body.command}`);
     const updatedSession = await getOrOpenSession(context, session.id);
-    return sendJson(res, 200, toDashboardMessages(await updatedSession.handle.getMessages()));
+    return sendJson(res, 200, toDashboardMessages(await updatedSession.handle.getMessages(), { sessionId: updatedSession.id }));
   }
 
   if (req.method === "POST" && action === "abort") {
@@ -883,30 +940,156 @@ function formatTokens(value: number): string {
   return `${(value / 1_000_000).toFixed(1)}M`;
 }
 
-export function toDashboardMessages(messages: readonly SessionMessage[]) {
-  return messages.map((message, index) => ({
-    id: `${message.timestamp}-${index}`,
-    role: message.role === "assistant"
-      ? "assistant"
-      : message.role === "user"
-        ? "user"
-        : message.role === "tool"
-          ? "tool"
-          : message.role === "summary"
-            ? "summary"
-            : "custom",
-    text: message.content,
-    provider: message.role === "assistant" ? "pi" : undefined,
-    tool: message.tool,
-    images: message.images,
-    timestamp: message.timestamp,
-    ...(message.customType ? { customType: message.customType } : {}),
-    ...(message.details ? { details: message.details } : {}),
-    ...(message.stopReason ? { stopReason: message.stopReason } : {}),
-    ...(message.errorMessage ? { error: message.errorMessage } : {}),
-    ...(message.thinking ? { thinking: message.thinking } : {}),
-    ...(message.summaryKind ? { summaryKind: message.summaryKind } : {}),
+/**
+ * Maximum number of messages a single /messages call is allowed to return.
+ * Acts as a server-side safety net even if a client passes a huge ?limit.
+ */
+export const MAX_MESSAGES_LIMIT = 1000;
+/**
+ * Tool outputs longer than this are truncated in /messages responses; the
+ * full text is fetchable via /messages/:messageId/tool-output. Keeps single
+ * transcript responses small even when an assistant has run cat on a 30 MB
+ * log.
+ */
+export const MAX_INLINE_TOOL_OUTPUT_BYTES = 16 * 1024;
+
+export interface ToDashboardMessagesOptions {
+  /** When set, image bytes are stripped from the payload and replaced with a
+   *  URL the WUI can fetch on demand. Tool outputs over the inline threshold
+   *  are also truncated and given an `outputUrl` fallback. Without a
+   *  sessionId we can't issue per-message URLs, so we leave the payload as-is
+   *  for unit-test back-compat. */
+  readonly sessionId?: string;
+}
+
+export function toDashboardMessages(messages: readonly SessionMessage[], options: ToDashboardMessagesOptions = {}) {
+  const sessionId = options.sessionId;
+  return messages.map((message, index) => {
+    const id = `${message.timestamp}-${index}`;
+    return {
+      id,
+      role: message.role === "assistant"
+        ? "assistant"
+        : message.role === "user"
+          ? "user"
+          : message.role === "tool"
+            ? "tool"
+            : message.role === "summary"
+              ? "summary"
+              : "custom",
+      text: message.content,
+      provider: message.role === "assistant" ? "pi" : undefined,
+      tool: message.tool ? stripToolForTransport(message.tool, sessionId, id) : undefined,
+      images: sessionId && message.images ? stripImagesForTransport(message.images, sessionId, id) : message.images,
+      timestamp: message.timestamp,
+      ...(message.customType ? { customType: message.customType } : {}),
+      ...(message.details ? { details: message.details } : {}),
+      ...(message.stopReason ? { stopReason: message.stopReason } : {}),
+      ...(message.errorMessage ? { error: message.errorMessage } : {}),
+      ...(message.thinking ? { thinking: message.thinking } : {}),
+      ...(message.summaryKind ? { summaryKind: message.summaryKind } : {}),
+    };
+  });
+}
+
+function stripImagesForTransport(images: readonly { readonly data: string; readonly mimeType: string }[], sessionId: string, messageId: string) {
+  return images.map((image, imageIndex) => ({
+    mimeType: image.mimeType,
+    url: `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/images/${imageIndex}`,
   }));
+}
+
+function stripToolForTransport(tool: NonNullable<SessionMessage["tool"]>, sessionId: string | undefined, messageId: string) {
+  const output = tool.output ?? "";
+  if (!sessionId || Buffer.byteLength(output, "utf8") <= MAX_INLINE_TOOL_OUTPUT_BYTES) return tool;
+  // Keep the first/last few KB inline so the UI still shows context without
+  // a second round-trip. The exact midpoint is replaced with a marker that
+  // includes the byte count and a URL to the full payload.
+  const halfWindow = Math.floor(MAX_INLINE_TOOL_OUTPUT_BYTES / 2);
+  const head = output.slice(0, halfWindow);
+  const tail = output.slice(-halfWindow);
+  const fullBytes = Buffer.byteLength(output, "utf8");
+  const outputUrl = `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/tool-output`;
+  const truncated = `${head}\n\n…[${(fullBytes / 1024).toFixed(0)} KB truncated — full output at ${outputUrl}]…\n\n${tail}`;
+  return { ...tool, output: truncated, outputTruncated: true, outputUrl, outputFullBytes: fullBytes };
+}
+
+function findMessageById(messages: readonly SessionMessage[], id: string): SessionMessage | undefined {
+  for (let index = 0; index < messages.length; index++) {
+    const candidate = messages[index]!;
+    if (`${candidate.timestamp}-${index}` === id) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * Reads up to `limit` recent SessionMessage entries from the end of a
+ * jsonl-formatted session file without loading the whole file. Returns
+ * undefined when the file can't be opened (caller should fall back to the
+ * adapter). Multi-byte UTF-8 safe: we never decode a chunk until we have a
+ * complete line boundary (newline).
+ */
+async function readSessionMessagesTail(
+  sessionFile: string,
+  options: { readonly limit: number; readonly before?: number },
+): Promise<readonly SessionMessage[] | undefined> {
+  if (!sessionFile) return undefined;
+  let stat: import("node:fs").Stats;
+  try { stat = await fsp.stat(sessionFile); } catch { return undefined; }
+  if (!stat.isFile()) return undefined;
+  // Treat an empty session file as "no on-disk transcript yet" and defer to
+  // the adapter, which may still have in-memory messages (e.g. mock adapter
+  // and fresh sessions whose first prompt hasn't been persisted).
+  if (stat.size === 0) return undefined;
+
+  const TAIL_CHUNK_SIZE = 64 * 1024;
+  const fd = await fsp.open(sessionFile, "r");
+  try {
+    let position = stat.size;
+    let leftover = Buffer.alloc(0);
+    const collected: SessionMessage[] = [];
+
+    while (position > 0 && collected.length < options.limit) {
+      const readSize = Math.min(TAIL_CHUNK_SIZE, position);
+      position -= readSize;
+      const chunk = Buffer.alloc(readSize);
+      await fd.read(chunk, 0, readSize, position);
+      const buf = leftover.length === 0 ? chunk : Buffer.concat([chunk, leftover]);
+
+      let parseStart = 0;
+      if (position > 0) {
+        // Bytes before the first newline could be the tail of an earlier
+        // (still-unread) line. Save them for the next iteration and parse
+        // everything after the first newline.
+        const firstNewline = buf.indexOf(0x0a);
+        if (firstNewline === -1) {
+          leftover = buf;
+          continue;
+        }
+        leftover = buf.subarray(0, firstNewline);
+        parseStart = firstNewline + 1;
+      } else {
+        leftover = Buffer.alloc(0);
+      }
+
+      const text = buf.subarray(parseStart).toString("utf8");
+      const lines = text.split("\n");
+      const fresh: SessionMessage[] = [];
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let entry: unknown;
+        try { entry = JSON.parse(line); } catch { continue; }
+        if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) continue;
+        const message = entry.message as unknown as SessionMessage;
+        if (options.before !== undefined && typeof message.timestamp === "number" && message.timestamp >= options.before) continue;
+        fresh.push(message);
+      }
+      collected.unshift(...fresh);
+    }
+    return collected.slice(-options.limit);
+  } finally {
+    await fd.close();
+  }
 }
 
 function normalizePromptAttachments(attachments: readonly PromptAttachment[] | undefined): readonly PromptAttachment[] {

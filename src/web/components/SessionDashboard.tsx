@@ -2017,7 +2017,12 @@ function toTimelineMessage(message: import("../api/session-api.js").DashboardMes
       ? {
           images: message.images.map((image, index) => ({
             id: `${message.id}-img-${index}`,
-            src: `data:${image.mimeType};base64,${image.data}`,
+            // Prefer the server-hosted URL (set when the server strips inline
+            // base64 to keep /messages payloads small). Fall back to the
+            // inline data URL for back-compat with smaller responses.
+            src: image.url
+              ? `${import.meta.env.VITE_PI_REMOTE_API_BASE ?? ""}${image.url}`
+              : `data:${image.mimeType};base64,${image.data ?? ""}`,
             alt: "image attachment",
           })),
         }

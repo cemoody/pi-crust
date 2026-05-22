@@ -220,14 +220,31 @@ function makeJsonlBody({ index, sizeBytes, cwd }: { readonly index: number; read
 function trackBytesReadFromSessionFiles(sessionFiles: readonly string[]): { total: () => number } {
   let totalBytes = 0;
   const set = new Set(sessionFiles.map((file) => path.resolve(file)));
-  const original = fsp.readFile.bind(fsp);
+  const originalReadFile = fsp.readFile.bind(fsp);
   vi.spyOn(fsp, "readFile").mockImplementation(async (filePath: Parameters<typeof fsp.readFile>[0], opts?: Parameters<typeof fsp.readFile>[1]) => {
-    const result = await (original as unknown as (p: typeof filePath, o?: typeof opts) => Promise<string | Buffer>)(filePath, opts);
+    const result = await (originalReadFile as unknown as (p: typeof filePath, o?: typeof opts) => Promise<string | Buffer>)(filePath, opts);
     if (typeof filePath === "string" && set.has(path.resolve(filePath))) {
       totalBytes += typeof result === "string" ? Buffer.byteLength(result, "utf8") : result.byteLength;
     }
     return result as never;
   });
+  // Wrap fsp.open so tail-read implementations that use FileHandle.read()
+  // are also counted.
+  const originalOpen = fsp.open.bind(fsp);
+  vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+    const handle = await (originalOpen as (...a: typeof args) => ReturnType<typeof fsp.open>)(...args);
+    const filePath = args[0];
+    if (typeof filePath === "string" && set.has(path.resolve(filePath))) {
+      const originalRead = handle.read.bind(handle);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (handle as any).read = (async (...readArgs: any[]) => {
+        const result = await (originalRead as (...a: any[]) => Promise<{ bytesRead: number }>)(...readArgs);
+        totalBytes += result.bytesRead ?? 0;
+        return result;
+      });
+    }
+    return handle;
+  }) as typeof fsp.open);
   return { total: () => totalBytes };
 }
 

@@ -86,7 +86,12 @@ export interface PromptAttachment {
 }
 
 export interface DashboardMessageImage {
-  readonly data: string;
+  /** Base64 image bytes. Only present for inline (small) images; for larger
+   *  payloads the server strips this and provides `url` instead so the
+   *  /messages JSON stays small. */
+  readonly data?: string;
+  /** Server-hosted URL for the image bytes; preferred over `data` when set. */
+  readonly url?: string;
   readonly mimeType: string;
 }
 

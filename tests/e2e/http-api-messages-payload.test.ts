@@ -130,7 +130,7 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
     // implementation may either teach the adapter about windows OR read the
     // file tail directly in the route handler. Either way the FS bytes
     // charged to a tail-only request must be O(window), not O(file).
-    const totalMessages = 400;
+    const totalMessages = 1500;
     const { baseUrl, sessionId, sessionFile } = await startWithFileBackedMessages(totalMessages);
 
     const fileStat = await fs.stat(sessionFile);
@@ -177,14 +177,29 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
 function trackBytesReadFrom(targetFile: string): { total: () => number } {
   let totalBytes = 0;
   const resolved = path.resolve(targetFile);
-  const original = fsp.readFile.bind(fsp);
+  const originalReadFile = fsp.readFile.bind(fsp);
   vi.spyOn(fsp, "readFile").mockImplementation(async (filePath: Parameters<typeof fsp.readFile>[0], opts?: Parameters<typeof fsp.readFile>[1]) => {
-    const result = await (original as unknown as (p: typeof filePath, o?: typeof opts) => Promise<string | Buffer>)(filePath, opts);
+    const result = await (originalReadFile as unknown as (p: typeof filePath, o?: typeof opts) => Promise<string | Buffer>)(filePath, opts);
     if (typeof filePath === "string" && path.resolve(filePath) === resolved) {
       totalBytes += typeof result === "string" ? Buffer.byteLength(result, "utf8") : result.byteLength;
     }
     return result as never;
   });
+  const originalOpen = fsp.open.bind(fsp);
+  vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+    const handle = await (originalOpen as (...a: typeof args) => ReturnType<typeof fsp.open>)(...args);
+    const filePath = args[0];
+    if (typeof filePath === "string" && path.resolve(filePath) === resolved) {
+      const originalRead = handle.read.bind(handle);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (handle as any).read = (async (...readArgs: any[]) => {
+        const result = await (originalRead as (...a: any[]) => Promise<{ bytesRead: number }>)(...readArgs);
+        totalBytes += result.bytesRead ?? 0;
+        return result;
+      });
+    }
+    return handle;
+  }) as typeof fsp.open);
   return { total: () => totalBytes };
 }
 
@@ -204,9 +219,11 @@ async function startWithFileBackedMessages(messageCount: number): Promise<{ base
 
   const lines: string[] = [];
   lines.push(JSON.stringify({ type: "session", id: "file-backed-session", cwd: projectRoot, timestamp: 1_700_000_000_000 }));
+  // ~4 KB per line so a tail of 25 messages is ~100 KB (under the 200 KB
+  // budget) while the full file is still comfortably multi-megabyte for
+  // messageCount ~= 1500.
+  const padding = "y".repeat(4_000);
   for (let index = 0; index < messageCount; index++) {
-    // Pad each message so the file is comfortably multi-megabyte.
-    const padding = "y".repeat(15_000);
     lines.push(JSON.stringify({
       type: "message",
       message: {
