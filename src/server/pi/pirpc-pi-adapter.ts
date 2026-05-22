@@ -1156,7 +1156,7 @@ interface ScannedSession {
   readonly lastActivity: number;
 }
 
-async function fastListSessions(sessionDir: string | undefined, cwdFilter?: string): Promise<readonly SessionListItem[]> {
+export async function fastListSessions(sessionDir: string | undefined, _cwdFilter?: string): Promise<readonly SessionListItem[]> {
   if (!sessionDir) return [];
   let entries: import("node:fs").Dirent[];
   try {
@@ -1168,18 +1168,24 @@ async function fastListSessions(sessionDir: string | undefined, cwdFilter?: stri
     .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
     .map((entry) => path.join(sessionDir, entry.name));
 
-  const normalisedCwd = cwdFilter === undefined ? undefined : path.resolve(cwdFilter);
-
-  // Bounded concurrency: many small parallel head/tail reads are fine, but
-  // 200 fds open at once invites EMFILE. A small queue keeps us well under
-  // the soft limit while still saturating the SSD.
+  // NOTE: We intentionally ignore _cwdFilter here. The historical contract of
+  // SessionManager.list(cwd, sessionDir) in the pi SDK is: when sessionDir is
+  // provided (which pirpc-pi-adapter always does), the cwd argument is only
+  // used to derive a *default* sessionDir, NOT to filter the returned
+  // sessions. listSessionsFromDir() reads every .jsonl in the dir regardless
+  // of header.cwd. A previous version of this function filtered by exact
+  // cwd match and made sessions created in child worktrees disappear from
+  // the sidebar (#106 revert). The pathPolicy security gate in
+  // SessionRegistry.listSessions() still drops sessions whose cwd isn't
+  // under an allowed root, which is the only filter the caller actually
+  // wants.
   const results: (ScannedSession | null)[] = new Array(candidates.length);
   let cursor = 0;
   const worker = async () => {
     while (true) {
       const index = cursor++;
       if (index >= candidates.length) return;
-      results[index] = await scanSessionFile(candidates[index]!, normalisedCwd);
+      results[index] = await scanSessionFile(candidates[index]!);
     }
   };
   await Promise.all(Array.from({ length: Math.min(FAST_LIST_CONCURRENCY, candidates.length) }, worker));
@@ -1202,7 +1208,7 @@ async function fastListSessions(sessionDir: string | undefined, cwdFilter?: stri
   return sessions;
 }
 
-async function scanSessionFile(filePath: string, cwdFilter: string | undefined): Promise<ScannedSession | null> {
+async function scanSessionFile(filePath: string): Promise<ScannedSession | null> {
   let stat: import("node:fs").Stats;
   try { stat = await fs.stat(filePath); } catch { return null; }
   if (!stat.isFile() || stat.size === 0) return null;
@@ -1229,7 +1235,7 @@ async function scanSessionFile(filePath: string, cwdFilter: string | undefined):
     const headText = headBuf.toString("utf8");
     // If head and tail overlap (small file) we'll iterate twice; the merge
     // logic below tolerates duplicates.
-    return parseScannedSession(filePath, stat, headText, tailText, cwdFilter);
+    return parseScannedSession(filePath, stat, headText, tailText);
   } finally {
     await fd.close();
   }
@@ -1240,7 +1246,6 @@ function parseScannedSession(
   stat: import("node:fs").Stats,
   headText: string,
   tailText: string,
-  cwdFilter: string | undefined,
 ): ScannedSession | null {
   let id: string | undefined;
   let cwd: string | undefined;
@@ -1289,7 +1294,6 @@ function parseScannedSession(
 
   if (!id) return null;
   const resolvedCwd = cwd ?? "";
-  if (cwdFilter !== undefined && resolvedCwd && path.resolve(resolvedCwd) !== cwdFilter) return null;
   if (lastActivity === 0) lastActivity = stat.mtimeMs;
   return {
     id,
