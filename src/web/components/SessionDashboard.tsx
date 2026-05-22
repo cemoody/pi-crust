@@ -1066,6 +1066,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 messages={messagesBySession[activeSession.id] ?? []}
                 streaming={activeSession.status === "streaming"}
                 enabledArtifactMimes={enabledArtifactMimes}
+                sessionId={activeSession.id}
               />
               <ExtensionUiHost
                 requests={extensionUiBySession[activeSession.id] ?? []}

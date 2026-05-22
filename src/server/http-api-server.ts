@@ -484,12 +484,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && url.pathname === "/api/sessions") {
     const cwd = url.searchParams.get("cwd") ?? undefined;
-    return sendJson(res, 200, await listSessionCards(context, cwd));
+    return sendJson(res, 200, await dedupedListSessionCards(context, cwd));
   }
 
   if (req.method === "GET" && url.pathname === "/api/sessions/statuses") {
     const cwd = url.searchParams.get("cwd") ?? undefined;
-    return sendJson(res, 200, await listSessionCards(context, cwd));
+    return sendJson(res, 200, await dedupedListSessionCards(context, cwd));
   }
 
   if (req.method === "POST" && url.pathname === "/api/sessions") {
@@ -811,6 +811,38 @@ function resolveSessionAlias(context: HttpApiServerContext, sessionId: string): 
     current = next;
   }
   return current;
+}
+
+// /sessions and /statuses fan out to listSessionCards, which is moderately
+// expensive (filesystem walks, per-session head/tail scans, optional hot-
+// session getState() RPCs). When the WUI mounts it commonly fires several
+// of these in parallel — sidebar list, status snapshot for the active tab,
+// reconnect after SSE handshake — and they all serialize on the Node event
+// loop. Collapse a burst into one underlying computation per cwd, and reuse
+// the result for a brief TTL so back-to-back polls cost ~0.
+const LIST_SESSIONS_CACHE_TTL_MS = 750;
+interface SessionsCacheEntry {
+  readonly expiresAt: number;
+  readonly cards: Awaited<ReturnType<typeof listSessionCards>>;
+}
+const sessionsCardCache = new Map<string, SessionsCacheEntry>();
+const sessionsCardInflight = new Map<string, Promise<Awaited<ReturnType<typeof listSessionCards>>>>();
+
+async function dedupedListSessionCards(context: HttpApiServerContext, cwd?: string) {
+  const key = cwd ?? "";
+  const now = Date.now();
+  const cached = sessionsCardCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.cards;
+  const inflight = sessionsCardInflight.get(key);
+  if (inflight) return inflight;
+  const pending = listSessionCards(context, cwd)
+    .then((cards) => {
+      sessionsCardCache.set(key, { expiresAt: Date.now() + LIST_SESSIONS_CACHE_TTL_MS, cards });
+      return cards;
+    })
+    .finally(() => { sessionsCardInflight.delete(key); });
+  sessionsCardInflight.set(key, pending);
+  return pending;
 }
 
 async function listSessionCards(context: HttpApiServerContext, cwd?: string) {

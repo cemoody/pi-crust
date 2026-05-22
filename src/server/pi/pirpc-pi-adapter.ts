@@ -150,20 +150,23 @@ export class PiRpcAdapter implements PiAdapter {
   }
 
   async listSessions(cwd?: string): Promise<readonly SessionListItem[]> {
-    const sessions = cwd === undefined
-      ? await SessionManager.listAll()
-      : await SessionManager.list(path.resolve(cwd), this.options.sessionDir);
-    return sessions.map((item: any) => ({
-      id: String(item.id),
-      cwd: String(item.cwd ?? cwd ?? ""),
-      sessionFile: String(item.path),
-      ...(item.name === undefined ? {} : { sessionName: String(item.name) }),
-      ...(item.firstMessage === undefined ? {} : { firstMessage: String(item.firstMessage) }),
-      createdAt: dateLikeToTime(item.created) ?? null,
-      // SessionManager exposes `modified`, not `timestamp`. Avoid falling
-      // back to Date.now() here: observing the session list is not activity.
-      lastActivity: dateLikeToTime(item.modified) ?? dateLikeToTime(item.timestamp) ?? dateLikeToTime(item.created) ?? 0,
-    }));
+    // We used to call SessionManager.list(cwd, sessionDir) here, but that
+    // function reads the FULL body of every session jsonl just to compute
+    // sidebar metadata (messageCount, allMessagesText, etc. — most of which
+    // we throw away). For a 232 MB / 200-file corpus that single call cost
+    // several seconds of synchronous CPU per /statuses request, and
+    // serialized concurrent /statuses requests behind it.
+    //
+    // Everything we actually need is at the file's edges:
+    //   - id, cwd, createdAt  → the first `type:"session"` line
+    //   - firstMessage        → first user message, typically near the top
+    //   - sessionName         → most recent `session_info` entry, also rare
+    //                           and usually near the top of the file
+    //   - lastActivity        → most recent timestamp in the tail; falls
+    //                           back to stat.mtime when missing
+    // So we do a bounded head+tail scan per file in parallel and skip the
+    // SDK helper entirely.
+    return fastListSessions(this.options.sessionDir, cwd);
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
@@ -725,10 +728,27 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function findSessionCwd(sessionFile: string, _sessionDir?: string): Promise<string | undefined> {
+  // Used to call SessionManager.listAll() and find the matching entry, which
+  // forced a full scan of every session jsonl just to read one file's cwd.
+  // The cwd lives on the very first line (`type:"session"` header), so read
+  // a small head window instead.
   try {
-    const sessions = await SessionManager.listAll();
-    const match = sessions.find((item: any) => path.resolve(String(item.path)) === path.resolve(sessionFile));
-    return match?.cwd === undefined ? undefined : String(match.cwd);
+    const fd = await fs.open(sessionFile, "r");
+    try {
+      const buf = Buffer.alloc(8 * 1024);
+      const { bytesRead } = await fd.read(buf, 0, buf.byteLength, 0);
+      if (bytesRead <= 0) return undefined;
+      const text = buf.subarray(0, bytesRead).toString("utf8");
+      const firstNewline = text.indexOf("\n");
+      const headerLine = firstNewline >= 0 ? text.slice(0, firstNewline) : text;
+      const entry = JSON.parse(headerLine);
+      if (entry && typeof entry === "object" && entry.type === "session" && typeof entry.cwd === "string") {
+        return entry.cwd;
+      }
+      return undefined;
+    } finally {
+      await fd.close();
+    }
   } catch {
     return undefined;
   }
@@ -1110,4 +1130,187 @@ function dateLikeToTime(value: unknown): number | undefined {
 function sumNumbers(record: Record<string, unknown> | undefined, keys: readonly string[]): number {
   if (!record) return 0;
   return keys.reduce((sum, key) => sum + Number(record[key] ?? 0), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Fast session lister: head+tail scan, no full-file parse.
+// ---------------------------------------------------------------------------
+
+/** Bytes we read from the start of each session jsonl. Holds the
+ * `type:"session"` header plus the first few messages (firstMessage) and
+ * an initial `session_info` rename. */
+const FAST_LIST_HEAD_BYTES = 16 * 1024;
+/** Bytes we read from the end of each session jsonl. Holds the most recent
+ * `session_info` and a timestamp for lastActivity. */
+const FAST_LIST_TAIL_BYTES = 32 * 1024;
+/** Cap on parallel file-handle open()s while scanning the sessions dir. */
+const FAST_LIST_CONCURRENCY = 32;
+
+interface ScannedSession {
+  readonly id: string;
+  readonly cwd: string;
+  readonly sessionFile: string;
+  readonly sessionName?: string;
+  readonly firstMessage?: string;
+  readonly createdAt: number | null;
+  readonly lastActivity: number;
+}
+
+async function fastListSessions(sessionDir: string | undefined, cwdFilter?: string): Promise<readonly SessionListItem[]> {
+  if (!sessionDir) return [];
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(sessionDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const candidates = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+    .map((entry) => path.join(sessionDir, entry.name));
+
+  const normalisedCwd = cwdFilter === undefined ? undefined : path.resolve(cwdFilter);
+
+  // Bounded concurrency: many small parallel head/tail reads are fine, but
+  // 200 fds open at once invites EMFILE. A small queue keeps us well under
+  // the soft limit while still saturating the SSD.
+  const results: (ScannedSession | null)[] = new Array(candidates.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= candidates.length) return;
+      results[index] = await scanSessionFile(candidates[index]!, normalisedCwd);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(FAST_LIST_CONCURRENCY, candidates.length) }, worker));
+
+  const sessions: SessionListItem[] = [];
+  for (const item of results) {
+    if (!item) continue;
+    sessions.push({
+      id: item.id,
+      cwd: item.cwd,
+      sessionFile: item.sessionFile,
+      ...(item.sessionName === undefined ? {} : { sessionName: item.sessionName }),
+      ...(item.firstMessage === undefined ? {} : { firstMessage: item.firstMessage }),
+      createdAt: item.createdAt,
+      lastActivity: item.lastActivity,
+    });
+  }
+  // Match SessionManager.list()'s ordering: most-recently-modified first.
+  sessions.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
+  return sessions;
+}
+
+async function scanSessionFile(filePath: string, cwdFilter: string | undefined): Promise<ScannedSession | null> {
+  let stat: import("node:fs").Stats;
+  try { stat = await fs.stat(filePath); } catch { return null; }
+  if (!stat.isFile() || stat.size === 0) return null;
+
+  const headSize = Math.min(FAST_LIST_HEAD_BYTES, stat.size);
+  const tailStart = Math.max(headSize, stat.size - FAST_LIST_TAIL_BYTES);
+  const tailSize = stat.size - tailStart;
+
+  let fd: import("node:fs/promises").FileHandle;
+  try { fd = await fs.open(filePath, "r"); } catch { return null; }
+  try {
+    const headBuf = Buffer.alloc(headSize);
+    await fd.read(headBuf, 0, headSize, 0);
+    let tailText = "";
+    if (tailSize > 0 && tailStart > 0) {
+      const tailBuf = Buffer.alloc(tailSize);
+      await fd.read(tailBuf, 0, tailSize, tailStart);
+      tailText = tailBuf.toString("utf8");
+      // Drop the (likely partial) first line in the tail window so we don't
+      // parse a fragment.
+      const firstNewline = tailText.indexOf("\n");
+      if (firstNewline >= 0) tailText = tailText.slice(firstNewline + 1);
+    }
+    const headText = headBuf.toString("utf8");
+    // If head and tail overlap (small file) we'll iterate twice; the merge
+    // logic below tolerates duplicates.
+    return parseScannedSession(filePath, stat, headText, tailText, cwdFilter);
+  } finally {
+    await fd.close();
+  }
+}
+
+function parseScannedSession(
+  filePath: string,
+  stat: import("node:fs").Stats,
+  headText: string,
+  tailText: string,
+  cwdFilter: string | undefined,
+): ScannedSession | null {
+  let id: string | undefined;
+  let cwd: string | undefined;
+  let createdAt: number | null = null;
+  let firstMessage: string | undefined;
+  let sessionName: string | undefined;
+  let sessionNameSeenAt = -1; // entry index of latest session_info
+  let lastActivity = 0;
+  let entryIndex = 0;
+
+  const handleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let entry: unknown;
+    try { entry = JSON.parse(trimmed); } catch { return; }
+    if (!entry || typeof entry !== "object") return;
+    const record = entry as Record<string, unknown>;
+    const i = entryIndex++;
+    if (record.type === "session") {
+      if (id === undefined && typeof record.id === "string") id = record.id;
+      if (cwd === undefined && typeof record.cwd === "string") cwd = record.cwd;
+      if (createdAt === null) createdAt = dateLikeToTime(record.timestamp) ?? null;
+      const ts = dateLikeToTime(record.timestamp);
+      if (ts !== undefined && ts > lastActivity) lastActivity = ts;
+      return;
+    }
+    if (record.type === "session_info") {
+      if (i > sessionNameSeenAt) {
+        sessionNameSeenAt = i;
+        const candidate = typeof record.name === "string" ? record.name.trim() : "";
+        sessionName = candidate || undefined;
+      }
+    }
+    if (record.type === "message") {
+      const inner = isRecord(record.message) ? record.message : undefined;
+      const ts = dateLikeToTime(inner?.timestamp) ?? dateLikeToTime(record.timestamp);
+      if (ts !== undefined && ts > lastActivity) lastActivity = ts;
+      if (firstMessage === undefined && inner && inner.role === "user") {
+        firstMessage = extractFirstMessageText(inner.content);
+      }
+    }
+  };
+
+  for (const line of headText.split("\n")) handleLine(line);
+  for (const line of tailText.split("\n")) handleLine(line);
+
+  if (!id) return null;
+  const resolvedCwd = cwd ?? "";
+  if (cwdFilter !== undefined && resolvedCwd && path.resolve(resolvedCwd) !== cwdFilter) return null;
+  if (lastActivity === 0) lastActivity = stat.mtimeMs;
+  return {
+    id,
+    cwd: resolvedCwd,
+    sessionFile: filePath,
+    ...(sessionName === undefined ? {} : { sessionName }),
+    ...(firstMessage === undefined ? {} : { firstMessage }),
+    createdAt: createdAt ?? null,
+    lastActivity,
+  };
+}
+
+function extractFirstMessageText(content: unknown): string | undefined {
+  if (typeof content === "string") return content.slice(0, 240);
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
+        const text = (block as { text?: unknown }).text;
+        if (typeof text === "string" && text.trim()) return text.slice(0, 240);
+      }
+    }
+  }
+  return undefined;
 }
