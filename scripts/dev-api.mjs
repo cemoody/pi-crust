@@ -387,21 +387,26 @@ function spawnChild() {
   // an instant-crash." Once we cross it, the circuit breaker is permanently
   // disabled — production deploys MUST be able to respawn forever after
   // their first successful boot (git pulls, file edits, etc).
+  //
+  // Optimization: once everSucceeded is permanently true, don't bother
+  // scheduling new startup timers — they're no-ops, and a fast-respawning
+  // child (every ~100–300 ms in some tests) would otherwise keep dozens
+  // of pending 3-second timers in the event-loop queue.
   const target = child;
-  const startupTimer = setTimeout(() => {
+  const startupTimer = everSucceeded ? null : setTimeout(() => {
     if (child === target) {
       everSucceeded = true;
       consecutiveFailedSpawns = 0;
     }
   }, STARTUP_GRACE_MS);
-  startupTimer.unref();
+  if (startupTimer) startupTimer.unref();
 
   child.on("exit", (code, signal) => {
     log(`child pid=${pid} exited code=${code} signal=${signal}`);
     // Reap any grandchildren that survived the group signal (defensive;
     // shouldn't happen but we paid the cost once already).
     killGroup(pid, "SIGKILL");
-    clearTimeout(startupTimer);
+    if (startupTimer) clearTimeout(startupTimer);
     if (!everSucceeded) noteFailedSpawn(`exit code=${code} signal=${signal}`);
     child = null;
     // EADDRINUSE-shaped exits (non-zero code, no signal) are almost
