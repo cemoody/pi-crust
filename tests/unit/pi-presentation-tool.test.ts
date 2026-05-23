@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import piRemoteArtifacts from "../../src/server/pi/extensions/pi-remote-artifacts.js";
+import piRemoteArtifacts from "../../src/server/pi/extensions/pi-crust-artifacts.js";
 
 type RegisteredTool = {
   name: string;
@@ -10,7 +10,7 @@ type RegisteredTool = {
 };
 
 describe("Pi presentation tool extension", () => {
-  it("registers show_presentation with artifact details consumed by PRC", async () => {
+  it("registers show_presentation with artifact details consumed by pi-crust", async () => {
     const tools: RegisteredTool[] = [];
     piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
 

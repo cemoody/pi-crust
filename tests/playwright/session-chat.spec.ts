@@ -284,7 +284,7 @@ test('shows status row beneath composer with cwd, model, and TUI-style stats', a
   const status = page.getByLabel('Session status');
   await expect(status).toBeVisible();
   await expect(status).toContainText('idle');
-  await expect(status).toContainText(/pi-remote-control|no-success-paste-warning|delete-session-persistence|trol-/);
+  await expect(status).toContainText(/pi-crust|no-success-paste-warning|delete-session-persistence|trol-/);
   await expect(status).toContainText(/no model selected|mock\/mock\/mock-echo/);
   await expect(status).toContainText('↑0');
   await expect(status).toContainText('↓0');

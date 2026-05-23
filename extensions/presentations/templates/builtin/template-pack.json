@@ -2,7 +2,7 @@
   "id": "builtin-presentations",
   "name": "Built-in presentation templates",
   "version": "0.1.0",
-  "description": "Starter templates for PRC presentation artifacts.",
+  "description": "Starter templates for pi-crust presentation artifacts.",
   "layouts": [
     "title",
     "image-bullets",

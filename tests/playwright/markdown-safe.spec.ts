@@ -1,6 +1,6 @@
 /**
  * Regression for the "session goes blank after sidebar flash" bug
- * (https://github.com/cemoody/pi-remote-control/.../session 019e4de3-…).
+ * (https://github.com/cemoody/pi-crust/.../session 019e4de3-…).
  *
  * Repro: load a session whose message graph contains a non-string in a
  * place that flows into `<ReactMarkdown>` (e.g. `assistant.content` is an
@@ -65,7 +65,7 @@ test("a malformed message does NOT blank the page — either coerced cleanly OR 
 
 test("sidebar + composer + other session links stay mounted while a malformed session is active", async ({ page }) => {
   // The user-facing invariant: even if the active session's pane shows an
-  // error UI, the rest of the WUI is fully interactive. This is the
+  // error UI, the rest of the pi-crust is fully interactive. This is the
   // sentinel against the original symptom (page goes blank → user can
   // only refresh).
   await page.goto("/");

@@ -159,7 +159,7 @@ test.describe(`promo @ ${IPAD_LANDSCAPE.name} (${IPAD_LANDSCAPE.width}x${IPAD_LA
 
   test("08 markdown artifact", async ({ page }) => {
     await page.goto("/");
-    await selectSession(page, /Why pi-remote-control/);
+    await selectSession(page, /Why pi-crust/);
     await page.locator('[data-testid="artifact-markdown"]').first().waitFor({ state: "attached", timeout: 10_000 });
     await page.waitForTimeout(300);
     await shot(page, IPAD_LANDSCAPE.name, "08-markdown-artifact");

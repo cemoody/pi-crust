@@ -6,9 +6,9 @@
  * records every request, and assert NO non-file:/data: requests are attempted
  * during page load. That is the operational definition of "CDN shippable".
  *
- * We bypass the WUI download UI here (covered by presentation-artifact.spec.ts)
+ * We bypass the pi-crust download UI here (covered by presentation-artifact.spec.ts)
  * and exercise the production compile function directly. A separate wiring
- * test asserts the WUI download path is wired to the same function.
+ * test asserts the pi-crust download path is wired to the same function.
  *
  * Until `src/presentations/standalone.ts` and the image-bearing seed land,
  * these tests will fail at import/seed time.
@@ -154,7 +154,7 @@ test.describe("Download HTML produces a CDN-shippable single file", () => {
     expect(result.fileSizeBytes).toBeGreaterThan(5 * 1024);
   });
 
-  test("WUI Download HTML link content matches the production standalone compile", async ({ page }) => {
+  test("pi-crust Download HTML link content matches the production standalone compile", async ({ page }) => {
     // Wiring guard: the bytes downloaded from the UI must match the bytes the
     // production compile function emits for the same deck. This is what
     // prevents the UI from regressing to a non-inlining code path.

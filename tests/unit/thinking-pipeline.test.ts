@@ -10,7 +10,7 @@ import { toDashboardMessages } from "../../src/server/http-api-server.js";
 //
 // Root cause: pirpc-pi-adapter's contentTextAndImages pushed both
 // `block.text` and `block.thinking` into the same string, so the persisted
-// SessionMessage had a single combined `content`. The WUI's
+// SessionMessage had a single combined `content`. The pi-crust's
 // MessageTimeline already has a dedicated <details className="thinking-block">
 // collapsed widget driven off TimelineMessage.thinking, but the pipeline
 // never populated that field on history reload (only streaming did, via a

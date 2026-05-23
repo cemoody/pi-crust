@@ -6,7 +6,7 @@ import path from "node:path";
 
 /**
  * Filesystem path → MIME, for files served via /api/artifact-file. We allow
- * a broader set than the WUI static fallback because artifact-file is
+ * a broader set than the pi-crust static fallback because artifact-file is
  * intended for arbitrary user-generated content (plots, PDFs, mp4s).
  */
 const ARTIFACT_FILE_MIME: Record<string, string> = {
@@ -60,7 +60,7 @@ export interface ResolveArtifactFileOptions {
  *
  * - OS tmpdir (e.g. /tmp) — the canonical scratch space
  * - $HOME — covers project worktrees and ~/Downloads etc. on the user's
- *   own machine. PRC is a single-user dev server, so this is the same
+ *   own machine. pi-crust is a single-user dev server, so this is the same
  *   trust boundary the agent already operates inside.
  *
  * We deliberately do NOT include `/` or unrelated system paths. Path

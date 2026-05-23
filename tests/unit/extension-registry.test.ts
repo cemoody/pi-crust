@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createPrcExtensionHost } from "../../src/extensions/registry.js";
 import { createPrcExtensionHarness } from "../helpers/extension-harness.js";
 
-describe("PRC extension registry harness", () => {
+describe("pi-crust extension registry harness", () => {
   it("activates inline extension factories and runs registered commands", async () => {
     const harness = await createPrcExtensionHarness({
       extensions: [{

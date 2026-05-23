@@ -6,7 +6,7 @@ import { toDashboardMessages } from "../../src/server/http-api-server.js";
 // 019e1c60-8c28-768d-9c0c-ab1a144fe250: the Anthropic API rejected an
 // over-2000px image and the JSONL captured an assistant turn whose
 // `content` array is EMPTY with `stopReason: "error"` and an `errorMessage`
-// describing the 400. The WUI then renders an empty bubble with nothing
+// describing the 400. The pi-crust then renders an empty bubble with nothing
 // telling the user what happened, so the session "looks frozen".
 //
 // The fix must make sure those error fields survive the conversion pipeline:

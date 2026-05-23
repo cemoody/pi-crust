@@ -13,7 +13,7 @@ test("npx-style fresh install can install, render, and hot reload an extension U
   try {
     const tarball = await npmPack(root);
     const home = path.join(root, "home");
-    const configDir = path.join(home, ".pi-remote-control");
+    const configDir = path.join(home, ".pi-crust");
     const projectRoot = path.join(root, "project");
     const sessionRoot = path.join(root, "sessions");
     const extensionDir = path.join(root, "external-schedule");
@@ -25,7 +25,7 @@ test("npx-style fresh install can install, render, and hot reload an extension U
 
     const port = await freePort();
     const url = `http://127.0.0.1:${port}`;
-    server = spawn("npm", ["exec", "--yes", `--package=${tarball}`, "--", "pi-remote-control"], {
+    server = spawn("npm", ["exec", "--yes", `--package=${tarball}`, "--", "pi-crust"], {
       cwd: projectRoot,
       detached: true,
       env: {

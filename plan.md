@@ -1,4 +1,4 @@
-# pi-remote-control plan
+# pi-crust plan
 
 A mobile-first, self-hosted web control plane for running many concurrent Pi coding-agent sessions from a browser, intended to be accessed remotely over Tailscale.
 
@@ -44,7 +44,7 @@ Required phases/features:
 
 ### Cut-line C — TUI parity MVP
 
-The WUI covers the high-value Pi TUI behaviors: sessions, streaming, tools, queues, model/thinking controls, settings basics, compaction, and tree/fork/clone.
+The pi-crust covers the high-value Pi TUI behaviors: sessions, streaming, tools, queues, model/thinking controls, settings basics, compaction, and tree/fork/clone.
 
 Required phases/features:
 
@@ -52,7 +52,7 @@ Required phases/features:
 
 ### Cut-line D — better-than-TUI parallel coding
 
-The WUI adds workflows the TUI does not emphasize: side-by-side sessions, git/worktree orchestration, approval inbox, push notifications, and cost/admin dashboards.
+The pi-crust adds workflows the TUI does not emphasize: side-by-side sessions, git/worktree orchestration, approval inbox, push notifications, and cost/admin dashboards.
 
 Required phases/features:
 
@@ -826,7 +826,7 @@ Make the app reliable and pleasant over Tailscale from a mobile device.
 
 # TUI parity audit checklist
 
-Use this as a final cross-check before calling the WUI feature-complete relative to Pi's current interactive TUI.
+Use this as a final cross-check before calling the pi-crust feature-complete relative to Pi's current interactive TUI.
 
 ## Startup/header parity
 
@@ -912,7 +912,7 @@ Use this as a final cross-check before calling the WUI feature-complete relative
 - [ ] `/reload` equivalent.
 - [ ] `/hotkeys` equivalent.
 - [ ] `/changelog` equivalent.
-- [ ] `/quit` has a WUI analog: close/dispose session or disconnect.
+- [ ] `/quit` has a pi-crust analog: close/dispose session or disconnect.
 
 ## Package/resource parity
 
@@ -946,7 +946,7 @@ Use this as a final cross-check before calling the WUI feature-complete relative
 - [ ] Full terminal `ctx.ui.custom()` component rendering is not planned for v1.
 - [ ] Native terminal cursor/IME mechanics are replaced by browser input behavior.
 - [ ] Terminal ANSI rendering is replaced by native web components.
-- [ ] Shell job control/suspend is not meaningful in WUI.
+- [ ] Shell job control/suspend is not meaningful in pi-crust.
 
 ---
 

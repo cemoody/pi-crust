@@ -1,7 +1,7 @@
 /**
  * Reproduction for the SSE-pool starvation bug.
  *
- * Symptom (production): with several WUI tabs open (or after rapidly switching
+ * Symptom (production): with several pi-crust tabs open (or after rapidly switching
  * sessions in one tab, which leaks SSE streams), the next page load hangs for
  * tens of seconds even though the api responds in <2 ms on the box.
  *
@@ -18,7 +18,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 
-// Playwright config wires the WUI to a dedicated API on this origin (see
+// Playwright config wires the pi-crust to a dedicated API on this origin (see
 // playwright.config.ts → VITE_PI_REMOTE_API_BASE). All SSE/fetch goes here.
 const API_BASE = "http://127.0.0.1:9787";
 

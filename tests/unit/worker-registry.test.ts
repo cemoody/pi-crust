@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 
 async function makeRuntime(): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-rc-worker-reg-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-worker-reg-"));
   createdDirs.push(dir);
   return dir;
 }
@@ -80,7 +80,7 @@ describe("WorkerRegistry", () => {
 
   it("uses a short default runtime root on macOS", () => {
     if (process.platform !== "darwin") return;
-    expect(defaultRuntimeDir()).toMatch(/^\/tmp\/pi-remote-control-/);
+    expect(defaultRuntimeDir()).toMatch(/^\/tmp\/pi-crust-/);
   });
 
   it("isPidAlive treats finite alive pids true and zero/negative false", () => {

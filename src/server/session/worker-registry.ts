@@ -23,12 +23,12 @@ export interface WorkerRegistryOptions {
 
 export function defaultRuntimeDir(): string {
   const xdg = process.env.XDG_RUNTIME_DIR;
-  if (xdg && xdg.length > 0) return path.join(xdg, "pi-remote-control");
+  if (xdg && xdg.length > 0) return path.join(xdg, "pi-crust");
   // macOS's os.tmpdir() is usually a long /var/folders/... path. Unix-domain
   // socket paths are limited (about 104 bytes on macOS), so keep the default
   // runtime root short there.
-  if (process.platform === "darwin") return path.join("/tmp", `pi-remote-control-${process.getuid?.() ?? "user"}`);
-  return path.join(os.tmpdir(), "pi-remote-control");
+  if (process.platform === "darwin") return path.join("/tmp", `pi-crust-${process.getuid?.() ?? "user"}`);
+  return path.join(os.tmpdir(), "pi-crust");
 }
 
 export class WorkerRegistry {

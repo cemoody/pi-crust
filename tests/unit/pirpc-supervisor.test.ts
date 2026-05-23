@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 async function makeFakePi(opts: { initialEvents?: number; sessionId?: string }): Promise<{ runtime: string; executable: string; }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-rc-supervisor-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-supervisor-"));
   tmpDirs.push(root);
   const sessionId = opts.sessionId ?? "supervisor-test-session";
   const sessionFile = path.join(root, `${sessionId}.jsonl`);

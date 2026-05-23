@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-// History: the iPhone Safari WUI used to silently reload every time the user
+// History: the iPhone Safari pi-crust used to silently reload every time the user
 // returned to it after a few minutes in the background. Every reload was
 // preceded by an `sse-client-error` and a pagehide{persisted:false};
 // navigationType was "reload"; localStorage was preserved (bootCount

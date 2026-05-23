@@ -500,13 +500,13 @@ describe("MessageTimeline", () => {
     render(<MessageTimeline messages={[{
       id: "t-orphan",
       role: "tool",
-      text: "> pi-remote-control@0.0.0 typecheck tsc --noEmit\nD file.ts M other.ts\ncreate mode 100644 package.json",
+      text: "> pi-crust@0.0.0 typecheck tsc --noEmit\nD file.ts M other.ts\ncreate mode 100644 package.json",
     }]} />);
 
     const orphan = screen.getByLabelText("tool result");
     expect(orphan).toBeInTheDocument();
     const pre = orphan.querySelector("pre");
-    expect(pre).toHaveTextContent("> pi-remote-control@0.0.0 typecheck tsc --noEmit");
+    expect(pre).toHaveTextContent("> pi-crust@0.0.0 typecheck tsc --noEmit");
     expect(orphan.querySelector("blockquote")).toBeNull();
   });
 

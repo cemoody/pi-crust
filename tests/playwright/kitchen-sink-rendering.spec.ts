@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * Generic-surface regression: every renderable shape the WUI knows about
+ * Generic-surface regression: every renderable shape the pi-crust knows about
  * should render via its dedicated component, never as raw JSON / a
  * stringified object / an "Unknown artifact" fallback. Driven from the
  * `seeded-session-kitchen-sink` fixture (scripts/seed-mock-session.mjs)
@@ -82,7 +82,7 @@ test.describe('kitchen-sink: every renderer renders as structured UI, not raw JS
 
     const toolCard = page.locator('details.tool-card[aria-label="tool bash"]');
     await expect(toolCard).toBeVisible();
-    // Summary surfaces the command (the WUI special-cases bash → args.command).
+    // Summary surfaces the command (the pi-crust special-cases bash → args.command).
     await expect(toolCard).toContainText('echo "kitchen sink"');
 
     // Expanding the card shows the captured output.

@@ -1,9 +1,9 @@
 /**
- * Integration test for bin/pi-remote-control-dev.mjs.
+ * Integration test for bin/pi-crust-dev.mjs.
  *
  * Pins the contract that someone running
  *
- *   npx -y -p github:cemoody/pi-remote-control pi-remote-control-dev
+ *   npx -y -p github:cemoody/pi-crust pi-crust-dev
  *
  * gets:
  *
@@ -24,7 +24,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const LAUNCHER = path.resolve(__dirname, "../../bin/pi-remote-control-dev.mjs");
+const LAUNCHER = path.resolve(__dirname, "../../bin/pi-crust-dev.mjs");
 const REPO_ROOT = path.resolve(__dirname, "../..");
 
 let launcher: ChildProcess | null = null;
@@ -102,9 +102,9 @@ async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> 
   throw new Error(`port ${port} did not free in ${timeoutMs}ms`);
 }
 
-describe("bin/pi-remote-control-dev.mjs", () => {
-  it("brings up vite + api so both /api/health and the WUI respond", async () => {
-    const sessionRoot = await mkdtemp(path.join(os.tmpdir(), "pi-rc-dev-launcher-"));
+describe("bin/pi-crust-dev.mjs", () => {
+  it("brings up vite + api so both /api/health and the pi-crust respond", async () => {
+    const sessionRoot = await mkdtemp(path.join(os.tmpdir(), "pi-crust-dev-launcher-"));
     tempDirs.push(sessionRoot);
     const ports = pickPorts();
 
@@ -129,7 +129,7 @@ describe("bin/pi-remote-control-dev.mjs", () => {
   }, 60_000);
 
   it("SIGTERM to the launcher tears down BOTH children and frees both ports", async () => {
-    const sessionRoot = await mkdtemp(path.join(os.tmpdir(), "pi-rc-dev-launcher-"));
+    const sessionRoot = await mkdtemp(path.join(os.tmpdir(), "pi-crust-dev-launcher-"));
     tempDirs.push(sessionRoot);
     const ports = pickPorts();
 

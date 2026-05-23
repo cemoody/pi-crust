@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import piRemoteArtifacts from "../../src/server/pi/extensions/pi-remote-artifacts.js";
+import piRemoteArtifacts from "../../src/server/pi/extensions/pi-crust-artifacts.js";
 
 type RegisteredTool = {
   name: string;

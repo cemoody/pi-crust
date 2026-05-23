@@ -6,18 +6,18 @@ import { resolveCemoodyArtifactExtension } from "../../src/server/pi/pirpc-pi-ad
 
 // Validates the auto-registration plumbing for the bundled
 // @cemoody/pi-artifact extension. Mirrors the resolver pattern used for
-// pi-remote-control's own pi-remote-artifacts.ts: a lazy filesystem lookup
+// pi-crust's own pi-crust-artifacts.ts: a lazy filesystem lookup
 // guarded by an env var, with an optional override path for local dev.
 //
 // The resolver under test accepts an injected `env` and `searchRoots` so
 // the tests can be hermetic — without that, the resolver would walk up from
 // this file's location and pick up the *real* @cemoody/pi-artifact under
-// pi-remote-control's own node_modules, defeating the test setup.
+// pi-crust's own node_modules, defeating the test setup.
 
 let tmpRoot: string;
 
 beforeEach(async () => {
-  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pirc-cemoody-"));
+  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-cemoody-"));
 });
 
 afterEach(async () => {

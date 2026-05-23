@@ -259,7 +259,7 @@ export function createPrcExtensionHost(options: PrcExtensionHostOptions = {}): P
 
 function resolveExtensionDataFile(dataDir: string | undefined, extensionId: string, relativePath: string): string {
   if (path.isAbsolute(relativePath)) throw new Error("Extension storage paths must be relative");
-  const root = path.resolve(dataDir ?? path.join(process.cwd(), ".pi-remote-control-data"), "extensions", extensionId);
+  const root = path.resolve(dataDir ?? path.join(process.cwd(), ".pi-crust-data"), "extensions", extensionId);
   const resolved = path.resolve(root, relativePath);
   if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) throw new Error("Extension storage path escapes extension data directory");
   return resolved;

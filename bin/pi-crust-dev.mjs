@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Dev-mode launcher for pi-remote-control over npx.
+ * Dev-mode launcher for pi-crust over npx.
  *
- *   npx -y -p github:cemoody/pi-remote-control pi-remote-control-dev
+ *   npx -y -p github:cemoody/pi-crust pi-crust-dev
  *
  * Single Node process that orchestrates the same self-edit dev loop a
  * `git clone`'d developer gets, without requiring a clone:
@@ -56,13 +56,13 @@ const DEV_API_SCRIPT = path.join(repoRoot, "scripts/dev-api.mjs");
 const PULLER_SCRIPT = path.join(repoRoot, "scripts/dev-git-puller.mjs");
 
 function fail(msg) {
-  process.stderr.write(`pi-remote-control-dev: ${msg}\n`);
+  process.stderr.write(`pi-crust-dev: ${msg}\n`);
   process.exit(1);
 }
 
 if (!existsSync(VITE_CLI)) fail(`vite not found at ${VITE_CLI}. Re-run with devDependencies installed (npm install --include=dev or the github: npx spec, not a plain tarball install).`);
 if (!existsSync(TSX_CLI)) fail(`tsx not found at ${TSX_CLI}. Try \`npm install\` in this directory.`);
-if (!existsSync(API_ENTRY)) fail(`api entry not found at ${API_ENTRY}. This launcher is for the dev/clone install, not the prod npx \`pi-remote-control\` launcher.`);
+if (!existsSync(API_ENTRY)) fail(`api entry not found at ${API_ENTRY}. This launcher is for the dev/clone install, not the prod npx \`pi-crust\` launcher.`);
 if (!existsSync(DEV_API_SCRIPT)) fail(`dev-api supervisor not found at ${DEV_API_SCRIPT}. Make sure scripts/ ships in the package.json \`files\`.`);
 
 // --- child plumbing --------------------------------------------------
@@ -168,8 +168,8 @@ if (ENABLE_PULLER) {
 
 const visibleHost = HOST === "0.0.0.0" ? "localhost" : HOST;
 process.stdout.write(`
-${COLORS.cyan}pi-remote-control-dev${COLORS.reset}
-  WUI:   http://${visibleHost}:${VITE_PORT}/
+${COLORS.cyan}pi-crust-dev${COLORS.reset}
+  pi-crust:   http://${visibleHost}:${VITE_PORT}/
   api:   http://${visibleHost}:${API_PORT}/api/health
   edit:  src/web/** → Vite HMR;  src/server/** → api restart
   pull:  ${ENABLE_PULLER ? "ON (PI_REMOTE_DEV_GIT_PULL=1)" : "OFF (set PI_REMOTE_DEV_GIT_PULL=1 to enable)"}

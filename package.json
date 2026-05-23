@@ -1,12 +1,12 @@
 {
-  "name": "pi-remote-control",
+  "name": "pi-crust",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "description": "Mobile-first self-hosted web control plane for many concurrent Pi coding-agent sessions.",
   "bin": {
-    "pi-remote-control": "bin/pi-remote-control.mjs",
-    "pi-remote-control-dev": "bin/pi-remote-control-dev.mjs"
+    "pi-crust": "bin/pi-crust.mjs",
+    "pi-crust-dev": "bin/pi-crust-dev.mjs"
   },
   "files": [
     "bin",
@@ -26,7 +26,7 @@
     "dev:api:loop:bare": "scripts/dev-loop.sh api 8787 -- npm run dev:api",
     "dev:web:loop": "scripts/dev-loop.sh web '' -- npm run dev -- --host 0.0.0.0",
     "dev:git-puller": "node scripts/dev-git-puller.mjs",
-    "start": "node bin/pi-remote-control.mjs",
+    "start": "node bin/pi-crust.mjs",
     "prepare": "test -f dist/index.html || vite build",
     "build": "vite build",
     "typecheck": "tsc --noEmit",

@@ -969,10 +969,10 @@ function slugify(value: string): string {
  * assets from the per-session route exposed by the presentations extension:
  *   GET /api/sessions/:sessionId/presentations/:file
  * The route serves files from `<session.cwd>/.pi/presentations/<sessionId>/`,
- * which is where show_presentation / pi-remote-control writes deck assets.
+ * which is where show_presentation / pi-crust writes deck assets.
  */
 function makeSessionAssetFetcher(sessionId: string) {
-  // Match the rest of the WUI's API client — honour VITE_PI_REMOTE_API_BASE
+  // Match the rest of the pi-crust's API client — honour VITE_PI_REMOTE_API_BASE
   // so dev/test setups that run the API on a different port work correctly.
   const apiBase = (import.meta as ImportMeta).env?.VITE_PI_REMOTE_API_BASE ?? "";
   return async (src: string) => {

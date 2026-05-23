@@ -112,19 +112,19 @@ addThoughtAndTool({
 addThoughtAndTool({
   thought: 'Exploring git worktrees',
   id: 'tool-wrap-3',
-  command: 'cd /home/coder/code/pi-remote-control && git worktree list --porcelain',
+  command: 'cd /home/coder/code/pi-crust && git worktree list --porcelain',
   durationMs: 5000,
 });
 addThoughtAndTool({
   thought: 'Creating a new worktree',
   id: 'tool-wrap-4',
-  command: 'cd /home/coder/code/pi-remote-control && git worktree add -b test/mobile-tool-wrap-repro ../pi-remote-control-mobile-tool-wrap-repro main',
+  command: 'cd /home/coder/code/pi-crust && git worktree add -b test/mobile-tool-wrap-repro ../pi-crust-mobile-tool-wrap-repro main',
   durationMs: 4000,
 });
 addThoughtAndTool({
   thought: 'Checking current branch and status',
   id: 'tool-wrap-5',
-  command: 'cd /home/coder/code/pi-remote-control-mobile-tool-wrap-repro && git status --short && git branch --show-current',
+  command: 'cd /home/coder/code/pi-crust-mobile-tool-wrap-repro && git status --short && git branch --show-current',
   durationMs: 30,
 });
 await fs.writeFile(toolWrapSessionFile, JSON.stringify({
@@ -187,7 +187,7 @@ console.log(`seeded ${presentationSessionFile}`);
 
 // Fifth seeded session: show_presentation tool result with artifact attached.
 // Reproduces the bug where /api/sessions/:id/messages used to drop the
-// tool result's details.piRemoteControlArtifact, leaving the WUI showing
+// tool result's details.piRemoteControlArtifact, leaving the pi-crust showing
 // raw JSON instead of the inline slide preview after a page reload.
 const toolPresId = 'seeded-session-tool-presentation';
 const toolPresFile = path.join(root, '0000000000004_seeded-session-tool-presentation.mock-session.json');
@@ -200,7 +200,7 @@ const toolPresDeck = {
     { template: 'title-bullets', title: 'Why this test exists', bullets: [
       'Tool emits details.piRemoteControlArtifact in result',
       'Server propagates it to message.tool.artifact',
-      'WUI renders the same card after a page reload',
+      'pi-crust renders the same card after a page reload',
     ] },
   ],
 };
@@ -343,9 +343,9 @@ console.log(`seeded ${blankBugFile}`);
 // /messages API mapping in toDashboardMessages, however, sets
 // `text: message.content` verbatim — so a SessionMessage that still has
 // an array content payload at that point bypasses the normalization step
-// and the WUI receives `text: [{type:'text'},{type:'toolCall'},...]`.
+// and the pi-crust receives `text: [{type:'text'},{type:'toolCall'},...]`.
 //
-// Symptoms in the WUI: literal `{ "type": "toolCall", "name": "bash",
+// Symptoms in the pi-crust: literal `{ "type": "toolCall", "name": "bash",
 // ... }` text rendered inside the assistant bubble (because the array is
 // stringified by the safe-markdown coercion shipped in PR #110/#111), and
 // no tool card at all because the toolCall block was never split out
@@ -354,7 +354,7 @@ console.log(`seeded ${blankBugFile}`);
 // We pin the bug here by writing a .mock-session.json whose `messages`
 // field carries structured-array content directly. The mock adapter
 // faithfully forwards it through getMessages(), toDashboardMessages then
-// hands the array to the WUI as `text`, and any UI code path that
+// hands the array to the pi-crust as `text`, and any UI code path that
 // expects a string sees the raw blocks.
 //
 // Pinned by tests/playwright/structured-content-tool-calls.spec.ts.
@@ -385,7 +385,7 @@ await fs.writeFile(structuredMockFile, JSON.stringify({
       // text + thinking + toolCall blocks side-by-side. The pirpc-pi-
       // adapter would normally split this into (assistant body) +
       // (thinking card) + (tool row), but if anything in the read path
-      // skips the contentTextAndThinking() helper the WUI sees the raw
+      // skips the contentTextAndThinking() helper the pi-crust sees the raw
       // array.
       content: [
         { type: 'text', text: 'Let me look under `extensions/`.' },
@@ -405,14 +405,14 @@ await fs.writeFile(structuredMockFile, JSON.stringify({
     },
     {
       role: 'tool',
-      content: '/home/coder/code/pi-remote-control/extensions/slides',
+      content: '/home/coder/code/pi-crust/extensions/slides',
       timestamp: structuredTs1 + 50,
       tool: {
         id: 'toolu_seeded_bash_find_slides',
         name: 'bash',
         args: { command: 'find /home/coder -type d -name "*slide*" 2>/dev/null | head -20' },
         status: 'success',
-        output: '/home/coder/code/pi-remote-control/extensions/slides',
+        output: '/home/coder/code/pi-crust/extensions/slides',
         startedAt: structuredTs1,
         completedAt: structuredTs1 + 50,
       },
@@ -476,7 +476,7 @@ await fs.writeFile(kitchenSinkFile, JSON.stringify({
         { type: 'text', text: '## Rendering checklist\n\n- **bold step** with `inline code`\n- another *italic* step\n- [a link](https://example.com)\n\n```ts\nconst answer = 42;\n```' },
         {
           type: 'thinking',
-          thinking: 'I should narrate every renderer the WUI supports.',
+          thinking: 'I should narrate every renderer the pi-crust supports.',
           thinkingSignature: 'sig-kitchen-sink-1',
         },
         {
@@ -503,7 +503,7 @@ await fs.writeFile(kitchenSinkFile, JSON.stringify({
       },
     },
     // Multi-MIME pi-artifact row: markdown + image + html, in priority
-    // order. The WUI's pickRenderableRepresentation walks the array and
+    // order. The pi-crust's pickRenderableRepresentation walks the array and
     // picks the first recognized mime, so the order here matters for
     // assertions in the spec.
     {

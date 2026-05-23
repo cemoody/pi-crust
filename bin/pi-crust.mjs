@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Single-process launcher for pi-remote-control.
+ * Single-process launcher for pi-crust.
  *
  * Boots the HTTP+SSE API and (when dist/ is present) has it serve the built
- * Vite WUI from the same port. Designed to be invoked via:
+ * Vite pi-crust from the same port. Designed to be invoked via:
  *
- *   npx -y -p github:cemoody/pi-remote-control pi-remote-control
+ *   npx -y -p github:cemoody/pi-crust pi-crust
  *
  * On install (`npm install` after npx clones), the `prepare` script runs
  * `vite build` and produces dist/. This launcher then points the API at it
@@ -16,7 +16,7 @@
  *   PI_REMOTE_API_HOST   bind host (default 127.0.0.1, override to 0.0.0.0
  *                        when sharing on a tailnet)
  *   PI_REMOTE_OPEN       set to "0" to skip opening the system browser
- *   PI_REMOTE_APP_NAME   app title shown in the WUI (default "pi remote")
+ *   PI_REMOTE_APP_NAME   app title shown in the pi-crust (default "pi remote")
  *   PI_REMOTE_APP_ICON   app title icon: emoji/text glyph, image URL/path, or data URL
  *   PI_REMOTE_ADAPTER    "pirpc" (default) / "pi-sdk" / "mock"
  *   PI_REMOTE_USE_MOCK   set to "1" for the offline mock adapter
@@ -63,21 +63,21 @@ for (const lookup of tsxCandidates) {
   try { tsxCli = lookup(); break; } catch (e) { lastErr = e; }
 }
 if (!tsxCli) {
-  console.error("[pi-remote-control] tsx is not installed. Did `npm install` succeed?");
+  console.error("[pi-crust] tsx is not installed. Did `npm install` succeed?");
   console.error("  repoRoot         = " + repoRoot);
   console.error("  import.meta.url  = " + import.meta.url);
   console.error("  last resolve err = " + (lastErr && lastErr.message));
   process.exit(1);
 }
 if (!existsSync(apiEntry)) {
-  console.error(`[pi-remote-control] API entry missing: ${apiEntry}`);
+  console.error(`[pi-crust] API entry missing: ${apiEntry}`);
   process.exit(1);
 }
 
 const [subcommand, ...subcommandArgs] = process.argv.slice(2);
 if (subcommand === "install" || subcommand === "remove" || subcommand === "uninstall") {
   if (!existsSync(packageCommandEntry)) {
-    console.error(`[pi-remote-control] package command entry missing: ${packageCommandEntry}`);
+    console.error(`[pi-crust] package command entry missing: ${packageCommandEntry}`);
     process.exit(1);
   }
   const child = spawn(process.execPath, [tsxCli, packageCommandEntry, subcommand, ...subcommandArgs], { env: process.env, stdio: "inherit", cwd: process.cwd() });
@@ -87,8 +87,8 @@ if (subcommand === "install" || subcommand === "remove" || subcommand === "unins
   });
 } else {
 if (!existsSync(distDir)) {
-  console.warn("[pi-remote-control] dist/ not found — falling back to API-only mode.");
-  console.warn("  Run `npm run build` to produce the WUI, then re-run.");
+  console.warn("[pi-crust] dist/ not found — falling back to API-only mode.");
+  console.warn("  Run `npm run build` to produce the pi-crust, then re-run.");
 }
 
 const env = {
@@ -101,9 +101,9 @@ const env = {
 const url = `http://${host === "0.0.0.0" ? "localhost" : host}:${port}/`;
 
 console.log("");
-console.log("  pi-remote-control");
+console.log("  pi-crust");
 console.log("  ─────────────────");
-console.log(`  WUI + API  →  ${url}`);
+console.log(`  pi-crust + API  →  ${url}`);
 console.log(`  bind       →  ${host}:${port}`);
 console.log(`  adapter    →  ${env.PI_REMOTE_ADAPTER ?? (env.PI_REMOTE_USE_MOCK === "1" ? "mock" : "pirpc")}`);
 console.log("");

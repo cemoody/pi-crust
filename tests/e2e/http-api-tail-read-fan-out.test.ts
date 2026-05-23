@@ -12,7 +12,7 @@
  *     toolCall block.
  *
  * The pirpc-pi-adapter's toSessionMessages() helper fans those records
- * out into the WUI's expected shape: one assistant entry (with text +
+ * out into the pi-crust's expected shape: one assistant entry (with text +
  * thinking carved out), N synthetic `role: "tool"` entries (one per
  * inline toolCall block), and each toolResult merged into the matching
  * tool entry's `output` / `status` / `completedAt`.
@@ -21,14 +21,14 @@
  * read just the tail of multi-MB session files without slurping the
  * whole thing. The new path returned the raw JSONL `message` bodies
  * straight through to toDashboardMessages, skipping toSessionMessages
- * entirely. Observable symptom in production: the WUI shows tool
+ * entirely. Observable symptom in production: the pi-crust shows tool
  * outputs as free-standing "Extension"-labelled bubbles (because
  * `role: "toolResult"` falls through toDashboardMessages's role switch
  * to `"custom"`) and inline `toolCall` blocks never produce a tool
  * row at all.
  *
  * Each test below seeds a file-backed JSONL session with the raw
- * on-disk shape, fetches /messages?limit=…, and asserts the WUI sees
+ * on-disk shape, fetches /messages?limit=…, and asserts the pi-crust sees
  * the same fan-out it would have got from a hot adapter handle.
  */
 
@@ -106,7 +106,7 @@ describe("/messages tail-read fan-out", () => {
               type: "toolCall",
               id: "toolu_fan_out_bash_1",
               name: "bash",
-              arguments: { command: "ls /home/coder/code/pi-remote-control/extensions/slides" },
+              arguments: { command: "ls /home/coder/code/pi-crust/extensions/slides" },
             },
           ],
         },
@@ -135,7 +135,7 @@ describe("/messages tail-read fan-out", () => {
     expect(toolEntry).toBeDefined();
     expect(toolEntry?.tool?.name).toBe("bash");
     expect(toolEntry?.tool?.id).toBe("toolu_fan_out_bash_1");
-    expect(toolEntry?.tool?.args).toMatchObject({ command: "ls /home/coder/code/pi-remote-control/extensions/slides" });
+    expect(toolEntry?.tool?.args).toMatchObject({ command: "ls /home/coder/code/pi-crust/extensions/slides" });
     expect(toolEntry?.tool?.status).toBe("success");
     expect(toolEntry?.tool?.output).toBe("package.json\nsrc\nREADME.md");
 

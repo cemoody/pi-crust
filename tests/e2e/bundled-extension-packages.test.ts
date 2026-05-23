@@ -7,7 +7,7 @@ import { createHttpApiServer } from "../../src/server/http-api-server.js";
 import { MockPiAdapter } from "../../src/server/pi/mock-pi-adapter.js";
 import { PathPolicy } from "../../src/server/security/path-policy.js";
 import { SessionRegistry } from "../../src/server/session/session-registry.js";
-import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-prc-home.js";
+import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const servers: http.Server[] = [];
@@ -20,7 +20,7 @@ afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => home.cleanup()));
 });
 
-describe("bundled PRC extension packages", () => {
+describe("bundled pi-crust extension packages", () => {
   it("serves artifact files from the bundled artifacts extension", async () => {
     const { baseUrl, home } = await startBundledServer(["artifacts"]);
     const session = await fetchJson<{ id: string; cwd: string }>(`${baseUrl}/api/sessions`, {

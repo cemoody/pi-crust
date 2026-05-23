@@ -40,7 +40,7 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
       // For file-backed artifact kinds (image, html), validate `path` up-front
       // so the tool call fails cleanly when the file doesn't exist or lives
       // outside the allow-list — mirroring how bash tool calls surface
-      // errors. We also rewrite the path into a fetchable URL so the WUI
+      // errors. We also rewrite the path into a fetchable URL so the pi-crust
       // doesn't try to load /tmp/... as a relative URL against the host
       // origin (which falls through to the SPA index.html and shows a
       // broken image).
@@ -109,8 +109,8 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params) {
       // If the deck specifies a templatePack, pre-resolve each slide's layout
-      // via the PRC template-pack route so the WUI receives slide.html
-      // already baked. This keeps the WUI compile path synchronous.
+      // via the pi-crust template-pack route so the pi-crust receives slide.html
+      // already baked. This keeps the pi-crust compile path synchronous.
       let slides = params.slides as Array<Record<string, unknown>>;
       if (typeof params.templatePack === "string" && params.templatePack.length > 0) {
         const apiBase = resolvePiRemoteApiBase();
@@ -124,7 +124,7 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
               const response = await postJson<{ readonly html?: string }>(url, { slots });
               if (response && typeof response.html === "string") return { ...slide, html: response.html };
             } catch {
-              // Fall through and leave slide as-is; WUI will show the generic outline.
+              // Fall through and leave slide as-is; pi-crust will show the generic outline.
             }
             return slide;
           }),
@@ -161,7 +161,7 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
   pi.registerTool({
     name: "list_presentation_templates",
     label: "List Presentation Templates",
-    description: "List every template pack configured in PRC and the layout keys each pack exposes. Use this before authoring a deck so you know which (templatePack, layout) values are valid. Returns { packs: [{ id, name, version?, dir, layouts: string[] }] }.",
+    description: "List every template pack configured in pi-crust and the layout keys each pack exposes. Use this before authoring a deck so you know which (templatePack, layout) values are valid. Returns { packs: [{ id, name, version?, dir, layouts: string[] }] }.",
     promptSnippet: "list_presentation_templates lists template packs registered via presentations.templateDirs (e.g. brainco). Call before show_presentation when authoring brand-template decks.",
     promptGuidelines: [
       "Use list_presentation_templates whenever the user asks for a slide deck and you don't already know which template packs / layouts exist.",
@@ -185,8 +185,8 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "spawn_prc_session",
-    label: "Spawn PRC Session",
-    description: "Spawn a new Pi Remote Control session and kick it off with a prompt. Use this to delegate independent work to another visible PRC session.",
+    label: "Spawn pi-crust Session",
+    description: "Spawn a new Pi Remote Control session and kick it off with a prompt. Use this to delegate independent work to another visible pi-crust session.",
     promptSnippet: "spawn_prc_session creates a new Pi Remote Control session with a cwd/name and starts it with a prompt.",
     promptGuidelines: [
       "Use spawn_prc_session when the user explicitly asks to split work into independent Pi Remote Control sessions.",
@@ -196,7 +196,7 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
     parameters: Type.Object({
       prompt: Type.String({ description: "Initial prompt to send to the new session. Include the task scope and constraints." }),
       cwd: Type.Optional(Type.String({ description: "Working directory for the new session. Defaults to the current session cwd." })),
-      sessionName: Type.Optional(Type.String({ description: "Display name for the new session in the PRC sidebar." })),
+      sessionName: Type.Optional(Type.String({ description: "Display name for the new session in the pi-crust sidebar." })),
     }),
     async execute(_toolCallId, params) {
       const apiBase = resolvePiRemoteApiBase();

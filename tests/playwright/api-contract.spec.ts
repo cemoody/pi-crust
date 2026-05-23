@@ -3,16 +3,16 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 /**
  * Server-side API contract smoke. The browser specs exercise these
  * endpoints transitively, but the contracts (status codes, required
- * fields, error shapes) are what the WUI depends on — and they break
+ * fields, error shapes) are what the pi-crust depends on — and they break
  * silently when a server refactor changes a payload shape and the only
  * canary is a UI test that's looking at a different layer.
  *
  * These specs talk to the API directly via Playwright's request fixture
  * and do not open a browser. They run against the same dev-api the
- * webServer block in playwright.config.ts boots (the WUI is on :5174,
+ * webServer block in playwright.config.ts boots (the pi-crust is on :5174,
  * the API on :9787 by config).
  *
- * NB: the WUI talks to the API through Vite's dev proxy, so the
+ * NB: the pi-crust talks to the API through Vite's dev proxy, so the
  * `baseURL` of the page is :5174. For request-only specs we hit the
  * API origin directly via VITE_PI_REMOTE_API_BASE (= http://127.0.0.1:9787).
  */
@@ -123,7 +123,7 @@ test.describe('API: per-session messages + state', () => {
     const artifactRow = messages.find((m: { customType?: string }) => m.customType === 'artifact');
     expect(artifactRow, 'presentation seed has a customType:"artifact" message').toBeTruthy();
     // Server strips/normalizes details; presence is the contract this
-    // suite cares about, not the inner shape (covered by the WUI render
+    // suite cares about, not the inner shape (covered by the pi-crust render
     // tests in presentation-artifact.spec.ts).
   });
 
@@ -212,7 +212,7 @@ test.describe('API: error paths', () => {
   test('GET /api/sessions/does-not-exist/messages returns a JSON error (not HTML)', async ({ request }) => {
     const res = await request.get(`${API}/api/sessions/does-not-exist/messages`);
     // The server currently returns 500 with a structured error for unknown
-    // sessions, not 404. We pin the structured-error contract (the WUI
+    // sessions, not 404. We pin the structured-error contract (the pi-crust
     // depends on `body.error` being a string); status code is allowed to
     // be either 404 or 5xx to leave room for the server to tighten this
     // without churning the spec.

@@ -35,7 +35,7 @@ const hmrEnabled = process.env.VITE_PI_REMOTE_HMR !== "0";
 // when bound to a non-localhost interface. The default list is just
 // localhost/127.0.0.1, which blocks legitimate access via Tailscale magic
 // DNS (`<machine>.<tailnet>.ts.net`) and mDNS (`*.local`) — both common
-// for accessing the WUI from another device on the same network.
+// for accessing the pi-crust from another device on the same network.
 //
 // We allow those two suffixes by default (a leading dot in Vite's syntax
 // matches the host AND any subdomain), and let users extend or replace the

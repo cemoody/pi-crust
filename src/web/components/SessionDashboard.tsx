@@ -780,7 +780,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
           }
           return;
         }
-        setNotice(`Command \"/${name}\" is recognised in the TUI but not yet implemented in the WUI.`);
+        setNotice(`Command \"/${name}\" is recognised in the TUI but not yet implemented in the pi-crust.`);
       }
     }
   }
@@ -1835,7 +1835,7 @@ function readSessionFromUrl(): string | null {
 // so a reload or new tab preserves the same sidebar order the user
 // established. Failures (no localStorage, quota errors, parse errors) all
 // degrade silently to an empty map.
-const USER_ACTIVITY_STORAGE_KEY = "pi-remote-control:lastUserActivityById:v1";
+const USER_ACTIVITY_STORAGE_KEY = "pi-crust:lastUserActivityById:v1";
 
 function recentSortKey(session: SessionCardData, optimisticUserActivityById: Record<string, number>): number {
   if (typeof session.lastUserActivity === "number" && Number.isFinite(session.lastUserActivity)) {
@@ -1885,7 +1885,7 @@ function ExtensionActivityPanel({ activity, extensions }: { readonly activity: i
         </div>
       </header>
       <div className="extension-activity-body">
-        <p>This activity was contributed by a PRC extension. Custom web rendering will be enabled as the extension framework matures.</p>
+        <p>This activity was contributed by a pi-crust extension. Custom web rendering will be enabled as the extension framework matures.</p>
         {commands.length > 0 ? (
           <section>
             <h3>Commands</h3>

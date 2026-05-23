@@ -1,10 +1,10 @@
-# Slash Command WUI Implementation Plan
+# Slash Command pi-crust Implementation Plan
 
-Plan for implementing the remaining Pi TUI slash-command behavior in `pi-remote-control` while reusing existing web UI pieces and translating Pi terminal UI concepts into web-native dialogs, panels, and actions.
+Plan for implementing the remaining Pi TUI slash-command behavior in `pi-crust` while reusing existing web UI pieces and translating Pi terminal UI concepts into web-native dialogs, panels, and actions.
 
 ## Current state
 
-The WUI already has a useful foundation:
+The pi-crust already has a useful foundation:
 
 - `PromptComposer` routes any input beginning with `/` to `SessionDashboard.onSlashCommand` instead of sending it to Pi as a normal prompt.
 - `SessionDashboard` currently implements:
@@ -28,7 +28,7 @@ The WUI already has a useful foundation:
 
 Public built-ins from Pi TUI:
 
-| Command | TUI behavior | Current WUI status | Target WUI behavior |
+| Command | TUI behavior | Current pi-crust status | Target pi-crust behavior |
 | --- | --- | --- | --- |
 | `/settings` | Open settings selector | Suggested but not implemented | Open configuration/settings modal or side panel |
 | `/model [query]` | Open model selector, optionally prefiltered | Partially implemented | Reuse `ModelPicker`, support query prefill |
@@ -50,9 +50,9 @@ Public built-ins from Pi TUI:
 | `/compact [instructions]` | Manual compaction | Suggested but not implemented | Compact dialog/action with progress, custom instructions |
 | `/resume` | Browse/select saved sessions | Not implemented as slash command | Open session picker and activate selected session |
 | `/reload` | Reload keybindings/extensions/skills/prompts/themes | Not implemented | Resource reload action with diagnostics |
-| `/quit` | Quit app | WUI close/delete analog | Clarify semantics: close/dispose session vs disconnect |
+| `/quit` | Quit app | pi-crust close/delete analog | Clarify semantics: close/dispose session vs disconnect |
 
-Hidden/debug TUI commands (`/debug`, `/arminsayshi`, `/dementedelves`) should remain out of WUI parity unless explicitly needed for development.
+Hidden/debug TUI commands (`/debug`, `/arminsayshi`, `/dementedelves`) should remain out of pi-crust parity unless explicitly needed for development.
 
 Dynamic commands also need support:
 
@@ -60,13 +60,13 @@ Dynamic commands also need support:
 - Extension commands registered by `pi.registerCommand`
 - Skill commands such as `/skill:<name>` when enabled
 
-These should be discovered through `get_commands` and executed through the normal Pi prompt path, not hardcoded as WUI built-ins.
+These should be discovered through `get_commands` and executed through the normal Pi prompt path, not hardcoded as pi-crust built-ins.
 
 ## Key design principle: translate, do not embed, TUI components
 
-Pi TUI components are terminal components: they render fixed-width ANSI lines and handle raw key input. The WUI should not try to mount those components directly in the browser. Instead, translate their interaction patterns into reusable React components:
+Pi TUI components are terminal components: they render fixed-width ANSI lines and handle raw key input. The pi-crust should not try to mount those components directly in the browser. Instead, translate their interaction patterns into reusable React components:
 
-| TUI pattern/component | Web translation | Candidate existing/reusable WUI component |
+| TUI pattern/component | Web translation | Candidate existing/reusable pi-crust component |
 | --- | --- | --- |
 | `SelectList` / selector dialogs | Searchable list modal with keyboard + touch support | New `SearchableSelectDialog`; reuse `ModelPicker` patterns |
 | `SettingsList` | Settings/config side panel with toggles/selects | `ConfigurationPanel`, expanded and integrated |
@@ -78,9 +78,9 @@ Pi TUI components are terminal components: they render fixed-width ANSI lines an
 | `TreeSelectorComponent` | Branch tree modal/side panel | `SessionTree` |
 | `UserMessageSelectorComponent` | Fork-from-message picker | Reuse `SearchableSelectDialog` or `SessionTree` filtered to user entries |
 | `Markdown` | Markdown modal/document viewer | New `MarkdownDialog` |
-| `ctx.ui.confirm/input/editor/select` | Generic extension/WUI dialogs | `ExtensionUiHost` plus shared dialog primitives |
+| `ctx.ui.confirm/input/editor/select` | Generic extension/pi-crust dialogs | `ExtensionUiHost` plus shared dialog primitives |
 
-The reusable target is a small WUI dialog toolkit rather than one-off command UIs.
+The reusable target is a small pi-crust dialog toolkit rather than one-off command UIs.
 
 ## Architecture changes
 
@@ -112,11 +112,11 @@ interface SlashCommandDefinition {
 Goals:
 
 - Centralize command metadata for autocomplete, `/help`, and dispatch.
-- Keep WUI built-ins separate from dynamic Pi commands.
+- Keep pi-crust built-ins separate from dynamic Pi commands.
 - Allow commands to open modals, call APIs, set notices, or pass through to Pi.
 - Make `/help` render from the registry instead of a hardcoded string.
 
-### 2. Expand the WUI API surface
+### 2. Expand the pi-crust API surface
 
 Extend `SessionDashboardApi` and `HttpSessionDashboardApi` with focused methods instead of routing everything through `prompt`:
 
@@ -180,8 +180,8 @@ For `SdkPiAdapter`, many of these map directly to SDK/RPC concepts:
 
 Important adapter decision:
 
-- The current WUI is multi-session, while Pi TUI has one active runtime that gets replaced for `/new`, `/resume`, `/fork`, `/clone`, and `/import`.
-- For simple WUI behavior, these commands can create/open/activate sessions in the dashboard.
+- The current pi-crust is multi-session, while Pi TUI has one active runtime that gets replaced for `/new`, `/resume`, `/fork`, `/clone`, and `/import`.
+- For simple pi-crust behavior, these commands can create/open/activate sessions in the dashboard.
 - For exact extension lifecycle behavior, use `createAgentSessionRuntime()` and preserve the same lifecycle events Pi TUI emits. This is especially important for extension hooks like `session_before_switch`, `session_before_fork`, and `session_shutdown`.
 
 Recommended approach:
@@ -253,7 +253,7 @@ Needed:
 - Multi-select model dialog.
 - Server support for enabled/scoped model list.
 - Persist to Pi settings where appropriate.
-- Clarify WUI equivalent of TUI model cycling if cycling shortcuts are added later.
+- Clarify pi-crust equivalent of TUI model cycling if cycling shortcuts are added later.
 
 ### `/compact [instructions]`
 
@@ -390,7 +390,7 @@ Needed:
 
 - Slash command opens a session picker focused on the current project/session root.
 - Selecting a session calls existing open/cold-session path or new `switch_session` operation.
-- Decide whether `/resume` means “activate in dashboard” or “replace the active Pi runtime.” For WUI multi-session, activation is acceptable for first cut; for exact Pi lifecycle, use runtime switch.
+- Decide whether `/resume` means “activate in dashboard” or “replace the active Pi runtime.” For pi-crust multi-session, activation is acceptable for first cut; for exact Pi lifecycle, use runtime switch.
 
 ### `/new`
 
@@ -445,7 +445,7 @@ First cut:
 
 Needed decision:
 
-- Either declare explicit non-goal for private self-hosted WUI, or implement behind a clear opt-in setting.
+- Either declare explicit non-goal for private self-hosted pi-crust, or implement behind a clear opt-in setting.
 
 If implemented:
 
@@ -501,16 +501,16 @@ Reuse:
 Needed:
 
 - Add `getCommands(sessionId)` to API.
-- Merge built-in WUI commands and dynamic commands for autocomplete.
-- If a slash command is not a WUI built-in but exists in dynamic commands, pass it through to `api.prompt(sessionId, originalText)` so Pi expands/executes it.
+- Merge built-in pi-crust commands and dynamic commands for autocomplete.
+- If a slash command is not a pi-crust built-in but exists in dynamic commands, pass it through to `api.prompt(sessionId, originalText)` so Pi expands/executes it.
 - If a slash command is neither built-in nor dynamic, show an unknown-command message with a suggestion to send as plain text.
 
 Important:
 
-- Pi docs say built-in interactive commands are not included in `get_commands`; WUI must keep its own built-in registry.
+- Pi docs say built-in interactive commands are not included in `get_commands`; pi-crust must keep its own built-in registry.
 - Dynamic extension commands can trigger UI requests. Ensure `ExtensionUiHost` is connected to the active session event stream before enabling this broadly.
 
-## Reusable WUI components to create or extract
+## Reusable pi-crust components to create or extract
 
 ### `DialogShell`
 
@@ -577,7 +577,7 @@ Implement by dependency/risk order rather than by TUI command order. The early p
 
 ### Phase 1 — Slash-command foundation
 
-Purpose: establish the reusable WUI command surface before adding many individual commands.
+Purpose: establish the reusable pi-crust command surface before adding many individual commands.
 
 Deliverables:
 
@@ -590,7 +590,7 @@ Deliverables:
   - dynamic command metadata shape
 - Replace the hardcoded `SessionDashboard.handleSlashCommand` switch with registry dispatch.
 - Drive command autocomplete and `/help` from registry metadata.
-- Add shared WUI primitives:
+- Add shared pi-crust primitives:
   - `DialogShell`
   - `SearchableSelectDialog`
   - `ConfirmDialog`
@@ -613,7 +613,7 @@ Tests:
 
 Exit criteria:
 
-- Adding a new WUI slash command is a small registry entry plus optional UI/API method.
+- Adding a new pi-crust slash command is a small registry entry plus optional UI/API method.
 - Command help/autocomplete are metadata-driven.
 
 ### Phase 2 — Low-risk client/UI commands
@@ -645,7 +645,7 @@ Tests:
 
 Exit criteria:
 
-- The WUI has a coherent modal/dialog pattern.
+- The pi-crust has a coherent modal/dialog pattern.
 - Low-risk commands no longer show “recognized in TUI but not implemented.”
 
 ### Phase 3 — Simple server-backed session-local operations
@@ -679,7 +679,7 @@ Tests:
 
 Exit criteria:
 
-- The WUI can safely call non-trivial Pi operations through typed API methods.
+- The pi-crust can safely call non-trivial Pi operations through typed API methods.
 - The mock adapter supports all new operations deterministically.
 
 ### Phase 4 — Model/config/auth commands
@@ -753,15 +753,15 @@ Tests:
 Exit criteria:
 
 - Branching workflows are usable from mobile/touch UI, not just keyboard shortcuts.
-- The WUI behavior is documented where it differs from TUI runtime replacement.
+- The pi-crust behavior is documented where it differs from TUI runtime replacement.
 
 ### Phase 6 — Resume/import/session replacement semantics
 
-Purpose: tackle the commands where TUI semantics and WUI multi-session semantics differ most.
+Purpose: tackle the commands where TUI semantics and pi-crust multi-session semantics differ most.
 
 Deliverables:
 
-- Decide and document whether WUI slash commands mean:
+- Decide and document whether pi-crust slash commands mean:
   - activate another dashboard session, or
   - perform exact Pi `AgentSessionRuntime` replacement semantics.
 - Implement session picker dialog extracted from/reusing sidebar behavior.
@@ -866,18 +866,18 @@ POST /api/auth/logout
 GET  /api/changelog
 ```
 
-Long term, consider moving these to the existing WebSocket protocol once the WUI is ready for full-duplex command handling.
+Long term, consider moving these to the existing WebSocket protocol once the pi-crust is ready for full-duplex command handling.
 
 ## Existing tests to reuse and port
 
 There are two useful test sources:
 
-1. This repo's current WUI/unit/e2e tests.
+1. This repo's current pi-crust/unit/e2e tests.
 2. Pi's own TUI/SDK/RPC tests inside `@earendil-works/pi-coding-agent` / `pi-mono`.
 
-The goal should not be to copy TUI implementation tests mechanically. Instead, extract behavioral invariants from the TUI tests and write WUI-first tests that prove the same outcomes through browser-visible UI and server API contracts.
+The goal should not be to copy TUI implementation tests mechanically. Instead, extract behavioral invariants from the TUI tests and write pi-crust-first tests that prove the same outcomes through browser-visible UI and server API contracts.
 
-### Current WUI tests in this repo
+### Current pi-crust tests in this repo
 
 Existing tests already cover many reusable components and should become the base for slash-command TDD:
 
@@ -894,7 +894,7 @@ Existing tests already cover many reusable components and should become the base
 | `tests/unit/session-registry.test.ts` | Registry/session lifecycle | Extend for adapter methods used by slash commands |
 | `tests/e2e/websocket-server.test.ts` | Protocol/router basics | Extend once commands move to WebSocket protocol |
 
-Immediate WUI test additions before implementation:
+Immediate pi-crust test additions before implementation:
 
 - `tests/unit/slash-command-registry.test.ts`
 - `tests/unit/slash-command-parser.test.ts`
@@ -907,7 +907,7 @@ Immediate WUI test additions before implementation:
 
 Relevant upstream tests found in `pi-mono/packages/coding-agent/test`:
 
-| Upstream test | Behavior to port to WUI tests |
+| Upstream test | Behavior to port to pi-crust tests |
 | --- | --- |
 | `interactive-mode-import-command.test.ts` | `/import` and `/export` path parsing strips quotes, preserves apostrophes, enforces command token boundaries, confirms import, handles missing files non-fatally |
 | `interactive-mode-clone-command.test.ts` | `/clone` forks current leaf with `{ position: "at" }`, clears editor, shows success, and handles empty session with “Nothing to clone yet” |
@@ -929,10 +929,10 @@ Relevant upstream tests found in `pi-mono/packages/coding-agent/test`:
 | `settings-manager.test.ts`, `settings-manager-bug.test.ts` | Settings merge/persistence/update behavior for `/settings` |
 | `prompt-templates.test.ts`, `skills.test.ts`, `sdk-skills.test.ts` | Dynamic prompt/skill command discovery and expansion behavior |
 | `suite/regressions/2023-queued-slash-command-followup.test.ts` | Extension-origin queued slash-command follow-ups should be raw user text, not accidentally re-dispatched |
-| `suite/regressions/2860-replaced-session-context.test.ts` | Replacement-session contexts become stale after new/fork/switch/reload; important if WUI adopts runtime replacement semantics |
+| `suite/regressions/2860-replaced-session-context.test.ts` | Replacement-session contexts become stale after new/fork/switch/reload; important if pi-crust adopts runtime replacement semantics |
 | `suite/regressions/3688-tree-cancel-compacting.test.ts` | Tree navigation cancellation while compacting/branch summarizing |
 
-### TUI-to-WUI test-porting principles
+### TUI-to-pi-crust test-porting principles
 
 For each upstream TUI test, port at one of three layers:
 
@@ -944,7 +944,7 @@ Prefer one test at each layer for high-risk commands instead of many brittle UI 
 
 Do not port terminal-specific assertions such as ANSI text, raw key escape codes, line width, or border rendering. Translate them into web-equivalent assertions:
 
-| TUI assertion | WUI assertion |
+| TUI assertion | pi-crust assertion |
 | --- | --- |
 | Rendered output contains `ctrl+r rename` | Dialog exposes visible Rename button/help text and keyboard shortcut metadata |
 | Raw key `Ctrl+D` enters delete confirmation | User clicks Delete or presses configured shortcut and sees `alertdialog` |
@@ -970,8 +970,8 @@ File: `tests/unit/slash-command-registry.test.ts`
 - Registry resolves aliases (`/models`, `/info`, `/close`) to canonical commands.
 - Registry returns built-in command metadata for help/autocomplete.
 - Registry merges dynamic commands after built-ins and handles name collisions deterministically.
-- Unknown slash command shows a WUI notice and is not sent to Pi automatically.
-- Dynamic slash command that is not WUI built-in is passed through to `api.prompt(sessionId, originalText)`.
+- Unknown slash command shows a pi-crust notice and is not sent to Pi automatically.
+- Dynamic slash command that is not pi-crust built-in is passed through to `api.prompt(sessionId, originalText)`.
 
 #### Shared dialogs
 
@@ -1177,7 +1177,7 @@ Files:
 
 Tests if deferred:
 
-- `/share` shows explicit “not supported in WUI yet” message with no upload side effects.
+- `/share` shows explicit “not supported in pi-crust yet” message with no upload side effects.
 
 Tests if implemented:
 
@@ -1200,9 +1200,9 @@ Tests:
 - `api.getCommands(sessionId)` results appear in autocomplete/help with source labels.
 - Duplicate extension command names use suffixed invocation names (`deploy:1`, `deploy:2`) and preserve ordering, porting `resource-loader.test.ts`.
 - Prompt template and skill commands are displayed as dynamic commands.
-- Selecting/typing a dynamic command passes original slash text to `api.prompt` and does not show WUI fallback.
+- Selecting/typing a dynamic command passes original slash text to `api.prompt` and does not show pi-crust fallback.
 - Dynamic command UI requests are rendered by `ExtensionUiHost`.
-- Extension-origin queued slash-command follow-ups are treated as raw user text, not re-dispatched as WUI commands, porting regression `2023`.
+- Extension-origin queued slash-command follow-ups are treated as raw user text, not re-dispatched as pi-crust commands, porting regression `2023`.
 
 ## Testing strategy
 
@@ -1229,9 +1229,9 @@ Tests:
 
 ## Open questions
 
-1. Should `/quit` delete/dispose the active session, close the browser connection, or stop the server? Current WUI behavior maps it to close/delete; this should be renamed or clarified.
-2. Should `/resume`, `/new`, `/fork`, `/clone`, and `/import` use exact Pi runtime replacement semantics or WUI multi-session activation semantics?
+1. Should `/quit` delete/dispose the active session, close the browser connection, or stop the server? Current pi-crust behavior maps it to close/delete; this should be renamed or clarified.
+2. Should `/resume`, `/new`, `/fork`, `/clone`, and `/import` use exact Pi runtime replacement semantics or pi-crust multi-session activation semantics?
 3. Should `/share` be supported at all in a private Tailscale-first app?
 4. Should `/export` allow arbitrary output paths, or only download/generated export locations?
-5. Should the WUI eventually consume Pi RPC mode directly instead of maintaining an SDK adapter?
-6. How much of package management belongs in this WUI, given the security implications of installing executable extensions remotely?
+5. Should the pi-crust eventually consume Pi RPC mode directly instead of maintaining an SDK adapter?
+6. How much of package management belongs in this pi-crust, given the security implications of installing executable extensions remotely?

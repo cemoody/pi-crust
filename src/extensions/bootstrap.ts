@@ -84,7 +84,7 @@ export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOpti
 }
 
 export function defaultPrcConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  return path.resolve(env.PI_REMOTE_CONFIG_DIR ?? path.join(env.HOME ?? process.cwd(), ".pi-remote-control"));
+  return path.resolve(env.PI_REMOTE_CONFIG_DIR ?? path.join(env.HOME ?? process.cwd(), ".pi-crust"));
 }
 
 function parseExtensionEnv(value: string | undefined): string[] {

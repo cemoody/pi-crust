@@ -1,6 +1,6 @@
 /**
  * Pins the contract that even when `message.text` is a non-string at
- * runtime (Array, Object, null, undefined), the WUI's text-extraction
+ * runtime (Array, Object, null, undefined), the pi-crust's text-extraction
  * helpers (lastAssistantTextOf, turnToMarkdown) do not throw.
  *
  * These helpers were the secondary symptom of the same upstream bug

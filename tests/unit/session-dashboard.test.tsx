@@ -467,7 +467,7 @@ describe("SessionDashboard", () => {
     it("does not let stale browser localStorage pin an old session above newer server-side user input", async () => {
       if (typeof window !== "undefined" && window.localStorage) {
         window.localStorage.clear();
-        window.localStorage.setItem("pi-remote-control:lastUserActivityById:v1", JSON.stringify({
+        window.localStorage.setItem("pi-crust:lastUserActivityById:v1", JSON.stringify({
           "stale-local": 10_000,
         }));
       }
@@ -933,7 +933,7 @@ describe("SessionDashboard", () => {
   });
 
   it("/clear is an alias for /new and starts a fresh session", async () => {
-    // pi renamed /clear -> /new (see pi-coding-agent CHANGELOG). The WUI keeps
+    // pi renamed /clear -> /new (see pi-coding-agent CHANGELOG). The pi-crust keeps
     // /clear working as a muscle-memory alias for users coming from Claude
     // Code et al.
     const createSession = vi.fn(async (input: NewSessionInput) => ({

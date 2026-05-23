@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 /**
  * Regression: when a session's on-disk transcript stores assistant
  * `content` as an array of typed blocks (`text`, `thinking`, `toolCall`) —
- * the shape every real pirpc / Anthropic-messages session uses — the WUI
+ * the shape every real pirpc / Anthropic-messages session uses — the pi-crust
  * has to fan those blocks out into:
  *
  *   * a Markdown body that contains only the `text` blocks,
@@ -17,7 +17,7 @@ import { expect, test } from '@playwright/test';
  * this fan-out. The new tail-read fast path in http-api-server.ts
  * (`readSessionMessagesTail`) reads raw JSONL records and forwards them
  * straight to `toDashboardMessages`, which sets `text: message.content`
- * verbatim. The WUI then treats the structured array as if it were a
+ * verbatim. The pi-crust then treats the structured array as if it were a
  * string, JSON.stringifying it into the assistant bubble — the user sees
  * literal `{ "type": "toolCall", "name": "bash", ... }` text and no tool
  * card at all.
@@ -39,11 +39,11 @@ test.describe('structured assistant content on initial session load', () => {
   // the timeline region has had a chance to render.
   async function waitForTimelineMounted(page: import('@playwright/test').Page) {
     // Land on the index first so the server-side coldSessionFiles cache
-    // is warmed by the listSessions response before the WUI fires its
+    // is warmed by the listSessions response before the pi-crust fires its
     // first /messages fetch. Without this priming, a deep-link straight
     // to /?session=<id> on a freshly-booted API races the listSessions
     // population and the /messages call can come back "Unknown session";
-    // the WUI does not retry that error path (PR #109 stopped the SSE-
+    // the pi-crust does not retry that error path (PR #109 stopped the SSE-
     // driven refetch loop), so the timeline silently stays empty.
     await page.goto('/');
     await expect(page.getByRole('link', { name: 'Structured tool-call session' })).toBeVisible();

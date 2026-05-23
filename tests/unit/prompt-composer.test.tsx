@@ -302,11 +302,11 @@ describe("PromptComposer", () => {
 
   it("truncates a long cwd and model with leading ellipsis", () => {
     renderComposer({
-      statusCwd: "/Users/chris/code/pi-remote-control-html-extension",
+      statusCwd: "/Users/chris/code/pi-crust-html-extension",
       statusModel: "anthropic/claude-opus-4-7",
       onSlashCommand: vi.fn(),
     });
-    expect(screen.getByTitle("/Users/chris/code/pi-remote-control-html-extension")).toHaveTextContent(/^…/);
+    expect(screen.getByTitle("/Users/chris/code/pi-crust-html-extension")).toHaveTextContent(/^…/);
     expect(screen.getByRole("button", { name: /claude-opus-4-7/ })).toBeInTheDocument();
   });
 

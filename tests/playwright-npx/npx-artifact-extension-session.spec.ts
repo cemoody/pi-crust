@@ -14,7 +14,7 @@ test("npx-style fresh install can add artifact image rendering to an existing se
   try {
     const tarball = await npmPack(root);
     const home = path.join(root, "home");
-    const configDir = path.join(home, ".pi-remote-control");
+    const configDir = path.join(home, ".pi-crust");
     const projectRoot = path.join(root, "project");
     const sessionRoot = path.join(root, "sessions");
     const extensionDir = path.join(root, "external-artifacts");
@@ -27,7 +27,7 @@ test("npx-style fresh install can add artifact image rendering to an existing se
 
     const port = await freePort();
     const url = `http://127.0.0.1:${port}`;
-    server = spawn("npm", ["exec", "--yes", `--package=${tarball}`, "--", "pi-remote-control"], {
+    server = spawn("npm", ["exec", "--yes", `--package=${tarball}`, "--", "pi-crust"], {
       cwd: projectRoot,
       detached: true,
       env: {
@@ -118,7 +118,7 @@ async function writeArtifactSession(input: { readonly projectRoot: string; reado
           artifactGroupId: "image-demo",
           caption: "Session image artifact",
           artifacts: [
-            { mime: "image/svg+xml", src: { kind: "url", url: artifactUrl }, alt: "PRC artifact demo image" },
+            { mime: "image/svg+xml", src: { kind: "url", url: artifactUrl }, alt: "pi-crust artifact demo image" },
             { mime: "text/plain", text: "Session image artifact" },
           ],
         },
@@ -134,7 +134,7 @@ function artifactSvg(): string {
   <circle cx="174" cy="172" r="46" fill="#22c55e"/>
   <path d="M151 173l15 15 34-39" fill="none" stroke="white" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
   <text x="244" y="166" font-family="Inter, system-ui, sans-serif" font-size="44" font-weight="700" fill="#111827">Image artifact</text>
-  <text x="244" y="218" font-family="Inter, system-ui, sans-serif" font-size="24" fill="#4b5563">Rendered inside the active PRC session</text>
+  <text x="244" y="218" font-family="Inter, system-ui, sans-serif" font-size="24" fill="#4b5563">Rendered inside the active pi-crust session</text>
   <text x="244" y="292" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" fill="#1d4ed8">served by dev.artifacts</text>
 </svg>`;
 }

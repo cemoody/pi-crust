@@ -13,7 +13,7 @@ pi --mode rpc stdout JSONL
   -> SessionDashboard.applyRealtimeEvent(...)
 ```
 
-This plan is for hardening that path so switching to Pi RPC does not regress the current live streaming experience, and so Pi RPC-specific event types such as `extension_ui_request` become first-class in the HTTP/SSE WUI path.
+This plan is for hardening that path so switching to Pi RPC does not regress the current live streaming experience, and so Pi RPC-specific event types such as `extension_ui_request` become first-class in the HTTP/SSE pi-crust path.
 
 ## Goals
 
@@ -40,9 +40,9 @@ Those are follow-up efforts.
 
 ## Current behavior to preserve
 
-The WUI already handles these real-time event patterns in `SessionDashboard.applyRealtimeEvent`:
+The pi-crust already handles these real-time event patterns in `SessionDashboard.applyRealtimeEvent`:
 
-| Event | Current WUI behavior |
+| Event | Current pi-crust behavior |
 |---|---|
 | `agent_start` | active session status becomes `streaming` |
 | `message_start` | assistant/user message shell is added |
@@ -89,7 +89,7 @@ Pi RPC can emit:
 }
 ```
 
-The WUI has `ExtensionUiHost`, but the HTTP/SSE dashboard path does not yet wire Pi RPC `extension_ui_request` events into it, nor does the HTTP API expose `extension_ui_response`.
+The pi-crust has `ExtensionUiHost`, but the HTTP/SSE dashboard path does not yet wire Pi RPC `extension_ui_request` events into it, nor does the HTTP API expose `extension_ui_response`.
 
 ### 4. Tool args can be lost on update/end events
 
@@ -105,7 +105,7 @@ For this pass: live rendering is enough, but document historical replay as follo
 
 ## Phase 1: Streaming bridge tests
 
-Add tests that simulate a Pi RPC event sequence through the same WUI update functions used by SSE.
+Add tests that simulate a Pi RPC event sequence through the same pi-crust update functions used by SSE.
 
 Coverage:
 
@@ -193,7 +193,7 @@ For Pi RPC adapter, send JSONL to stdin:
 
 For SDK/mock adapters, either no-op with an error or return a clear unsupported response.
 
-### WUI API addition
+### pi-crust API addition
 
 Add optional methods to `SessionDashboardApi`:
 
@@ -253,7 +253,7 @@ Expected results:
 - Tool card appears before completion.
 - Tool output updates before completion.
 - Artifact renders after `show_artifact` finishes.
-- Confirm/select/input/editor requests appear in the WUI and responses unblock the agent.
+- Confirm/select/input/editor requests appear in the pi-crust and responses unblock the agent.
 
 ## Phase 5: Documentation
 

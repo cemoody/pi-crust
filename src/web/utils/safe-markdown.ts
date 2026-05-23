@@ -12,7 +12,7 @@
  *
  * The right long-term fix is to find every place that constructs the
  * non-string and shape-check it at the source. In the meantime, every
- * `<ReactMarkdown>` call in the WUI goes through `coerceMarkdownInput`
+ * `<ReactMarkdown>` call in the pi-crust goes through `coerceMarkdownInput`
  * which:
  *
  *   - returns strings unchanged (the common case);

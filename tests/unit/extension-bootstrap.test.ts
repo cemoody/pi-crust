@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootstrapPrcExtensions, defaultPrcConfigDir } from "../../src/extensions/bootstrap.js";
 import { installExtensionPackage, writePrcSettings } from "../../src/extensions/packages.js";
-import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-prc-home.js";
+import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
 import { writeLocalExtensionPackage } from "../helpers/local-extension-package.js";
 
 let homes: TempPrcHome[] = [];
@@ -12,7 +12,7 @@ afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => home.cleanup()));
 });
 
-describe("PRC extension bootstrap integration", () => {
+describe("pi-crust extension bootstrap integration", () => {
   it("loads explicit, project, global, and built-in extensions in precedence order", async () => {
     const home = await makeHome();
     const explicitFile = path.join(home.root, "explicit.mjs");
@@ -202,7 +202,7 @@ describe("PRC extension bootstrap integration", () => {
 
   it("uses PI_REMOTE_CONFIG_DIR before the default home config dir", () => {
     expect(defaultPrcConfigDir({ HOME: "/home/test", PI_REMOTE_CONFIG_DIR: "/tmp/prc" })).toBe("/tmp/prc");
-    expect(defaultPrcConfigDir({ HOME: "/home/test" })).toBe("/home/test/.pi-remote-control");
+    expect(defaultPrcConfigDir({ HOME: "/home/test" })).toBe("/home/test/.pi-crust");
   });
 });
 

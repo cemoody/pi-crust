@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import piRemoteArtifacts from "../../src/server/pi/extensions/pi-remote-artifacts.js";
+import piRemoteArtifacts from "../../src/server/pi/extensions/pi-crust-artifacts.js";
 
 /**
  * These tests cover the bash-style "the tool call should fail if its inputs
  * are wrong" validation we added to `show_artifact`. The motivating bug:
- * passing a `path` that the WUI can't actually fetch over HTTP silently
+ * passing a `path` that the pi-crust can't actually fetch over HTTP silently
  * produced a broken-image artifact instead of an obvious tool failure.
  *
  * The behavior we want:
@@ -118,7 +118,7 @@ describe("show_artifact path validation", () => {
     const tool = makeShowArtifact();
     // A vega-lite artifact has its content in `data`, not a file. Passing
     // a `path` here is unusual but should be a no-op rather than failing,
-    // because the WUI ignores path for kind=vega-lite.
+    // because the pi-crust ignores path for kind=vega-lite.
     const result = await tool.execute("call-1", {
       kind: "vega-lite",
       title: "Chart",

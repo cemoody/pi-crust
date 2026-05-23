@@ -27,13 +27,13 @@ test("presentation artifact renders preview and present modal", async ({ page })
 
 test("tool-result presentation artifact renders inline after page reload", async ({ page }) => {
   // Reproduces the bug where /api/sessions/:id/messages dropped the tool
-  // result's details.piRemoteControlArtifact, leaving the WUI showing raw
+  // result's details.piRemoteControlArtifact, leaving the pi-crust showing raw
   // JSON instead of the inline slide preview after a page reload.
   await page.goto("/");
   await page.getByRole("link", { name: /^Tool presentation reload\b/ }).click();
 
   // Card should render from the persisted /messages payload alone (no
-  // live SSE involved here — the WUI is reading the mock-session JSON
+  // live SSE involved here — the pi-crust is reading the mock-session JSON
   // through the API, exactly like a real page reload).
   await expect(page.locator('[data-testid="artifact-presentation"]')).toBeVisible();
   await expect(page.locator('[data-testid="artifact-presentation-preview"]')).toBeVisible();

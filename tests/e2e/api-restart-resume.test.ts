@@ -22,7 +22,7 @@ const EXPECTED_TEXT = "alpha beta gamma delta epsilon zeta eta theta";
 const CHUNKS = EXPECTED_TEXT.split(" ").map((w, i) => i === 0 ? w : " " + w);
 
 async function makeFakePi(opts: { sessionId: string; deltaIntervalMs: number; }): Promise<{ root: string; executable: string; sessionFile: string; }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-rc-e2e-restart-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-e2e-restart-"));
   cleanups.push(async () => { await fs.rm(root, { recursive: true, force: true }); });
   const sessionDir = path.join(root, "sessions");
   await fs.mkdir(sessionDir, { recursive: true });
@@ -166,11 +166,11 @@ class SseStream {
 
 describe("API restart with detached workers", () => {
   it("preserves the worker, replays missed events to SSE, and yields the same final message as a no-restart control run", async () => {
-    const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-rc-rt-"));
+    const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-rt-"));
     cleanups.push(async () => { await fs.rm(runtimeDir, { recursive: true, force: true }); });
-    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-rc-proj-"));
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-proj-"));
     cleanups.push(async () => { await fs.rm(projectRoot, { recursive: true, force: true }); });
-    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-rc-sr-"));
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-sr-"));
     cleanups.push(async () => { await fs.rm(sessionRoot, { recursive: true, force: true }); });
 
     const log = (m: string) => { if (process.env.RESTART_DEBUG) console.log(`[t] ${m}`); };
@@ -198,9 +198,9 @@ describe("API restart with detached workers", () => {
     await stopStack(controlStack, "dispose");
 
     // ---- Restart run: mid-stream API kill, then resume ----
-    const runtimeDir2 = await fs.mkdtemp(path.join(os.tmpdir(), "pi-rc-rt2-"));
+    const runtimeDir2 = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-rt2-"));
     cleanups.push(async () => { await fs.rm(runtimeDir2, { recursive: true, force: true }); });
-    const projectRoot2 = await fs.mkdtemp(path.join(os.tmpdir(), "pi-rc-proj2-"));
+    const projectRoot2 = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-proj2-"));
     cleanups.push(async () => { await fs.rm(projectRoot2, { recursive: true, force: true }); });
     const fakePi2 = await makeFakePi({ sessionId: "restart-session-2", deltaIntervalMs: 80 });
     // The fake pi writes its session file under fakePi2.root/sessions; align the

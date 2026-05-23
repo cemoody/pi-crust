@@ -69,7 +69,7 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
     const body = await response.text();
 
     // The raw base64 payload must not appear inline. The endpoint is allowed
-    // to substitute a reference (e.g. a URL or content hash) so the WUI can
+    // to substitute a reference (e.g. a URL or content hash) so the pi-crust can
     // lazy-load images on demand.
     expect(body).not.toContain(oneMegabyteOfPng);
     expect(body.length).toBeLessThan(200_000);
@@ -153,7 +153,7 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
     const body = await response.text();
 
     // The 2.5 MB inline HTML must not appear verbatim in the timeline JSON.
-    // The server is allowed to substitute a URL the WUI can lazy-fetch.
+    // The server is allowed to substitute a URL the pi-crust can lazy-fetch.
     expect(body).not.toContain(bigDeckHtml);
     expect(body.length).toBeLessThan(200_000);
   });
@@ -223,7 +223,7 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
     // Server must honour the requested window instead of returning all 250.
     expect(list.length).toBe(25);
     // And it should preserve recency: the tail (most recent messages) is what
-    // the WUI needs first, so the last item should be message 249.
+    // the pi-crust needs first, so the last item should be message 249.
     expect(list[list.length - 1]?.timestamp).toBe(250);
   });
 });
