@@ -328,4 +328,106 @@ describe("dev-api.mjs supervisor", () => {
       await fs.rm(sandbox, { recursive: true, force: true });
     }
   }, 25_000);
+
+  it("auto-heals a node_modules whose nested symlink ELOOPs (e.g. node_modules/.bin/tsx → self)", async () => {
+    // Reproduces the 2026-05-23 outage: `node_modules` was a real directory
+    // (not itself a symlink), but a path INSIDE it self-referenced and
+    // ELOOPed. The previous heal bailed at `!stat.isSymbolicLink()` and
+    // the supervisor sat in 'Will retry' for 33 minutes with no API up.
+    // The fix: when spawn() throws ELOOP and node_modules is a directory,
+    // run `npm install` anyway (it's idempotent and repairs nested junk).
+    const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "dev-api-autoheal-nested-"));
+    try {
+      await fs.writeFile(path.join(sandbox, "package.json"), JSON.stringify({
+        name: "dev-api-autoheal-nested-sandbox",
+        version: "0.0.0",
+        private: true,
+        type: "module",
+      }, null, 2) + "\n");
+      await fs.mkdir(path.join(sandbox, "scripts"), { recursive: true });
+      await fs.mkdir(path.join(sandbox, "src/server"), { recursive: true });
+      await fs.copyFile(scriptPath, path.join(sandbox, "scripts/dev-api.mjs"));
+
+      // Real node_modules dir; bad symlink NESTED inside it.
+      await fs.mkdir(path.join(sandbox, "node_modules/.bin"), { recursive: true });
+      const cyclicBin = path.join(sandbox, "node_modules/.bin/tsx");
+      await fs.symlink(cyclicBin, cyclicBin); // tsx -> tsx
+
+      const sandboxSupervisor = spawn(process.execPath, [
+        path.join(sandbox, "scripts/dev-api.mjs"),
+        "--",
+        cyclicBin,
+        "--version",
+      ], { cwd: sandbox, env: { ...process.env, DEV_API_DEBOUNCE_MS: "200", DEV_API_RESTART_MS: "200" }, stdio: ["ignore", "pipe", "pipe"] });
+      supervisor = sandboxSupervisor;
+      const localLog: string[] = [];
+      sandboxSupervisor.stdout!.on("data", (c) => localLog.push(c.toString()));
+      sandboxSupervisor.stderr!.on("data", (c) => localLog.push(c.toString()));
+
+      // Crucial: assert the heal RUNS even though node_modules itself isn't
+      // a symlink. Before the fix this would log nothing and the supervisor
+      // would just respawn forever.
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const out = localLog.join("");
+        if (/running .*npm install/.test(out)
+            && /npm install completed|next respawn will retry the heal/.test(out)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const out = localLog.join("");
+      expect(out, "spawn should have ELOOPed").toMatch(/spawn\(\) threw synchronously: .*ELOOP/);
+      expect(out, "heal must run npm install even when node_modules isn't a symlink").toMatch(/running .*npm install/);
+      expect(out, "npm install should complete OR be queued for retry").toMatch(/npm install completed|next respawn will retry the heal/);
+      // We do NOT assert the heal removed the nested bad symlink; `npm install`
+      // with no deps won't touch arbitrary user-created files under .bin.
+      // What we DO assert is that the heal ran at all — that's the regression
+      // guard for the 33-minute outage.
+    } finally {
+      await fs.rm(sandbox, { recursive: true, force: true });
+    }
+  }, 25_000);
+
+  it("respects the heal cooldown so repeated ELOOP doesn't run npm install in a tight loop", async () => {
+    // If npm install can't fix the breakage (e.g. permission errors, network
+    // down, fundamentally broken filesystem), we mustn't spawn `npm install`
+    // every ~1s forever. The cooldown ensures at most one heal attempt per
+    // HEAL_COOLDOWN_MS window.
+    const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "dev-api-cooldown-"));
+    try {
+      await fs.writeFile(path.join(sandbox, "package.json"), JSON.stringify({
+        name: "dev-api-cooldown-sandbox",
+        version: "0.0.0",
+        private: true,
+        type: "module",
+      }, null, 2) + "\n");
+      await fs.mkdir(path.join(sandbox, "scripts"), { recursive: true });
+      await fs.mkdir(path.join(sandbox, "src/server"), { recursive: true });
+      await fs.copyFile(scriptPath, path.join(sandbox, "scripts/dev-api.mjs"));
+      await fs.mkdir(path.join(sandbox, "node_modules/.bin"), { recursive: true });
+      const cyclicBin = path.join(sandbox, "node_modules/.bin/tsx");
+      await fs.symlink(cyclicBin, cyclicBin);
+
+      const sandboxSupervisor = spawn(process.execPath, [
+        path.join(sandbox, "scripts/dev-api.mjs"),
+        "--",
+        cyclicBin,
+      ], { cwd: sandbox, env: { ...process.env, DEV_API_DEBOUNCE_MS: "100", DEV_API_RESTART_MS: "100" }, stdio: ["ignore", "pipe", "pipe"] });
+      supervisor = sandboxSupervisor;
+      const localLog: string[] = [];
+      sandboxSupervisor.stdout!.on("data", (c) => localLog.push(c.toString()));
+      sandboxSupervisor.stderr!.on("data", (c) => localLog.push(c.toString()));
+
+      // Let it churn for ~5s. With RESTART_DELAY_MS=100 and no cooldown, it
+      // would have run `npm install` ~50 times. With the 30s cooldown, it
+      // runs at most twice (start + maybe one after cooldown).
+      await new Promise((r) => setTimeout(r, 5_000));
+      const out = localLog.join("");
+      const installs = (out.match(/running .*npm install/g) ?? []).length;
+      const cooldownSkips = (out.match(/heal cooldown active/g) ?? []).length;
+      expect(installs, "npm install should be cooldown-limited").toBeLessThanOrEqual(1);
+      expect(cooldownSkips, "subsequent ELOOPs in the window should log a cooldown skip").toBeGreaterThanOrEqual(1);
+    } finally {
+      await fs.rm(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
 });

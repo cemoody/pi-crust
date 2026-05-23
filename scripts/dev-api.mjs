@@ -117,51 +117,86 @@ function killGroup(pid, signal) {
 }
 
 /**
- * Detect and repair the canonical worktree's `node_modules` if it's been
- * clobbered into a self-referential symlink. Returns true if a heal was
- * actually performed (caller should schedule a respawn after a short
- * delay so the fresh node_modules has time to materialize).
+ * Detect and repair a node_modules tree that's been clobbered such that
+ * `spawn()` of an npm-resolved binary (e.g. tsx, npm itself) hits ELOOP.
+ * Returns true if a heal was actually performed (caller should schedule
+ * a respawn after a short delay so the fresh node_modules has time to
+ * materialize).
  *
- * Observed pathological state (seen 4 times in 24h):
+ * Two known pathological states, both observed multiple times in 24h:
  *
- *   $ ls -la node_modules
- *   lrwxrwxrwx ... node_modules -> ../<this-dir-name>/node_modules
+ *   (A) `node_modules` itself is a self-referential symlink:
+ *         $ ls -la node_modules
+ *         lrwxrwxrwx ... node_modules -> ../<this-dir-name>/node_modules
+ *       Root cause: an agent ran `ln -s ../pi-remote-control/node_modules
+ *       node_modules` from INSIDE the canonical worktree (the recipe is
+ *       correct for sibling worktrees but loops on the canonical one).
  *
- * Root cause: an agent ran `ln -s ../pi-remote-control/node_modules
- * node_modules` from INSIDE the canonical worktree (the recipe is correct
- * for sibling worktrees but loops on the canonical one). Every binary
- * lookup under node_modules then hits ELOOP, including the supervisor's
- * spawn() for tsx, killing the api.
+ *   (B) `node_modules` is a normal directory but contains a nested
+ *       symlink that ELOOPs (e.g. `node_modules/tsx` → `../tsx` from a
+ *       half-finished install, or any other bad symlink). The previous
+ *       version of this heal bailed early via `!stat.isSymbolicLink()`
+ *       and the supervisor would sit in `Will retry` forever with no
+ *       API up. Observed 2026-05-23: a 33-minute outage where `dev:api`
+ *       loop-spammed `spawn() threw synchronously: spawn ELOOP. Will
+ *       retry.` until a human ran `npm install` manually.
  *
- * Heal procedure: remove the bad symlink and run `npm install`. This is
- * the same thing a human would do; we just do it automatically because
- * the same mistake has happened often enough that paying the npm install
- * cost (~7s on a warm cache) is much cheaper than a human-in-the-loop.
+ * Heal procedure:
+ *   - Case (A): unlink the bad symlink, then `npm install`.
+ *   - Case (B): just `npm install` (it'll repair whatever's broken).
+ * `npm install` is the same thing a human would do; we just do it
+ * automatically because the same mistakes recur often enough that
+ * paying the ~7s warm-cache cost is much cheaper than a human-in-the-loop.
+ *
+ * A small cooldown prevents tight respawn → spawn ELOOP → heal → respawn
+ * loops if `npm install` itself can't fix the underlying breakage.
  */
+let lastHealAt = 0;
+const HEAL_COOLDOWN_MS = 30_000;
+
 function tryHealCyclicNodeModules() {
-  const nm = path.join(projectRoot, "node_modules");
-  let stat;
-  try { stat = fsSync.lstatSync(nm); }
-  catch { return false; }
-  if (!stat.isSymbolicLink()) return false;
-  let target;
-  try { target = fsSync.readlinkSync(nm); }
-  catch { return false; }
-  // The bad pattern is a symlink whose resolved target IS the same
-  // directory as the symlink itself — cyclic. Detect via realpath which
-  // throws ELOOP on the canonical pathological case.
-  let isCyclic = false;
-  try {
-    fsSync.realpathSync(nm);
-  } catch (err) {
-    if (err && err.code === "ELOOP") isCyclic = true;
+  const now = Date.now();
+  if (now - lastHealAt < HEAL_COOLDOWN_MS) {
+    log(`heal cooldown active (${Math.round((HEAL_COOLDOWN_MS - (now - lastHealAt)) / 1000)}s left); skipping`);
+    return false;
   }
-  if (!isCyclic) return false;
 
-  log(`detected cyclic node_modules symlink (target=${target}). Removing and reinstalling.`);
-  try { fsSync.unlinkSync(nm); }
-  catch (err) { log(`failed to unlink bad symlink: ${err && err.message ? err.message : err}`); return false; }
+  const nm = path.join(projectRoot, "node_modules");
 
+  // Case (A): node_modules itself is a cyclic symlink. Detect and unlink
+  // BEFORE we let npm install try (npm install will refuse to install
+  // into a symlink that doesn't resolve).
+  let stat = null;
+  try { stat = fsSync.lstatSync(nm); } catch { /* missing is fine */ }
+  if (stat && stat.isSymbolicLink()) {
+    let target = "<unreadable>";
+    try { target = fsSync.readlinkSync(nm); } catch { /* ignore */ }
+    let isCyclic = false;
+    try { fsSync.realpathSync(nm); }
+    catch (err) { if (err && err.code === "ELOOP") isCyclic = true; }
+    if (isCyclic) {
+      log(`detected cyclic node_modules symlink (target=${target}). Removing before npm install.`);
+      try { fsSync.unlinkSync(nm); }
+      catch (err) {
+        log(`failed to unlink bad symlink: ${err && err.message ? err.message : err}`);
+        return false;
+      }
+    } else {
+      // A non-cyclic symlink (e.g. sibling worktree sharing canonical
+      // install) is by design and is NOT the bug. Don't touch it; let
+      // the user/operator figure out what's wrong. Falling through here
+      // would let npm install rewrite the symlink, which is bad.
+      log(`node_modules is a symlink (target=${target}) but resolves cleanly; nothing to heal here`);
+      return false;
+    }
+  }
+
+  // Case (B): `node_modules` is a directory (or just got unlinked in case
+  // A) but spawn() still ELOOPed — meaning the bad symlink is nested.
+  // Reproducing the exact offender is finicky and not worth it: just run
+  // `npm install`, which fixes whatever's broken (missing dirs, bad
+  // symlinks, half-installed packages).
+  lastHealAt = now;
   log(`running \`npm install --no-audit --no-fund\` to rebuild node_modules…`);
   const result = spawnSync("npm", ["install", "--no-audit", "--no-fund"], {
     cwd: projectRoot,
@@ -172,7 +207,7 @@ function tryHealCyclicNodeModules() {
     log(`npm install completed; the next respawn should succeed.`);
     return true;
   }
-  log(`npm install exited code=${result.status} signal=${result.signal}; next respawn will retry the heal.`);
+  log(`npm install exited code=${result.status} signal=${result.signal}; next respawn will retry the heal after cooldown.`);
   return false;
 }
 
@@ -212,8 +247,8 @@ function spawnChild() {
     // doesn't sit in a permanent retry loop while waiting for a human.
     if (err && err.code === "ELOOP") {
       const healed = tryHealCyclicNodeModules();
-      if (healed) scheduleRespawn("after cyclic-node_modules heal");
-      else scheduleRespawn("sync ELOOP, heal not applicable");
+      if (healed) scheduleRespawn("after node_modules heal");
+      else scheduleRespawn("sync ELOOP, heal deferred/failed");
     } else {
       scheduleRespawn("sync spawn() failure");
     }
