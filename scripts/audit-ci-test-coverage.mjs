@@ -1,4 +1,18 @@
 #!/usr/bin/env node
+/**
+ * audit-ci-test-coverage — fail-fast gate that ensures every test file
+ * under tests/ is actually wired into a job in .github/workflows/ci.yml.
+ *
+ * Why this exists: a new tests/<bucket>/foo.test.ts that nobody added to
+ * the workflow is dead code in disguise — it never runs in PR review,
+ * never blocks merge, never catches the regression it was written for.
+ * This script enumerates the test files, buckets them by directory, and
+ * checks ci.yml contains the matching job + invocation. Runs as part of
+ * the typecheck-and-unit job (see package.json `audit:ci-tests`).
+ *
+ * Exit code: 0 = healthy, 1 = at least one test file or workflow snippet
+ * is missing.
+ */
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";

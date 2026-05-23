@@ -73,6 +73,13 @@ async function atomicWriteJson(target, value) {
   await fsp.rename(tmp, target);
 }
 
+// RingBuffer: bounded FIFO for resume-on-reconnect. Kept inline (vs. a
+// shared TS module) because the supervisor runs as plain .mjs without
+// a TS loader and we don't want to depend on the build step. The
+// canonical typed implementation lives in src/server/session/ring-buffer.ts;
+// its behavior is locked in by tests/properties/ring-buffer.test.ts and
+// any drift between the two implementations is caught by
+// tests/static/ring-buffer-parity.test.ts.
 class RingBuffer {
   constructor(capacity) {
     this.capacity = capacity;
@@ -118,12 +125,24 @@ async function main() {
   await fsp.mkdir(socketDir, { recursive: true, mode: 0o700 });
 
   // Spawn the real pi RPC child. We own its stdio.
+  // no-pgid: this supervisor IS the long-lived owner; pi is its only child
+  // and we signal it directly with SIGTERM/SIGKILL. No grandchildren to
+  // reap, no npm/sh in between to worry about.
   const child = spawn(piCommand, piArgs, { cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
 
   let childStderr = "";
   child.stderr.on("data", (chunk) => { childStderr = (childStderr + chunk).slice(-16_000); });
+  // EPIPE-safety: if the pi child exits before we finish writing the
+  // bootstrap get_state, the stdin pipe emits 'error' (EPIPE). Without
+  // a listener Node converts that to an unhandled exception and kills
+  // the supervisor. Observed during the regression-test harness build
+  // on 2026-05-23 when a fake-pi exited too eagerly.
+  child.stdin.on("error", (err) => {
+    if (err && err.code === "EPIPE") return; // child gone; child.on("exit") will handle.
+    childStderr = (childStderr + `\n[stdin error] ${err && err.message ? err.message : err}\n`).slice(-16_000);
+  });
 
   const ring = new RingBuffer(ringSize);
   let lastSeq = 0;
@@ -147,20 +166,31 @@ async function main() {
     void persistStatus();
   }
 
+  // Track the most-recent persistStatus() call so cleanupExit can await
+  // it before unlinking. Without this, a child_exit event fires its own
+  // persistStatus async and the rename lands AFTER our unlinkSync, leaving
+  // a stale status file behind on every clean shutdown. Source of the
+  // status-file accumulation that fueled the 2026-05-23 orphan leak.
+  let pendingPersist = Promise.resolve();
   async function persistStatus() {
     if (!statusPath || !sessionId) return;
-    try {
-      await atomicWriteJson(statusPath, {
-        pid: process.pid,
-        sessionId,
-        socketPath,
-        sessionFile,
-        cwd,
-        lastSeq,
-      });
-    } catch {
-      // best-effort
-    }
+    if (exiting) return;
+    const start = (async () => {
+      try {
+        await atomicWriteJson(statusPath, {
+          pid: process.pid,
+          sessionId,
+          socketPath,
+          sessionFile,
+          cwd,
+          lastSeq,
+        });
+      } catch {
+        // best-effort
+      }
+    })();
+    pendingPersist = pendingPersist.then(() => start).catch(() => undefined);
+    return start;
   }
 
   function ownsStatusFile(file) {
@@ -426,6 +456,8 @@ async function main() {
   }
 
   function shutdown() {
+    // pgid-via-supervisor: see the spawn() above — the pi child has no
+    // grandchildren, so a plain child.kill() reaches the entire tree.
     try { child.kill("SIGTERM"); } catch {}
     const killTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 1500);
     child.once("exit", () => {
@@ -440,15 +472,23 @@ async function main() {
     exiting = true;
     try { if (currentClient && !currentClient.destroyed) currentClient.end(); } catch {}
     try { server?.close(); } catch {}
-    // Only remove the shared per-session files if we are still the owner
-    // recorded in statusPath. Otherwise another supervisor for this sessionId
-    // has taken over and is the rightful owner of those paths.
-    removeRuntimeFilesIfOwned(statusPath, socketPath);
-    setTimeout(() => process.exit(code), 50).unref();
+    // Wait for any in-flight persistStatus before removing files — otherwise
+    // its async rename will recreate the status file we just unlinked.
+    // See pendingPersist for the full story.
+    pendingPersist
+      .catch(() => undefined)
+      .then(() => {
+        removeRuntimeFilesIfOwned(statusPath, socketPath);
+        setTimeout(() => process.exit(code), 50).unref();
+      });
   }
 
   // Don't honor SIGHUP from the dying API process. We want to keep running.
-  process.on("SIGHUP", () => {});
+  // (This is load-bearing: when the api restarts it sends SIGHUP to its
+  // children. The whole point of pirpc-supervisor is that the session
+  // survives api restarts, so we explicitly swallow SIGHUP rather than
+  // exiting on it. See tests/regressions/2026-05-23-orphan-supervisor-leak.test.ts.)
+  process.on("SIGHUP", () => { /* intentional no-op; outlive the api */ });
   process.on("SIGTERM", () => shutdown());
   process.on("SIGINT", () => shutdown());
 

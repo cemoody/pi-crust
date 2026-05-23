@@ -39,6 +39,7 @@ const VIEWPORT = { width: 390, height: 844 };
 async function rmrf(p) { try { await fs.rm(p, { recursive: true, force: true }); } catch {} }
 
 function startProcess(cmd, args, env, label) {
+  // no-pgid: one-shot command (recorder utility, never long-lived alongside the api)
   const child = spawn(cmd, args, { env: { ...process.env, ...env }, cwd: repoRoot });
   child.stdout.on("data", (b) => process.stdout.write(`[${label}] ${b}`));
   child.stderr.on("data", (b) => process.stderr.write(`[${label}] ${b}`));
@@ -63,6 +64,7 @@ await fs.mkdir(outDir, { recursive: true });
 
 // 1. Seed (synchronous).
 await new Promise((resolve, reject) => {
+  // no-pgid: one-shot command (recorder utility, never long-lived alongside the api)
   const c = spawn("node", ["scripts/seed-promo-sessions.mjs"], {
     env: { ...process.env, PI_CRUST_PROJECT_ROOT: repoRoot, PI_CRUST_SESSION_ROOT: sessionRoot },
     cwd: repoRoot, stdio: "inherit",
@@ -220,11 +222,13 @@ try {
   const palettePath = path.join(videoRoot, "palette.png");
 
   await new Promise((resolve, reject) => {
+  // no-pgid: one-shot command (recorder utility, never long-lived alongside the api)
     const c = spawn("ffmpeg", ["-y", "-i", webmPath, "-vf", "fps=18,scale=390:-1:flags=lanczos,palettegen=stats_mode=diff", palettePath], { stdio: "inherit" });
     c.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`palettegen ffmpeg exit ${code}`)));
   });
 
   await new Promise((resolve, reject) => {
+  // no-pgid: one-shot command (recorder utility, never long-lived alongside the api)
     const c = spawn("ffmpeg", ["-y", "-i", webmPath, "-i", palettePath, "-lavfi", "fps=18,scale=390:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle", "-loop", "0", outGif], { stdio: "inherit" });
     c.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`paletteuse ffmpeg exit ${code}`)));
   });
