@@ -1,3 +1,11 @@
+/**
+ * seed-mock-session — write a deterministic mock session JSON into
+ * .tmp/playwright-sessions so Playwright suites have a stable session
+ * to attach to. Used by tests/playwright fixtures that need a populated
+ * sidebar without bringing up a real pi worker.
+ *
+ * No-op idempotent: re-running the script overwrites the same file.
+ */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
