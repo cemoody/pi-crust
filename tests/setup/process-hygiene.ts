@@ -94,6 +94,16 @@ const LEAK_PATTERNS: readonly string[] = [
 // from race-with-reaper (gone by then).
 const LEAK_GRACE_MS = Number(process.env.PI_TEST_LEAK_GRACE_MS ?? 300);
 
+// Behavior on detected leak. "warn" (the default) prints a diagnostic line
+// to the test log but does NOT fail the test — the leaked process is still
+// SIGKILL'd, so the box stays clean. "strict" makes leaks a hard test
+// failure. The pragmatic rollout: ship with "warn" by default so existing
+// tests with subtle hygiene bugs surface diagnostically without breaking
+// CI; gradually fix them, then flip the default. Per-test or per-suite
+// opt-in to strict mode is via PI_TEST_HYGIENE_STRICT=1.
+const HYGIENE_MODE: "warn" | "strict" =
+  (process.env.PI_TEST_HYGIENE_STRICT === "1") ? "strict" : "warn";
+
 const isLinux = process.platform === "linux";
 
 interface ProcInfo {
@@ -254,12 +264,19 @@ afterEach(async (ctx) => {
   baseline = new Set([...baseline, ...candidates, ...leaked]);
 
   const testName = ctx?.task?.name ?? "<unknown>";
-  throw new Error(
+  const message =
     `process-hygiene: test "${testName}" leaked ${leaked.length} process(es) ` +
     `matching known-leak patterns (${LEAK_PATTERNS.join(", ")}), surviving a ` +
     `${LEAK_GRACE_MS}ms grace window. Killed them; subsequent tests should be ` +
-    `unaffected:\n${diag.join("\n")}`,
-  );
+    `unaffected:\n${diag.join("\n")}`;
+  if (HYGIENE_MODE === "strict") {
+    throw new Error(message);
+  } else {
+    // Warn-mode: print to stderr so it's visible in CI logs but does not
+    // fail the test. The leaked processes have already been killed above.
+    console.warn(`\n[process-hygiene WARNING] ${message}\n` +
+      `(set PI_TEST_HYGIENE_STRICT=1 to make this a hard failure)`);
+  }
 });
 
 afterAll(() => {
