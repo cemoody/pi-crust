@@ -61,6 +61,17 @@ const DEBOUNCE_MS = Number(process.env.DEV_API_DEBOUNCE_MS ?? 500);
 // crashes, we back off, retry, eventually pull is done and boot succeeds).
 const RESTART_DELAY_MS = Number(process.env.DEV_API_RESTART_MS ?? 800);
 
+// Optional hint: when set, the supervisor probes the listeners on this
+// TCP port whenever the child exits with a non-zero code, and logs the
+// holder's pid + cwd + cmdline. Without this hint a port collision is
+// completely opaque — the operator sees only "already in use" and has
+// no idea what's holding the port. The probe + log are throttled to
+// ELEVATION_INTERVAL_MS so a crash-loop doesn't fill the log.
+//
+// Default: 8787 (the api's own port). Tests override via DEV_API_PORT_HINT.
+const PORT_HINT = Number(process.env.DEV_API_PORT_HINT ?? 8787);
+const ELEVATION_INTERVAL_MS = Number(process.env.DEV_API_ELEVATION_INTERVAL_MS ?? 30_000);
+
 // File extensions worth watching. Tests are excluded so editing tests
 // doesn't bounce the api.
 const SOURCE_PATTERN = /\.(ts|tsx|mjs|cjs|js)$/;
@@ -87,6 +98,7 @@ let shuttingDown = false;
 let respawnTimer = null;
 let debounceTimer = null;
 let pendingFiles = new Set();
+let lastElevationLogAt = 0;
 
 function log(msg) {
   console.log(`[dev-api ${new Date().toISOString()}] ${msg}`);
@@ -211,6 +223,50 @@ function tryHealCyclicNodeModules() {
   return false;
 }
 
+/**
+ * On EADDRINUSE-shaped failures, probe the port the api is supposed
+ * to bind and log the holder's pid, cwd, and cmdline. Throttled to
+ * ELEVATION_INTERVAL_MS so a fast crash-loop doesn't spam the log.
+ */
+function logPortHolderIfAny() {
+  if (!PORT_HINT || PORT_HINT <= 0) return;
+  const now = Date.now();
+  if (now - lastElevationLogAt < ELEVATION_INTERVAL_MS) return;
+  const holders = findTcpListeners(PORT_HINT);
+  if (holders.length === 0) return;
+  for (const pid of holders) {
+    const meta = readProcMeta(pid);
+    log(`port ${PORT_HINT} still held by pid=${pid} cwd=${meta.cwd} cmd=${meta.cmd}`);
+  }
+  lastElevationLogAt = now;
+}
+
+function findTcpListeners(port) {
+  // Prefer ss; fall back to lsof; fall back to /proc/net/tcp scan.
+  const ss = spawnSync("ss", ["-tlnpH", `sport = :${port}`], { encoding: "utf8" });
+  if (ss.status === 0 && ss.stdout) {
+    const pids = new Set();
+    for (const m of ss.stdout.matchAll(/pid=(\d+)/g)) pids.add(Number(m[1]));
+    return [...pids];
+  }
+  const lsof = spawnSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" });
+  if (lsof.status === 0 && lsof.stdout) {
+    return lsof.stdout.trim().split("\n").filter(Boolean).map(Number);
+  }
+  return [];
+}
+
+function readProcMeta(pid) {
+  try {
+    const cmdline = fsSync.readFileSync(`/proc/${pid}/cmdline`, "utf8")
+      .replace(/\0+$/, "").split("\0").join(" ").trim();
+    const cwd = fsSync.readlinkSync(`/proc/${pid}/cwd`);
+    return { cwd, cmd: cmdline || "(unknown)" };
+  } catch {
+    return { cwd: "?", cmd: "?" };
+  }
+}
+
 function scheduleRespawn(reason) {
   if (shuttingDown) return;
   if (respawnTimer) return; // already queued
@@ -287,6 +343,12 @@ function spawnChild() {
     // shouldn't happen but we paid the cost once already).
     killGroup(pid, "SIGKILL");
     child = null;
+    // EADDRINUSE-shaped exits (non-zero code, no signal) are almost
+    // always a port collision with another supervisor or a stale
+    // orphan. Probe the configured port and log the holder's identity
+    // so the operator has something actionable. logPortHolderIfAny is
+    // internally throttled to once per ELEVATION_INTERVAL_MS.
+    if (code !== 0 && code !== null && signal === null) logPortHolderIfAny();
     scheduleRespawn();
   });
 
