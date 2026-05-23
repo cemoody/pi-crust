@@ -47,7 +47,7 @@ test("npx-style fresh install can install, render, and hot reload an extension U
     await waitForHttp(`${url}/api/health`, logs);
 
     await page.goto(url);
-    await expect(page.getByRole("heading", { name: "pi remote" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "π crust" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Schedule" })).toHaveCount(0);
 
     await page.getByRole("link", { name: "Settings" }).click();

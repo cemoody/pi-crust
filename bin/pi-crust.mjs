@@ -39,7 +39,7 @@
  *   PI_CRUST_API_HOST   bind host (default 127.0.0.1, override to 0.0.0.0
  *                        when sharing on a tailnet)
  *   PI_CRUST_OPEN       set to "0" to skip opening the system browser
- *   PI_CRUST_APP_NAME   app title shown in the pi-crust (default "pi remote")
+ *   PI_CRUST_APP_NAME   app title shown in the pi-crust (default "π crust")
  *   PI_CRUST_APP_ICON   app title icon: emoji/text glyph, image URL/path, or data URL
  *   PI_CRUST_ADAPTER    "pirpc" (default) / "pi-sdk" / "mock"
  *   PI_CRUST_USE_MOCK   set to "1" for the offline mock adapter

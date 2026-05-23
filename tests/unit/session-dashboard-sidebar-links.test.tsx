@@ -141,7 +141,7 @@ describe("SessionDashboard sidebar items are anchor links (cmd+click → new tab
 
   it("renders the 'New session' menu item as an anchor to root", async () => {
     render(<SessionDashboard api={makeApi()} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
     const link = await screen.findByRole("link", { name: /New session/i });
     expect(link.tagName).toBe("A");

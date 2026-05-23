@@ -195,7 +195,7 @@ npx -y -p github:cemoody/pi-crust pi-crust-dev
 | `PI_CRUST_SESSION_ROOT` | `~/.pi/agent/sessions` | where session JSONL files live |
 | `PI_CRUST_CRON_FILE` | `~/.pi/agent/cron-jobs.json` | cron job store |
 | `PI_CRUST_CLIENT_EVENT_LOG` | `<cwd>/logs/client-events.jsonl` | client/server telemetry log |
-| `PI_CRUST_APP_NAME` | `pi remote` | sidebar / browser title (overridable in Settings) |
+| `PI_CRUST_APP_NAME` | `π crust` | sidebar / browser title (overridable in Settings) |
 | `PI_CRUST_APP_ICON` | unset | title icon URL / data URL (overridable in Settings) |
 | `PI_CRUST_ADAPTER` | `pirpc` | `pirpc` / `pi-sdk` / `mock` |
 | `PI_CRUST_USE_MOCK` | unset | `1` selects the in-memory mock adapter |

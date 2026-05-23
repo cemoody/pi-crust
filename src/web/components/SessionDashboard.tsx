@@ -37,7 +37,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   // decide whether $HOME is a safe default for new sessions or whether
   // we should fall back to the API server's own cwd.
   const [projectRoot, setProjectRoot] = useState("");
-  const [appName, setAppName] = useState("pi remote");
+  const [appName, setAppName] = useState("π crust");
   const [appIcon, setAppIcon] = useState<string | undefined>(undefined);
   // The user's home directory (server-side). Preferred as the New Session
   // dialog default; falls back to defaultCwd when the API doesn't expose it.
@@ -149,7 +149,10 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   }, [filtersOpen]);
 
   useEffect(() => {
-    document.title = appName === "pi remote" ? "pi remote control" : appName;
+    // Browser tab title mirrors the app name. The pre-rename special case
+    // (where the bare default "pi remote" expanded to "pi remote control")
+    // is gone now that the default is already the full brand name.
+    document.title = appName;
     updateFavicon(appIcon);
   }, [appName, appIcon]);
 
@@ -179,7 +182,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             const info = await api.getServerInfo();
             if (!cancelled) {
               setProjectRoot(info.projectRoot ?? "");
-              setAppName(info.appName || "pi remote");
+              setAppName(info.appName || "π crust");
               setAppIcon(info.appIcon);
             }
           } catch {
@@ -1006,7 +1009,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             onNotice={setNotice}
             {...(api.setAppBranding ? { onSaveBranding: async (branding) => {
               const result = await api.setAppBranding!(branding);
-              setAppName(result.appName || "pi remote");
+              setAppName(result.appName || "π crust");
               setAppIcon(result.appIcon);
               if (api.getExtensionSettings) await refreshExtensionSettings();
             } } : {})}

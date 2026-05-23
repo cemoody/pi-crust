@@ -104,7 +104,7 @@ function makeApi(initial: SessionCardData[] = []): SessionDashboardApi {
 describe("SessionDashboard", () => {
   it("loads with an empty session list", async () => {
     render(<SessionDashboard api={makeApi()} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
     expect(screen.getByText("Select or create a session.")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Schedule" })).not.toBeInTheDocument();
   });
@@ -143,7 +143,7 @@ describe("SessionDashboard", () => {
       createSession: vi.fn(() => createSessionDeferred.promise),
     };
     render(<SessionDashboard api={api} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
     fireEvent.click(screen.getByRole("link", { name: "New session" }));
 
@@ -173,7 +173,7 @@ describe("SessionDashboard", () => {
     // textarea gets focus, and a small 'name (optional)' input appears
     // above the composer until the first message is sent.
     render(<SessionDashboard api={makeApi()} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
     fireEvent.click(screen.getByRole("link", { name: "New session" }));
     // No modal dialog should ever appear.
@@ -210,7 +210,7 @@ describe("SessionDashboard", () => {
     const api = {
       ...makeApi(),
       getExtensionSettings: vi.fn(async () => ({
-        appBranding: { appName: "pi remote", appIconUrl: "" },
+        appBranding: { appName: "π crust", appIconUrl: "" },
         extensions: { commands: [], activities: [], routes: [], diagnostics: [] },
       })),
       setAppBranding: vi.fn(async (branding) => ({
@@ -219,7 +219,7 @@ describe("SessionDashboard", () => {
       })),
     } satisfies SessionDashboardApi;
     const { container } = render(<SessionDashboard api={api} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
     fireEvent.click(screen.getByRole("link", { name: "Settings" }));
     await screen.findByRole("heading", { name: "Settings" });
@@ -253,7 +253,7 @@ describe("SessionDashboard", () => {
       })),
     } satisfies SessionDashboardApi;
     render(<SessionDashboard api={api} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
     fireEvent.click(screen.getByRole("link", { name: "Settings" }));
 
@@ -293,7 +293,7 @@ describe("SessionDashboard", () => {
       })),
     } satisfies SessionDashboardApi;
     render(<SessionDashboard api={api} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
     fireEvent.click(screen.getByRole("link", { name: "Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Reload" }));
@@ -564,7 +564,7 @@ describe("SessionDashboard", () => {
       { id: "a", cwd: "/repo/a", status: "idle", model: "m", lastActivity: 1 },
     ])} />);
 
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), { target: { value: "Beta" } });
     expect(screen.getByText("Beta")).toBeInTheDocument();
     expect(screen.queryByText("Untitled session")).not.toBeInTheDocument();

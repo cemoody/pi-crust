@@ -97,7 +97,7 @@ function resolveContextGitSha(value: string | (() => string) | undefined): strin
 }
 
 function resolveEnvAppBranding(env: NodeJS.ProcessEnv): { readonly appName: string; readonly appIcon?: string } {
-  const appName = env.PI_CRUST_APP_NAME?.trim() || "pi remote";
+  const appName = env.PI_CRUST_APP_NAME?.trim() || "π crust";
   const appIcon = env.PI_CRUST_APP_ICON?.trim();
   return { appName, ...(appIcon ? { appIcon } : {}) };
 }
