@@ -229,6 +229,105 @@ describe("PiRpcAdapter", () => {
     await registry.disposeAll();
   });
 
+  it("request() transparently reconnects after the supervisor evicts the API's socket (regression for 2026-05-24 silent-disconnect)", async () => {
+    // The 2026-05-24 outage shape: another client connects to the supervisor's
+    // UDS, the supervisor evicts the API's currentClient (its sole-client
+    // policy), the API's socket closes, but the supervisor is still happy
+    // and listening. Pre-fix, every subsequent /state / /messages on that
+    // session returned 500 "supervisor connection is closed" — forever.
+    // Post-fix, request() detects this.closed, opens a fresh socket to the
+    // same supervisor, re-runs the hello handshake, and succeeds.
+    //
+    // Use an isolated runtimeDir so we don't trample the dev box's live
+    // /tmp/pi-crust/sessions/.
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-test-pirpc-reopen-"));
+    const projectRoot = path.join(root, "project");
+    const sessionRoot = path.join(root, "sessions");
+    const runtimeDir = path.join(root, "runtime");
+    await fs.mkdir(projectRoot, { recursive: true });
+    const piCommand = await makeFakePiRpcExecutable(root);
+    const registry = new SessionRegistry({
+      adapter: new PiRpcAdapter({ piCommand, sessionDir: sessionRoot, runtimeDir, artifactExtension: false }),
+      pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
+    });
+
+    const session = await registry.createSession({ cwd: projectRoot });
+    expect(session.handle.isHealthy?.()).toBe(true);
+
+    // Read the runtime status file to find the supervisor's socket path,
+    // mirroring how WorkerRegistry locates it for the reattach path.
+    const statusPath = path.join(runtimeDir, "sessions", `${session.id}.json`);
+    const status = JSON.parse(await fs.readFile(statusPath, "utf8")) as { socketPath: string };
+    expect(typeof status.socketPath).toBe("string");
+
+    // Trigger the eviction: open a second connection to the supervisor's
+    // socket. The supervisor's onConnection() will .end() the existing
+    // currentClient (us) and accept this new one. Our socket-close handler
+    // then sets isHealthy()=false.
+    const evictor: import("node:net").Socket = await new Promise((resolve, reject) => {
+      const s = (require("node:net") as typeof import("node:net")).createConnection(status.socketPath);
+      s.once("connect", () => resolve(s));
+      s.once("error", reject);
+    });
+    try {
+      // Wait for the API-side handle to register the close. The eviction is
+      // asynchronous on the OS level so we poll briefly.
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if (session.handle.isHealthy?.() === false) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(session.handle.isHealthy?.()).toBe(false);
+
+      // Capture stderr to verify the reopen log lines fire.
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        // Close the evictor so the supervisor's currentClient is freed and
+        // it's ready to accept our reopen connection.
+        evictor.end();
+        await new Promise((r) => evictor.once("close", () => r(undefined)));
+
+        // THE FIX: request() should transparently reopen and succeed.
+        const state = await session.handle.getState();
+        expect(state.modelProvider).toBe("fake");
+        expect(session.handle.isHealthy?.()).toBe(true);
+
+        const lines = warnSpy.mock.calls.map((c) => String(c[0]));
+        expect(lines.some((l) => l.includes("pirpc.handle.reopen_attempt")),
+          `expected reopen_attempt log. saw:\n${lines.join("\n")}`).toBe(true);
+        expect(lines.some((l) => l.includes("pirpc.handle.reopen_succeeded")),
+          `expected reopen_succeeded log. saw:\n${lines.join("\n")}`).toBe(true);
+      } finally {
+        warnSpy.mockRestore();
+      }
+    } finally {
+      try { evictor.destroy(); } catch {}
+      await registry.disposeAll();
+    }
+  }, 15_000);
+
+  it("intentional dispose() / detach() do NOT trigger auto-reconnect (operator-initiated closes stay closed)", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-test-pirpc-no-reopen-"));
+    const projectRoot = path.join(root, "project");
+    const sessionRoot = path.join(root, "sessions");
+    const runtimeDir = path.join(root, "runtime");
+    await fs.mkdir(projectRoot, { recursive: true });
+    const piCommand = await makeFakePiRpcExecutable(root);
+    const registry = new SessionRegistry({
+      adapter: new PiRpcAdapter({ piCommand, sessionDir: sessionRoot, runtimeDir, artifactExtension: false }),
+      pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
+    });
+    const session = await registry.createSession({ cwd: projectRoot });
+    const handle = session.handle;
+
+    // Dispose intentionally. A subsequent request must fail loudly — we do
+    // NOT want auto-reconnect to resurrect a deleted session.
+    await registry.deleteSession(session.id);
+    expect(handle.isHealthy?.()).toBe(false);
+    await expect(handle.getState()).rejects.toThrow(/supervisor (connection|disposed|detached)/);
+  });
+
   it("isHealthy() returns true for a fresh handle and false after dispose; close emits a structured log", async () => {
     // Regression for the 2026-05-24 outage: a session handle whose
     // underlying supervisor socket has closed must (a) report isHealthy()
