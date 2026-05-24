@@ -153,6 +153,23 @@ function getExtensionHost(context: Pick<HttpApiServerContext, "extensions" | "ex
   return context.extensionRuntime?.current ?? context.extensions;
 }
 
+/**
+ * Narrow context.extensionRuntime to non-null at a route entry, sending a
+ * 400 to the client when the server was started without an extension runtime
+ * configured (typical of standalone test harnesses). Eight extension-routes
+ * had hand-rolled this guard before; centralize so they all use the same
+ * error shape and the route body can use a properly-narrowed local.
+ */
+function requireExtensionRuntime(
+  context: Pick<HttpApiServerContext, "extensionRuntime">,
+  res: http.ServerResponse,
+  label: string,
+): PrcExtensionRuntime | null {
+  if (context.extensionRuntime) return context.extensionRuntime;
+  sendJson(res, 400, { error: `${label} is not configured` });
+  return null;
+}
+
 async function mutateExtensionSettings(
   runtime: PrcExtensionRuntime,
   mutation: () => Promise<PrcSettings>,
@@ -370,13 +387,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   }
 
   if (req.method === "GET" && url.pathname === "/api/extensions/settings") {
-    if (!context.extensionRuntime) return sendJson(res, 400, { error: "extension settings are not configured" });
-    const settings = await readPrcSettings(context.extensionRuntime.configDir);
-    return sendJson(res, 200, { ...settings, extensions: serializeExtensions(context.extensionRuntime.current) });
+    const runtime = requireExtensionRuntime(context, res, "extension settings");
+    if (!runtime) return;
+    const settings = await readPrcSettings(runtime.configDir);
+    return sendJson(res, 200, { ...settings, extensions: serializeExtensions(runtime.current) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/settings/branding") {
-    if (!context.extensionRuntime) return sendJson(res, 400, { error: "settings are not configured" });
+    const runtime = requireExtensionRuntime(context, res, "settings");
+    if (!runtime) return;
     const body = await readJson(req) as { appName?: unknown; appIconUrl?: unknown };
     if (body.appName !== undefined && typeof body.appName !== "string") return sendJson(res, 400, { error: "appName must be a string" });
     if (body.appIconUrl !== undefined && typeof body.appIconUrl !== "string") return sendJson(res, 400, { error: "appIconUrl must be a string" });
@@ -387,7 +406,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
     }
     const appName = (body.appName ?? "").trim();
-    const settings = await readPrcSettings(context.extensionRuntime.configDir);
+    const settings = await readPrcSettings(runtime.configDir);
     const appBranding: PrcAppBrandingSettings = {
       ...(appName ? { appName } : {}),
       ...(appIconUrl ? { appIconUrl } : {}),
@@ -395,12 +414,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const next: PrcSettings = Object.keys(appBranding).length > 0
       ? { ...settings, appBranding }
       : Object.fromEntries(Object.entries(settings).filter(([key]) => key !== "appBranding")) as PrcSettings;
-    await writePrcSettings(context.extensionRuntime.configDir, next);
+    await writePrcSettings(runtime.configDir, next);
     return sendJson(res, 200, effectiveAppBranding(next.appBranding));
   }
 
   if (req.method === "POST" && url.pathname === "/api/settings") {
-    if (!context.extensionRuntime) return sendJson(res, 400, { error: "settings are not configured" });
+    const runtime = requireExtensionRuntime(context, res, "settings");
+    if (!runtime) return;
     const body = await readJson(req) as { key?: unknown; value?: unknown };
     if (typeof body.key !== "string" || body.key.trim().length === 0) {
       return sendJson(res, 400, { error: "key must be a non-empty string" });
@@ -409,48 +429,54 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     if (!/^[a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*$/.test(key)) {
       return sendJson(res, 400, { error: "key must be a dotted alphanumeric path (e.g. presentations.templateDirs)" });
     }
-    const settings = await readPrcSettings(context.extensionRuntime.configDir);
+    const settings = await readPrcSettings(runtime.configDir);
     const next = applyDottedSetting(settings as unknown as Record<string, unknown>, key, body.value);
-    await writePrcSettings(context.extensionRuntime.configDir, next as PrcSettings);
-    const reload = await context.extensionRuntime.reload();
+    await writePrcSettings(runtime.configDir, next as PrcSettings);
+    const reload = await runtime.reload();
     return sendJson(res, reload.applied ? 200 : 400, {
       settings: next,
       ...reload,
-      extensions: serializeExtensions(context.extensionRuntime.current),
+      extensions: serializeExtensions(runtime.current),
     });
   }
 
   if (req.method === "POST" && url.pathname === "/api/extensions/reload") {
-    if (!context.extensionRuntime) return sendJson(res, 400, { error: "extension reload is not configured" });
-    const result = await context.extensionRuntime.reload();
-    return sendJson(res, result.applied ? 200 : 400, { ...result, extensions: serializeExtensions(context.extensionRuntime.current) });
+    const runtime = requireExtensionRuntime(context, res, "extension reload");
+    if (!runtime) return;
+    const result = await runtime.reload();
+    return sendJson(res, result.applied ? 200 : 400, { ...result, extensions: serializeExtensions(runtime.current) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/extensions/packages") {
-    if (!context.extensionRuntime) return sendJson(res, 400, { error: "extension package installs are not configured" });
+    const runtime = requireExtensionRuntime(context, res, "extension package installs");
+    if (!runtime) return;
     const body = await readJson(req) as { source?: string };
     if (!body.source) return sendJson(res, 400, { error: "source is required" });
-    const response = await mutateExtensionSettings(context.extensionRuntime, async () => installExtensionPackage(body.source!, { configDir: context.extensionRuntime!.configDir, cwd: context.extensionRuntime!.cwd }));
-    return sendJson(res, response.result.applied ? 200 : 400, { settings: response.settings, ...response.result, extensions: serializeExtensions(context.extensionRuntime.current) });
+    const source = body.source;
+    const response = await mutateExtensionSettings(runtime, async () => installExtensionPackage(source, { configDir: runtime.configDir, cwd: runtime.cwd }));
+    return sendJson(res, response.result.applied ? 200 : 400, { settings: response.settings, ...response.result, extensions: serializeExtensions(runtime.current) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/extensions/packages/remove") {
-    if (!context.extensionRuntime) return sendJson(res, 400, { error: "extension package removes are not configured" });
+    const runtime = requireExtensionRuntime(context, res, "extension package removes");
+    if (!runtime) return;
     const body = await readJson(req) as { source?: string };
     if (!body.source) return sendJson(res, 400, { error: "source is required" });
-    const response = await mutateExtensionSettings(context.extensionRuntime, async () => removeExtensionPackage(body.source!, { configDir: context.extensionRuntime!.configDir, cwd: context.extensionRuntime!.cwd }));
-    return sendJson(res, response.result.applied ? 200 : 400, { settings: response.settings, ...response.result, extensions: serializeExtensions(context.extensionRuntime.current) });
+    const source = body.source;
+    const response = await mutateExtensionSettings(runtime, async () => removeExtensionPackage(source, { configDir: runtime.configDir, cwd: runtime.cwd }));
+    return sendJson(res, response.result.applied ? 200 : 400, { settings: response.settings, ...response.result, extensions: serializeExtensions(runtime.current) });
   }
 
   const extensionEnabledMatch = url.pathname.match(/^\/api\/extensions\/([^/]+)\/enabled$/);
   if (req.method === "POST" && extensionEnabledMatch) {
-    if (!context.extensionRuntime) return sendJson(res, 400, { error: "extension settings are not configured" });
+    const runtime = requireExtensionRuntime(context, res, "extension settings");
+    if (!runtime) return;
     const body = await readJson(req) as { enabled?: boolean };
     if (typeof body.enabled !== "boolean") return sendJson(res, 400, { error: "enabled boolean is required" });
     const extensionId = decodeURIComponent(extensionEnabledMatch[1]!);
     const enabled = body.enabled;
-    const response = await mutateExtensionSettings(context.extensionRuntime, async () => setExtensionEnabled(context.extensionRuntime!.configDir, extensionId, enabled));
-    return sendJson(res, response.result.applied ? 200 : 400, { settings: response.settings, ...response.result, extensions: serializeExtensions(context.extensionRuntime.current) });
+    const response = await mutateExtensionSettings(runtime, async () => setExtensionEnabled(runtime.configDir, extensionId, enabled));
+    return sendJson(res, response.result.applied ? 200 : 400, { settings: response.settings, ...response.result, extensions: serializeExtensions(runtime.current) });
   }
 
   const extensionAssetMatch = url.pathname.match(/^\/api\/extensions\/([^/]+)\/assets\/([^/]+)$/);
