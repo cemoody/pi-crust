@@ -23,6 +23,13 @@ export interface PrcActivityViewContribution {
   readonly render?: unknown;
 }
 
+export interface PrcSettingsSectionContribution {
+  readonly id: string;
+  readonly title: string;
+  readonly order?: number;
+  readonly description?: string;
+}
+
 export interface PrcServerRouteRequest {
   readonly req: http.IncomingMessage;
   readonly url: URL;
@@ -101,6 +108,9 @@ export interface PrcExtensionContext {
   };
   readonly activity: {
     registerView(view: PrcActivityViewContribution): Disposable;
+  };
+  readonly settings: {
+    registerSection(section: PrcSettingsSectionContribution): Disposable;
   };
   readonly storage: PrcStorageApi;
   /** pi-crust config dir for the current host (used by extensions that read settings.json). */

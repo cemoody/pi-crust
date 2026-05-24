@@ -13,6 +13,7 @@ import type {
   PrcServerRouteResponse,
   PrcJobContribution,
   PrcSessionsApi,
+  PrcSettingsSectionContribution,
 } from "./api.js";
 
 export interface ExtensionDiagnostic {
@@ -44,6 +45,10 @@ export interface RegisteredCommand extends PrcCommandContribution {
 }
 
 export interface RegisteredActivityView extends PrcActivityViewContribution {
+  readonly extensionId: string;
+}
+
+export interface RegisteredSettingsSection extends PrcSettingsSectionContribution {
   readonly extensionId: string;
 }
 
@@ -112,6 +117,25 @@ export class ActivityRegistry {
   }
 }
 
+export class SettingsRegistry {
+  private readonly sections = new Map<string, RegisteredSettingsSection>();
+
+  register(extensionId: string, section: PrcSettingsSectionContribution): Disposable {
+    if (this.sections.has(section.id)) throw new Error(`Settings section already registered: ${section.id}`);
+    const registered: RegisteredSettingsSection = { ...section, extensionId };
+    this.sections.set(section.id, registered);
+    return { dispose: () => { this.sections.delete(section.id); } };
+  }
+
+  list(): RegisteredSettingsSection[] {
+    return [...this.sections.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.title.localeCompare(b.title));
+  }
+
+  get(id: string): RegisteredSettingsSection | undefined {
+    return this.sections.get(id);
+  }
+}
+
 export class ServerRouteRegistry {
   private readonly routes: RegisteredServerRoute[] = [];
 
@@ -170,6 +194,7 @@ const EXTENSION_ROUTE_JSON_MAX_BYTES = 1024 * 1024;
 export class PrcExtensionHost implements Disposable {
   readonly commands = new CommandRegistry();
   readonly activity = new ActivityRegistry();
+  readonly settings = new SettingsRegistry();
   readonly serverRoutes = new ServerRouteRegistry();
   readonly diagnostics: ExtensionDiagnostic[] = [];
   private readonly disposables: Disposable[] = [];
@@ -229,6 +254,7 @@ export class PrcExtensionHost implements Disposable {
       extensionId,
       commands: { register: (command) => track(this.commands.register(extensionId, command)) },
       activity: { registerView: (view) => track(this.activity.registerView(extensionId, view)) },
+      settings: { registerSection: (section) => track(this.settings.register(extensionId, section)) },
       storage: { dataFile: (relativePath) => resolveExtensionDataFile(this.options.dataDir, extensionId, relativePath) },
       ...(this.options.configDir === undefined ? {} : { configDir: this.options.configDir }),
       jobs: { register: (job) => track(createStartedJobDisposable(extensionId, job, this.diagnostics)) },
