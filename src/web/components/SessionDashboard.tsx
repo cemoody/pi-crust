@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { ExtensionUiRequest, ExtensionUiResponse, WireMessage } from "../../shared/protocol.js";
 import type { BranchCloneResult, BranchForkResult, BranchMessageOption, DashboardArtifact, DashboardMessage, DashboardToolDetails, ExtensionRegistryInfo, ExtensionSettingsResponse, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
-import { isRecord, errorMessage } from "../../shared/util.js";
+import { isRecord, errorMessage, optional } from "../../shared/util.js";
 
 /** How many recent messages to fetch on initial session-open. Older history
  *  is paginated on scroll. Sized to comfortably cover a typical viewport
@@ -284,11 +284,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         return {
           ...session,
           status: refreshed.status,
-          ...(refreshed.model === undefined ? {} : { model: refreshed.model }),
-          ...(refreshed.tokenSummary === undefined ? {} : { tokenSummary: refreshed.tokenSummary }),
-          ...(refreshed.stats === undefined ? {} : { stats: refreshed.stats }),
-          ...(refreshed.createdAt === undefined ? {} : { createdAt: refreshed.createdAt }),
-          ...(refreshed.lastUserActivity === undefined ? {} : { lastUserActivity: refreshed.lastUserActivity }),
+          ...optional({ model: refreshed.model }),
+          ...optional({ tokenSummary: refreshed.tokenSummary }),
+          ...optional({ stats: refreshed.stats }),
+          ...optional({ createdAt: refreshed.createdAt }),
+          ...optional({ lastUserActivity: refreshed.lastUserActivity }),
           lastActivity: options.preserveLastActivity ? session.lastActivity : refreshed.lastActivity,
         };
       }));
@@ -433,7 +433,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     ...extensions.activities.map((activity): WebActivityContribution => ({
       id: activity.id,
       title: activity.title,
-      ...(activity.order === undefined ? {} : { order: activity.order }),
+      ...optional({ order: activity.order }),
       extensionId: activity.extensionId,
       render: () => activity.webModuleUrl
         ? <ExternalWebActivity activity={activity} extensions={extensions} api={api} navigation={{ openSession: openSessionFromExtension }} />
@@ -1123,7 +1123,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 commandSuggestions={commandSuggestions}
                 statusText={activeSession.status}
                 statusCwd={activeSession.cwd}
-                {...(activeSession.model === undefined ? {} : { statusModel: activeSession.model })}
+                {...optional({ statusModel: activeSession.model })}
                 statusTokens={formatStats(activeSession.stats, activeSession.tokenSummary)}
                 onPrompt={handlePrompt}
                 onSteer={handleSteer}
@@ -1131,7 +1131,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 onAbort={() => activeSession ? api.abort(activeSession.id) : undefined}
                 onBash={handleBash}
                 onAbortBash={() => undefined}
-                {...(draftSeedBySession[activeSession.id] === undefined ? {} : { draftSeed: draftSeedBySession[activeSession.id] })}
+                {...optional({ draftSeed: draftSeedBySession[activeSession.id] })}
                 onSlashCommand={handleSlashCommand}
               />
             </div>
@@ -1599,7 +1599,7 @@ function applyRealtimeEvent(
           args: {},
           status: event.type === "tool_execution_end" ? (event.isError ? "error" : "success") : "running",
           output: toolResultText(result),
-          ...(artifact === undefined ? {} : { artifact }),
+          ...optional({ artifact }),
           ...(event.type === "tool_execution_end" ? { completedAt: Date.now() } : {}),
         },
       }),
@@ -1668,7 +1668,7 @@ function wireMessageToTimeline(id: string, message: WireMessage, forceAssistantP
     text,
     ...(thinking ? { thinking } : {}),
     ...(forceAssistantProvider || role === "assistant" ? { provider: "pi" } : {}),
-    ...(message.customType === undefined ? {} : { customType: message.customType }),
+    ...optional({ customType: message.customType }),
     ...extractArtifactTimeline(message.customType, message.details),
   };
 }
@@ -1698,7 +1698,7 @@ function legacyMessageToTimeline(message: LegacyMessageEvent["message"]): Timeli
     role,
     text: message.content,
     ...(role === "assistant" ? { provider: "pi" } : {}),
-    ...(message.tool === undefined ? {} : { tool: message.tool }),
+    ...optional({ tool: message.tool }),
   };
 }
 
@@ -1805,8 +1805,8 @@ function toPromptAttachment(attachment: ComposerAttachment): import("../api/sess
   return {
     type: attachment.type,
     name: attachment.name,
-    ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
-    ...(attachment.data === undefined ? {} : { data: attachment.data }),
+    ...optional({ mimeType: attachment.mimeType }),
+    ...optional({ data: attachment.data }),
   };
 }
 
@@ -1995,12 +1995,12 @@ function mergeSessionStatusSnapshot(
       ...session,
       status: next.status,
       cwd: next.cwd,
-      ...(next.sessionName === undefined ? {} : { sessionName: next.sessionName }),
-      ...(next.model === undefined ? {} : { model: next.model }),
-      ...(next.tokenSummary === undefined ? {} : { tokenSummary: next.tokenSummary }),
-      ...(next.stats === undefined ? {} : { stats: next.stats }),
-      ...(next.createdAt === undefined ? {} : { createdAt: next.createdAt }),
-      ...(next.lastUserActivity === undefined ? {} : { lastUserActivity: next.lastUserActivity }),
+      ...optional({ sessionName: next.sessionName }),
+      ...optional({ model: next.model }),
+      ...optional({ tokenSummary: next.tokenSummary }),
+      ...optional({ stats: next.stats }),
+      ...optional({ createdAt: next.createdAt }),
+      ...optional({ lastUserActivity: next.lastUserActivity }),
       // Status polling should update the row's live state and server-authored
       // lastUserActivity, but observing a session is not activity. Preserve
       // lastActivity so assistant/tool/status churn does not move rows.
@@ -2023,17 +2023,17 @@ function toTimelineMessage(message: import("../api/session-api.js").DashboardMes
     id: message.id,
     role: message.role,
     text: message.text,
-    ...(message.thinking === undefined ? {} : { thinking: message.thinking }),
-    ...(message.provider === undefined ? {} : { provider: message.provider }),
-    ...(message.model === undefined ? {} : { model: message.model }),
-    ...(message.stopReason === undefined ? {} : { stopReason: message.stopReason }),
-    ...(message.tokenUsage === undefined ? {} : { tokenUsage: message.tokenUsage }),
-    ...(message.cost === undefined ? {} : { cost: message.cost }),
-    ...(message.error === undefined ? {} : { error: message.error }),
-    ...(message.tool === undefined ? {} : { tool: message.tool }),
-    ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
-    ...(message.customType === undefined ? {} : { customType: message.customType }),
-    ...(message.summaryKind === undefined ? {} : { summaryKind: message.summaryKind }),
+    ...optional({ thinking: message.thinking }),
+    ...optional({ provider: message.provider }),
+    ...optional({ model: message.model }),
+    ...optional({ stopReason: message.stopReason }),
+    ...optional({ tokenUsage: message.tokenUsage }),
+    ...optional({ cost: message.cost }),
+    ...optional({ error: message.error }),
+    ...optional({ tool: message.tool }),
+    ...optional({ timestamp: message.timestamp }),
+    ...optional({ customType: message.customType }),
+    ...optional({ summaryKind: message.summaryKind }),
     ...extractArtifactTimeline(message.customType, message.details),
     ...(message.images && message.images.length > 0
       ? {

@@ -16,6 +16,7 @@ import type {
   PrcSettingsSectionContribution,
 } from "./api.js";
 
+import { optional } from "../shared/util.js";
 export interface ExtensionDiagnostic {
   readonly extensionId: string;
   readonly level: "error" | "warning";
@@ -262,7 +263,7 @@ export class PrcExtensionHost implements Disposable {
       activity: { registerView: (view) => track(this.activity.registerView(extensionId, view)) },
       settings: { registerSection: (section) => track(this.settings.register(extensionId, section)) },
       storage: { dataFile: (relativePath) => resolveExtensionDataFile(this.options.dataDir, extensionId, relativePath) },
-      ...(this.options.configDir === undefined ? {} : { configDir: this.options.configDir }),
+      ...optional({ configDir: this.options.configDir }),
       jobs: { register: (job) => track(createStartedJobDisposable(extensionId, job, this.diagnostics)) },
       sessions: createExtensionSessionsApi(this.options.sessions),
       server: {

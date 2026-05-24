@@ -21,6 +21,7 @@ import type {
   Unsubscribe,
 } from "./types.js";
 
+import { optional } from "../../shared/util.js";
 interface PersistedMockSession {
   readonly id: string;
   readonly cwd: string;
@@ -69,7 +70,7 @@ export class MockPiAdapter implements PiAdapter {
       id,
       cwd: path.resolve(options.cwd),
       sessionFile,
-      ...(options.sessionName === undefined ? {} : { sessionName: options.sessionName }),
+      ...optional({ sessionName: options.sessionName }),
       messages: [],
       lastActivity: Date.now(),
     };
@@ -96,8 +97,8 @@ export class MockPiAdapter implements PiAdapter {
         id: persisted.id,
         cwd: persisted.cwd,
         sessionFile: persisted.sessionFile,
-        ...(persisted.sessionName === undefined ? {} : { sessionName: persisted.sessionName }),
-        ...(firstMessage === undefined ? {} : { firstMessage }),
+        ...optional({ sessionName: persisted.sessionName }),
+        ...optional({ firstMessage }),
         lastActivity: persisted.lastActivity,
       });
     }
@@ -137,7 +138,7 @@ class MockPiSessionHandle implements PiSessionHandle {
       cwd: this.cwd,
       sessionFile: this.sessionFile,
       status: this.status,
-      ...(this.sessionName === undefined ? {} : { sessionName: this.sessionName }),
+      ...optional({ sessionName: this.sessionName }),
       ...(this.modelProvider && this.modelId
         ? { modelProvider: this.modelProvider, model: `${this.modelProvider}/${this.modelId}` }
         : {}),
@@ -304,7 +305,7 @@ class MockPiSessionHandle implements PiSessionHandle {
       id: this.id,
       cwd: this.cwd,
       sessionFile: this.sessionFile,
-      ...(this.sessionName === undefined ? {} : { sessionName: this.sessionName }),
+      ...optional({ sessionName: this.sessionName }),
       messages: this.messages,
       lastActivity: this.lastActivity,
     });

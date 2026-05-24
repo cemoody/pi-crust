@@ -32,7 +32,7 @@ import type {
   Unsubscribe,
 } from "./types.js";
 import { WorkerRegistry } from "../session/worker-registry.js";
-import { isRecord } from "../../shared/util.js";
+import { isRecord, optional } from "../../shared/util.js";
 
 export interface PiRpcAdapterOptions {
   readonly sessionDir?: string;
@@ -85,9 +85,9 @@ export class PiRpcAdapter implements PiAdapter {
       piCommand: this.piCommand,
       supervisorScript: this.supervisorScript,
       workerRegistry: this.workerRegistry,
-      ...(this.options.sessionDir === undefined ? {} : { sessionDir: this.options.sessionDir }),
-      ...(this.options.extraArgs === undefined ? {} : { extraArgs: this.options.extraArgs }),
-      ...(this.options.artifactExtension === undefined ? {} : { artifactExtension: this.options.artifactExtension }),
+      ...optional({ sessionDir: this.options.sessionDir }),
+      ...optional({ extraArgs: this.options.extraArgs }),
+      ...optional({ artifactExtension: this.options.artifactExtension }),
     });
     if (options.sessionName) await handle.setSessionName(options.sessionName);
     return handle;
@@ -102,9 +102,9 @@ export class PiRpcAdapter implements PiAdapter {
       piCommand: this.piCommand,
       supervisorScript: this.supervisorScript,
       workerRegistry: this.workerRegistry,
-      ...(this.options.sessionDir === undefined ? {} : { sessionDir: this.options.sessionDir }),
-      ...(this.options.extraArgs === undefined ? {} : { extraArgs: this.options.extraArgs }),
-      ...(this.options.artifactExtension === undefined ? {} : { artifactExtension: this.options.artifactExtension }),
+      ...optional({ sessionDir: this.options.sessionDir }),
+      ...optional({ extraArgs: this.options.extraArgs }),
+      ...optional({ artifactExtension: this.options.artifactExtension }),
     });
   }
 
@@ -143,9 +143,9 @@ export class PiRpcAdapter implements PiAdapter {
       piCommand: this.piCommand,
       supervisorScript: this.supervisorScript,
       workerRegistry: this.workerRegistry,
-      ...(this.options.sessionDir === undefined ? {} : { sessionDir: this.options.sessionDir }),
-      ...(this.options.extraArgs === undefined ? {} : { extraArgs: this.options.extraArgs }),
-      ...(this.options.artifactExtension === undefined ? {} : { artifactExtension: this.options.artifactExtension }),
+      ...optional({ sessionDir: this.options.sessionDir }),
+      ...optional({ extraArgs: this.options.extraArgs }),
+      ...optional({ artifactExtension: this.options.artifactExtension }),
     });
     return { result: { cancelled: false, text: selectedText }, handle };
   }
@@ -1015,7 +1015,7 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
               status: message.isError ? "error" : "success",
               output,
               completedAt: timestamp,
-              ...(artifact === undefined ? {} : { artifact }),
+              ...optional({ artifact }),
             },
           };
           continue;
@@ -1212,8 +1212,8 @@ export async function fastListSessions(sessionDir: string | undefined, _cwdFilte
       id: item.id,
       cwd: item.cwd,
       sessionFile: item.sessionFile,
-      ...(item.sessionName === undefined ? {} : { sessionName: item.sessionName }),
-      ...(item.firstMessage === undefined ? {} : { firstMessage: item.firstMessage }),
+      ...optional({ sessionName: item.sessionName }),
+      ...optional({ firstMessage: item.firstMessage }),
       createdAt: item.createdAt,
       lastActivity: item.lastActivity,
     });
@@ -1314,8 +1314,8 @@ function parseScannedSession(
     id,
     cwd: resolvedCwd,
     sessionFile: filePath,
-    ...(sessionName === undefined ? {} : { sessionName }),
-    ...(firstMessage === undefined ? {} : { firstMessage }),
+    ...optional({ sessionName }),
+    ...optional({ firstMessage }),
     createdAt: createdAt ?? null,
     lastActivity,
   };

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { isRecord } from "../../shared/util.js";
+import { isRecord, optional } from "../../shared/util.js";
 import {
   AuthStorage,
   createAgentSession,
@@ -91,8 +91,8 @@ export class SdkPiAdapter implements PiAdapter {
         id,
         cwd: String(item.cwd ?? cwd ?? ""),
         sessionFile,
-        ...(sessionName === undefined ? {} : { sessionName }),
-        ...(item.firstMessage === undefined ? {} : { firstMessage: String(item.firstMessage) }),
+        ...optional({ sessionName }),
+        ...optional({ firstMessage: String(item.firstMessage) }),
         createdAt: coerceTimestamp(item.created) ?? null,
         // SessionManager exposes `modified`, not `timestamp`. Avoid falling
         // back to Date.now() here: observing the session list is not activity.
@@ -159,7 +159,7 @@ class SdkPiSessionHandle implements PiSessionHandle {
       cwd: this.cwd,
       sessionFile: this.sessionFile,
       status: this.session.isStreaming ? "running" : "idle",
-      ...(sessionName === undefined ? {} : { sessionName }),
+      ...optional({ sessionName }),
       ...(sdkModel ? { modelProvider: String(sdkModel.provider ?? ""), model: String(sdkModel.id ?? "") } : {}),
       messageCount: messages.length,
       totalTokens,

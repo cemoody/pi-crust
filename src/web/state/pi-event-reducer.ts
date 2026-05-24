@@ -1,6 +1,7 @@
 import type { ExtensionUiRequest, PiWireEvent, WireMessage } from "../../shared/protocol.js";
 import { truncateText } from "../../shared/truncation.js";
 
+import { optional } from "../../shared/util.js";
 export interface WebSessionState {
   readonly status: "idle" | "running" | "compacting" | "retrying" | "error";
   readonly messages: readonly WebMessage[];
@@ -124,7 +125,7 @@ export function reducePiEvent(
         compaction: {
           active: false,
           reason: event.reason,
-          ...(event.errorMessage === undefined ? {} : { errorMessage: event.errorMessage }),
+          ...optional({ errorMessage: event.errorMessage }),
         },
       };
     case "auto_retry_start":
@@ -146,7 +147,7 @@ export function reducePiEvent(
         retry: {
           active: false,
           attempt: event.attempt,
-          ...(event.finalError === undefined ? {} : { finalError: event.finalError }),
+          ...optional({ finalError: event.finalError }),
         },
       };
     case "extension_error":
@@ -209,7 +210,7 @@ function toWebMessage(message: WireMessage, streaming: boolean): WebMessage {
     role: message.role,
     text: contentText(message.content),
     thinking: "",
-    ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
+    ...optional({ timestamp: message.timestamp }),
     streaming,
   };
 }

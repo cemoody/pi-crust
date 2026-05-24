@@ -1,5 +1,6 @@
 import type { PrcExtensionHost } from "./registry.js";
 
+import { optional } from "../shared/util.js";
 export interface SerializedExtensionRegistry {
   readonly commands: readonly {
     readonly id: string;
@@ -44,22 +45,22 @@ export function serializeExtensions(extensions: PrcExtensionHost | undefined): S
       id: command.id,
       invocationName: command.invocationName,
       title: command.title,
-      ...(command.description === undefined ? {} : { description: command.description }),
-      ...(command.slashName === undefined ? {} : { slashName: command.slashName }),
+      ...optional({ description: command.description }),
+      ...optional({ slashName: command.slashName }),
       extensionId: command.extensionId,
     })),
     activities: extensions.activity.list().map((view) => ({
       id: view.id,
       title: view.title,
-      ...(view.order === undefined ? {} : { order: view.order }),
+      ...optional({ order: view.order }),
       extensionId: view.extensionId,
       ...(extensions.getWebAsset(view.extensionId)?.urlPath === undefined ? {} : { webModuleUrl: extensions.getWebAsset(view.extensionId)!.urlPath }),
     })),
     settings: extensions.settings.list().map((section) => ({
       id: section.id,
       title: section.title,
-      ...(section.order === undefined ? {} : { order: section.order }),
-      ...(section.description === undefined ? {} : { description: section.description }),
+      ...optional({ order: section.order }),
+      ...optional({ description: section.description }),
       extensionId: section.extensionId,
       ...(extensions.getWebAsset(section.extensionId)?.urlPath === undefined ? {} : { webModuleUrl: extensions.getWebAsset(section.extensionId)!.urlPath }),
     })),

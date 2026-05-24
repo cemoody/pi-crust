@@ -12,6 +12,7 @@ import {
 } from "./packages.js";
 import { createPrcExtensionHost, type ActivateExtensionInput, type PrcExtensionHost } from "./registry.js";
 
+import { optional } from "../shared/util.js";
 export interface BuiltInPrcExtension {
   readonly id: string;
   readonly factory: PrcExtensionFactory;
@@ -46,8 +47,8 @@ export interface BootstrapPrcExtensionsResult {
 
 export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOptions): Promise<BootstrapPrcExtensionsResult> {
   const host = createPrcExtensionHost({
-    ...(options.dataDir === undefined ? {} : { dataDir: options.dataDir }),
-    ...(options.sessions === undefined ? {} : { sessions: options.sessions }),
+    ...optional({ dataDir: options.dataDir }),
+    ...optional({ sessions: options.sessions }),
     configDir: options.configDir,
   });
   const env = options.env ?? process.env;

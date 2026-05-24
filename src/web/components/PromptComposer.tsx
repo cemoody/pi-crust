@@ -1,6 +1,6 @@
 import { type ClipboardEvent as ReactClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
-import { errorMessage } from "../../shared/util.js";
+import { errorMessage, optional } from "../../shared/util.js";
 import { downscaleImageIfNeeded } from "../utils/image-downscale.js";
 import "./prompt-composer.css";
 import { Icon } from "./Icon.js";
@@ -196,7 +196,7 @@ export function PromptComposer(props: PromptComposerProps) {
       name: file.name || (isImage ? "pasted image" : "attachment"),
       type: isImage ? "image" : "file",
       ...(mimeType ? { mimeType } : {}),
-      ...(data === undefined ? {} : { data }),
+      ...optional({ data }),
       ...(isImage && data !== undefined ? { previewUrl: `data:${mimeType};base64,${data}` } : {}),
     };
   }

@@ -3,6 +3,7 @@ import type { ClientEnvelope, ProtocolError, ServerEnvelope } from "../../shared
 import { parseClientEnvelope } from "../../shared/protocol.js";
 import type { SessionRegistry } from "../session/session-registry.js";
 
+import { optional } from "../../shared/util.js";
 export type SendServerEnvelope = (envelope: ServerEnvelope) => void;
 
 export interface ProtocolRouterOptions {
@@ -56,7 +57,7 @@ export class ProtocolRouter {
       case "new_session": {
         const session = await this.registry.createSession({
           cwd: op.cwd,
-          ...(op.sessionName === undefined ? {} : { sessionName: op.sessionName }),
+          ...optional({ sessionName: op.sessionName }),
         });
         this.sendOk(envelope.id, await session.handle.getState());
         return;

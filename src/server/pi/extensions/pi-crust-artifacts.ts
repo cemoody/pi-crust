@@ -4,6 +4,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { defaultArtifactFileRoots, encodeArtifactFilePath, resolveArtifactFile } from "../../artifact-file.js";
 
+import { optional } from "../../../shared/util.js";
 const ARTIFACT_DETAIL_KEY = "piRemoteControlArtifact";
 const ARTIFACT_SCHEMA_VERSION = 1;
 
@@ -68,18 +69,18 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
           [ARTIFACT_DETAIL_KEY]: {
             version: ARTIFACT_SCHEMA_VERSION,
             kind: params.kind,
-            ...(params.title === undefined ? {} : { title: params.title }),
+            ...optional({ title: params.title }),
             ...(resolvedAbsPath !== undefined
               ? { path: resolvedAbsPath }
               : (params.path === undefined ? {} : { path: params.path })),
-            ...(resolvedUrl === undefined ? {} : { url: resolvedUrl }),
+            ...optional({ url: resolvedUrl }),
             ...(resolvedMimeType !== undefined
               ? { mimeType: resolvedMimeType }
               : (params.mimeType === undefined ? {} : { mimeType: params.mimeType })),
-            ...(params.html === undefined ? {} : { html: params.html }),
-            ...(params.markdown === undefined ? {} : { markdown: params.markdown }),
-            ...(params.data === undefined ? {} : { data: params.data }),
-            ...(params.alt === undefined ? {} : { alt: params.alt }),
+            ...optional({ html: params.html }),
+            ...optional({ markdown: params.markdown }),
+            ...optional({ data: params.data }),
+            ...optional({ alt: params.alt }),
           },
         },
       };
@@ -136,11 +137,11 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
       const deck = {
         id: deckId,
         title: params.title,
-        ...(params.subtitle === undefined ? {} : { subtitle: params.subtitle }),
-        ...(params.theme === undefined ? {} : { theme: params.theme }),
-        ...(params.client === undefined ? {} : { client: params.client }),
-        ...(params.confidential === undefined ? {} : { confidential: params.confidential }),
-        ...(params.templatePack === undefined ? {} : { templatePack: params.templatePack }),
+        ...optional({ subtitle: params.subtitle }),
+        ...optional({ theme: params.theme }),
+        ...optional({ client: params.client }),
+        ...optional({ confidential: params.confidential }),
+        ...optional({ templatePack: params.templatePack }),
         slides,
       };
       return {
@@ -232,9 +233,9 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
           spawnedPiRemoteControlSession: {
             version: 1,
             sessionId: created.id,
-            ...(created.sessionFile === undefined ? {} : { sessionFile: created.sessionFile }),
+            ...optional({ sessionFile: created.sessionFile }),
             cwd,
-            ...(params.sessionName === undefined ? {} : { sessionName: params.sessionName }),
+            ...optional({ sessionName: params.sessionName }),
             url: sessionUrl,
           },
         },
