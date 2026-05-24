@@ -648,31 +648,31 @@ console.log(`seeded ${shapeExtrasFile}`);
 // unique FIRST-MESSAGE-MARKER-α / LAST-MESSAGE-MARKER-ω sentinels at the
 // extremes so the spec can verify the very first message is reachable
 // only after scrolling up enough times to trigger pagination.
-const longSessionId = 'seeded-session-long';
-const longSessionFile = path.join(root, '0000000000007_seeded-session-long.mock-session.json');
-const LONG_TURNS = 500;
-const longMessages = [];
-const longBaseTs = 1700000007000;
-for (let i = 0; i < LONG_TURNS; i++) {
+const paginationSessionId = 'seeded-session-long-pagination';
+const paginationSessionFile = path.join(root, '0000000000007_seeded-session-long-pagination.mock-session.json');
+const PAGINATION_TURNS = 500;
+const paginationMessages = [];
+const paginationBaseTs = 1700000007000;
+for (let i = 0; i < PAGINATION_TURNS; i++) {
   const userTag = i === 0 ? 'FIRST-MESSAGE-MARKER-α' : `turn-${i}-user`;
-  longMessages.push({
+  paginationMessages.push({
     role: 'user',
     content: `${userTag}: user message number ${i}`,
-    timestamp: longBaseTs + i * 2,
+    timestamp: paginationBaseTs + i * 2,
   });
-  const assistantTag = i === LONG_TURNS - 1 ? 'LAST-MESSAGE-MARKER-ω' : `turn-${i}-assistant`;
-  longMessages.push({
+  const assistantTag = i === PAGINATION_TURNS - 1 ? 'LAST-MESSAGE-MARKER-ω' : `turn-${i}-assistant`;
+  paginationMessages.push({
     role: 'assistant',
     content: `${assistantTag}: assistant reply number ${i}`,
-    timestamp: longBaseTs + i * 2 + 1,
+    timestamp: paginationBaseTs + i * 2 + 1,
   });
 }
-await fs.writeFile(longSessionFile, JSON.stringify({
-  id: longSessionId,
+await fs.writeFile(paginationSessionFile, JSON.stringify({
+  id: paginationSessionId,
   cwd,
-  sessionFile: longSessionFile,
+  sessionFile: paginationSessionFile,
   sessionName: 'Long pagination session',
-  messages: longMessages,
+  messages: paginationMessages,
   lastActivity: Date.now(),
 }, null, 2) + '\n');
-console.log(`seeded ${longSessionFile}`);
+console.log(`seeded ${paginationSessionFile}`);
