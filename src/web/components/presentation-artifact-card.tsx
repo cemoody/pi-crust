@@ -24,6 +24,8 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
   const [editing, setEditing] = useState(false);
   const [presenting, setPresenting] = useState(false);
   const modalRef = useRef<HTMLDivElement | null>(null);
+  const modalIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [slideState, setSlideState] = useState<{ index: number; total: number }>({ index: 0, total: 0 });
   const [editError, setEditError] = useState<string | null>(null);
   const sessionId = useContext(TimelineSessionContext);
   const parsed = useMemo((): { deck?: PresentationDeck; error?: string } => {
@@ -105,6 +107,26 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
       setEditError(err instanceof Error ? err.message : String(err));
       setOptimistic(null);
     }
+  };
+
+  // Listen for slide-state postMessage from the modal iframe so the outer
+  // prev/next buttons can disable at the edges and show a 'n / N' counter.
+  useEffect(() => {
+    if (!open) return;
+    function onMessage(event: MessageEvent) {
+      const data = event.data;
+      if (!data || typeof data !== "object" || data.type !== "pi-deck-state") return;
+      if (typeof data.index !== "number" || typeof data.total !== "number") return;
+      setSlideState({ index: data.index, total: data.total });
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [open]);
+
+  const postNav = (dir: "prev" | "next" | "first" | "last") => {
+    const win = modalIframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage({ type: "pi-deck-nav", dir }, "*");
   };
 
   // Listen for postMessage edits from the modal iframe.
@@ -294,19 +316,67 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
           aria-label={`${deck.title} presentation`}
         >
           {presenting ? (
-            <button
-              type="button"
-              className="presentation-modal-exit"
-              onClick={exitPresentationMode}
-              aria-label="Exit presentation mode"
-              title="Exit presentation mode (Esc)"
-            >
-              ×
-            </button>
+            <>
+              <button
+                type="button"
+                className="presentation-modal-exit"
+                onClick={exitPresentationMode}
+                aria-label="Exit presentation mode"
+                title="Exit presentation mode (Esc)"
+              >
+                ×
+              </button>
+              <div className="presentation-modal-nav" role="group" aria-label="Slide navigation">
+                <button
+                  type="button"
+                  onClick={() => postNav("prev")}
+                  disabled={slideState.total > 0 && slideState.index <= 0}
+                  aria-label="Previous slide"
+                  title="Previous slide (←)"
+                >
+                  ‹
+                </button>
+                {slideState.total > 0 ? (
+                  <span className="presentation-modal-nav-counter">{slideState.index + 1} / {slideState.total}</span>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => postNav("next")}
+                  disabled={slideState.total > 0 && slideState.index >= slideState.total - 1}
+                  aria-label="Next slide"
+                  title="Next slide (→)"
+                >
+                  ›
+                </button>
+              </div>
+            </>
           ) : (
             <div className="presentation-modal-toolbar">
               <strong>{deck.title}</strong>
               <div className="presentation-modal-toolbar-actions">
+                <div className="presentation-modal-nav presentation-modal-nav-inline" role="group" aria-label="Slide navigation">
+                  <button
+                    type="button"
+                    onClick={() => postNav("prev")}
+                    disabled={slideState.total > 0 && slideState.index <= 0}
+                    aria-label="Previous slide"
+                    title="Previous slide (←)"
+                  >
+                    ‹
+                  </button>
+                  {slideState.total > 0 ? (
+                    <span className="presentation-modal-nav-counter">{slideState.index + 1} / {slideState.total}</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => postNav("next")}
+                    disabled={slideState.total > 0 && slideState.index >= slideState.total - 1}
+                    aria-label="Next slide"
+                    title="Next slide (→)"
+                  >
+                    ›
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => setEditing((v) => !v)}
@@ -343,6 +413,7 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
             <div className="presentation-edit-error" role="alert">{editError}</div>
           ) : null}
           <iframe
+            ref={modalIframeRef}
             data-testid="artifact-presentation-modal"
             sandbox="allow-scripts"
             srcDoc={html}
