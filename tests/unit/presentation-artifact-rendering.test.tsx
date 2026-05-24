@@ -73,4 +73,44 @@ describe("presentation artifact rendering", () => {
     expect(screen.getByTestId("artifact-presentation")).toHaveAttribute("role", "alert");
     expect(screen.getByText(/Could not render presentation preview/)).toBeInTheDocument();
   });
+
+  // TDD characterization tests added to pin down behavior before extracting
+  // PresentationArtifactCard into its own file. These exercise code paths
+  // the older happy/fallback tests don't reach.
+
+  it("renders an 'Invalid presentation' alert when the deck input fails coercion", () => {
+    // A presentation artifact whose spec is a primitive (or missing
+    // slides[]) fails coercePresentationDeck. The card renders a role=alert
+    // section with the parse error inside a <pre>, not the normal preview.
+    const invalid = {
+      ...presentationMessage,
+      id: "m-bad",
+      artifact: {
+        ...presentationMessage.artifact,
+        artifacts: [{ mime: PRESENTATION_MIME, spec: "not a deck" }],
+      },
+    };
+    render(<MessageTimeline messages={[invalid]} />);
+    const alert = screen.getByText("Invalid presentation").closest("section");
+    expect(alert).not.toBeNull();
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(alert?.querySelector("pre")?.textContent ?? "").not.toBe("");
+  });
+
+  it("pluralizes the slide count: '1 slide' (no 's') for a one-slide deck", () => {
+    const single = {
+      ...presentationMessage,
+      id: "m-one",
+      artifact: {
+        ...presentationMessage.artifact,
+        artifacts: [{
+          mime: PRESENTATION_MIME,
+          spec: { title: "One Slider", slides: [{ title: "Only slide" }] },
+        }],
+      },
+    };
+    render(<MessageTimeline messages={[single]} />);
+    expect(screen.getByText("1 slide")).toBeInTheDocument();
+    expect(screen.queryByText("1 slides")).not.toBeInTheDocument();
+  });
 });

@@ -199,4 +199,46 @@ describe("SessionRegistry", () => {
 
     expect(events).toEqual(["agent_start", "message", "message", "agent_end"]);
   });
+
+  it("getSessionHealthSnapshot returns total/healthy/broken counts", async () => {
+    // Regression for the 2026-05-24 outage: the API had no way to surface
+    // that 13/14 sessions had silently-broken handles. Now /api/health
+    // can return these counts so an operator can `curl /api/health | jq`.
+    const { registry, projectA } = await makeRegistry();
+    expect(registry.getSessionHealthSnapshot()).toEqual({
+      total: 0,
+      healthy: 0,
+      broken: 0,
+      brokenSessionIds: [],
+    });
+
+    await registry.createSession({ cwd: projectA });
+    await registry.createSession({ cwd: projectA });
+    const snap = registry.getSessionHealthSnapshot();
+    expect(snap.total).toBe(2);
+    // MockPiAdapter handles don't implement isHealthy(); by contract that
+    // means "healthy" (the symptom this PR addresses is specific to the
+    // PiRpc adapter's socket-backed handles).
+    expect(snap.healthy).toBe(2);
+    expect(snap.broken).toBe(0);
+    expect(snap.brokenSessionIds).toEqual([]);
+  });
+
+  it("getSessionHealthSnapshot calls handle.isHealthy() and reports broken sessions", async () => {
+    // Simulate the production failure mode: a session whose handle reports
+    // isHealthy() === false. The snapshot must classify it as broken and
+    // include it in brokenSessionIds so /api/health surfaces it.
+    const { registry, projectA } = await makeRegistry();
+    const created = await registry.createSession({ cwd: projectA });
+    // Patch the handle so its isHealthy() returns false (this is what
+    // PiRpcSessionHandle does when its underlying socket has closed).
+    const handle = registry.getSession(created.id).handle as { isHealthy?: () => boolean };
+    handle.isHealthy = () => false;
+
+    const snap = registry.getSessionHealthSnapshot();
+    expect(snap.total).toBe(1);
+    expect(snap.healthy).toBe(0);
+    expect(snap.broken).toBe(1);
+    expect(snap.brokenSessionIds).toEqual([created.id]);
+  });
 });

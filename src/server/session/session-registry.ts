@@ -52,6 +52,38 @@ export class SessionRegistry {
     return this.sessions.size;
   }
 
+  /**
+   * Per-session health snapshot for /api/health and operator dashboards.
+   *
+   * For each registered session, calls handle.isHealthy() (when supported)
+   * to determine whether its underlying worker connection is still open.
+   * A handle whose socket has silently closed will return `healthy: false`
+   * — this is the symptom from the 2026-05-24 outage where 13 of 14
+   * sessions had broken handles after 9.5h of API uptime and no operator
+   * signal surfaced it until users hit "messages won't load".
+   *
+   * Adapters without isHealthy() (e.g. the mock adapter in tests) report
+   * `healthy: true` by convention; their handles don't have a closeable
+   * socket layer.
+   */
+  getSessionHealthSnapshot(): {
+    total: number;
+    healthy: number;
+    broken: number;
+    brokenSessionIds: string[];
+  } {
+    let healthy = 0;
+    let broken = 0;
+    const brokenSessionIds: string[] = [];
+    for (const [sessionId, internal] of this.sessions) {
+      const handle = internal.registered.handle;
+      const isHealthy = typeof handle.isHealthy === "function" ? handle.isHealthy() : true;
+      if (isHealthy) healthy += 1;
+      else { broken += 1; brokenSessionIds.push(sessionId); }
+    }
+    return { total: this.sessions.size, healthy, broken, brokenSessionIds };
+  }
+
   async createSession(options: CreateSessionOptions): Promise<RegisteredSession> {
     const cwd = this.pathPolicy.assertAllowedCwd(options.cwd);
     const handle = await this.adapter.createSession({ ...options, cwd });

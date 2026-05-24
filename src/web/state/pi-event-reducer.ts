@@ -1,5 +1,6 @@
 import type { ExtensionUiRequest, PiWireEvent, WireMessage } from "../../shared/protocol.js";
 import { truncateText } from "../../shared/truncation.js";
+import { contentTextAndThinking, toolResultText } from "../../shared/wire-content.js";
 
 import { optional } from "../../shared/util.js";
 export interface WebSessionState {
@@ -206,26 +207,12 @@ function replaceLastStreamingMessage(state: WebSessionState, message: WebMessage
 }
 
 function toWebMessage(message: WireMessage, streaming: boolean): WebMessage {
+  const { text, thinking } = contentTextAndThinking(message.content);
   return {
     role: message.role,
-    text: contentText(message.content),
-    thinking: "",
+    text,
+    thinking,
     ...optional({ timestamp: message.timestamp }),
     streaming,
   };
-}
-
-function contentText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.map((block) => {
-      if (block && typeof block === "object" && "text" in block) return String((block as { text: unknown }).text);
-      return JSON.stringify(block);
-    }).join("\n");
-  }
-  return content === undefined ? "" : JSON.stringify(content);
-}
-
-function toolResultText(result: { readonly content?: readonly { readonly type: string; readonly text?: string }[] }): string {
-  return result.content?.map((item) => item.text ?? "").join("\n") ?? "";
 }

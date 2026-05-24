@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { isRecord, optional } from "../../shared/util.js";
+import { coerceTimestamp, isRecord, optional } from "../../shared/util.js";
 import {
   AuthStorage,
   createAgentSession,
@@ -352,15 +352,6 @@ async function sessionFileMtime(sessionFile: string): Promise<number | undefined
   } catch {
     return undefined;
   }
-}
-
-function coerceTimestamp(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
 }
 
 

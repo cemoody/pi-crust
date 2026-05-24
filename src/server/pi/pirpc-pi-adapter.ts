@@ -32,7 +32,11 @@ import type {
   Unsubscribe,
 } from "./types.js";
 import { WorkerRegistry } from "../session/worker-registry.js";
-import { isRecord, optional } from "../../shared/util.js";
+import { coerceTimestamp, isRecord, numberOrNull, optional, sumNumbers } from "../../shared/util.js";
+import { contentTextAndThinking as sharedContentTextAndThinking } from "../../shared/wire-content.js";
+import { fastListSessions } from "./session-jsonl-scanner.js";
+// Re-export so any external import path keeps working without churn.
+export { fastListSessions } from "./session-jsonl-scanner.js";
 
 export interface PiRpcAdapterOptions {
   readonly sessionDir?: string;
@@ -221,10 +225,24 @@ class PiRpcSessionHandle implements PiSessionHandle {
     if (!this.id) throw new Error("Pi RPC session did not report a sessionId");
     if (!this.sessionFile) throw new Error("Pi RPC session did not report a sessionFile");
 
+    // Plumb identity into the rpc layer so its close/reject log lines name
+    // the session (see logUnexpectedClose / logRejectedHandleClosed below).
+    this.rpc.observabilityContext = { sessionId: this.id };
+    if (typeof state.pid === "number") this.rpc.observabilityContext.supervisorPid = state.pid;
+
     this.rpc.onEvent((event, seq) => {
       this.emitter.emit("event", event as PiEvent);
       this.seqEmitter.emit("event", event as PiEvent, seq);
     });
+  }
+
+  /**
+   * Returns false if the handle's underlying supervisor connection is closed
+   * (i.e. the next request would throw "supervisor connection is closed").
+   * Used by /api/health to surface broken sessions before users hit them.
+   */
+  isHealthy(): boolean {
+    return !this.rpc.isClosed();
   }
 
   static async spawn(options: SpawnSessionOptions): Promise<PiRpcSessionHandle> {
@@ -485,7 +503,29 @@ class SupervisedRpcProcess {
   private nextId = 1;
   private closed = false;
   private disposeRequested = false;
+  private detached = false;
   private lastSeq = 0;
+
+  // Reconnect state. socketPath is captured at construction so a transient
+  // socket close (e.g. supervisor's currentClient eviction, kernel-side
+  // half-close, etc.) can be transparently recovered by request() before it
+  // gives up. reopening is a singleton promise to deduplicate concurrent
+  // reopen attempts that hit at the same time.
+  private socketPath: string | null = null;
+  private reopening: Promise<boolean> | null = null;
+  private reopenAttempts = 0;
+  private static readonly RECONNECT_MAX_ATTEMPTS_PER_REQUEST = 1;
+
+  // Observability: track close lifecycle + last request so the structured
+  // unexpected-close log is actionable. See logUnexpectedClose() below.
+  readonly openedAt: number = Date.now();
+  closedAt: number | null = null;
+  lastRequestType: string | null = null;
+  // Populated by PiRpcSessionHandle.reattach()/spawn() before any request,
+  // so the close-log can name the session that just broke.
+  observabilityContext: { sessionId?: string; supervisorPid?: number; socketPath?: string } = {};
+
+  isClosed(): boolean { return this.closed; }
 
   private constructor(socket: net.Socket) {
     this.socket = socket;
@@ -518,6 +558,8 @@ class SupervisedRpcProcess {
     const ready = await waitForReadyFile(readyPath, 15_000);
     const socket = await connectSocket(ready.socketPath);
     const process_ = new SupervisedRpcProcess(socket);
+    process_.socketPath = ready.socketPath;
+    process_.observabilityContext.socketPath = ready.socketPath;
     await process_.handshake(null);
     // Best-effort cleanup of the transient ready file.
     fs.unlink(readyPath).catch(() => {});
@@ -527,6 +569,8 @@ class SupervisedRpcProcess {
   static async connect(options: SupervisedConnectOptions): Promise<SupervisedRpcProcess> {
     const socket = await connectSocket(options.socketPath);
     const process_ = new SupervisedRpcProcess(socket);
+    process_.socketPath = options.socketPath;
+    process_.observabilityContext.socketPath = options.socketPath;
     await process_.handshake(options.resumeFromSeq);
     return process_;
   }
@@ -537,12 +581,34 @@ class SupervisedRpcProcess {
   }
 
   send(payload: Record<string, unknown>): void {
-    if (this.closed) throw new Error("Pi RPC supervisor connection is closed");
+    if (this.closed) {
+      // We deliberately do NOT auto-reopen for fire-and-forget send() because
+      // there's no response correlation to wait on — the caller wouldn't know
+      // if their payload made it. request() is the user-facing path that
+      // matters; send() is rare (only used by respondToExtensionUi today).
+      logRejectedHandleClosed(this, typeof payload?.type === "string" ? payload.type : "<send>");
+      throw new Error("Pi RPC supervisor connection is closed");
+    }
     this.socket.write(JSON.stringify({ t: "rpc", data: payload }) + "\n");
   }
 
   async request(type: string, payload: Record<string, unknown> = {}): Promise<unknown> {
-    if (this.closed) throw new Error("Pi RPC supervisor connection is closed");
+    if (this.closed) {
+      // Auto-reconnect once per request before giving up. This is the FIX for
+      // the 2026-05-24 silent-disconnect outage: the supervisor's UDS socket
+      // can be evicted out from under us (e.g. currentClient eviction by an
+      // openSession spawn-probe) without the supervisor process dying. In
+      // that case the supervisor is still happily listening on its socket,
+      // we just need to re-open ours. PR-A/B/C added the telemetry; this is
+      // the actual fix.
+      const reopened = await this.tryReopen(type);
+      if (!reopened) {
+        logRejectedHandleClosed(this, type);
+        throw new Error("Pi RPC supervisor connection is closed");
+      }
+      // Successfully reopened. Fall through and issue the request below.
+    }
+    this.lastRequestType = type;
     const id = `pirpc-${this.nextId++}`;
     const message = { id, type, ...payload };
     const response = await new Promise<RpcResponse>((resolve, reject) => {
@@ -554,6 +620,11 @@ class SupervisedRpcProcess {
       });
     });
     if (!response.success) throw new Error(response.error ?? `${type} failed`);
+    // A successful round-trip proves the connection is healthy enough to
+    // allow another reconnect attempt next time something breaks. Without
+    // this, a single retry would burn the budget forever after the first
+    // successful reopen.
+    this.reopenAttempts = 0;
     return response.data;
   }
 
@@ -570,9 +641,13 @@ class SupervisedRpcProcess {
 
   /** Close the socket without shutting the supervisor down (API SIGTERM path). */
   async detach(): Promise<void> {
+    this.detached = true;
     this.failAll(new Error("Pi RPC supervisor detached"));
     await this.closeSocket();
   }
+
+  /** True when close() was driven by API-initiated dispose() or detach() */
+  isIntentionalClose(): boolean { return this.disposeRequested || this.detached; }
 
   private async handshake(resumeFromSeq: number | null): Promise<SupervisorHelloAck> {
     const helloWritten = new Promise<void>((resolve, reject) => {
@@ -615,14 +690,90 @@ class SupervisedRpcProcess {
   private emitInternal(event: "frame" | "close", ...args: unknown[]) { this.internal.emit(event, ...args); }
 
   private attachSocketHandlers(): void {
-    this.socket.setEncoding("utf8");
-    this.socket.on("data", (chunk: string) => this.receive(chunk));
-    this.socket.on("error", (error) => this.failAll(error));
-    this.socket.on("close", () => {
+    // IMPORTANT: capture the socket reference at handler registration time.
+    // After a reopen, this.socket will point at a NEW socket, but the OLD
+    // socket will still fire its 'close' event as it tears down. The captured
+    // ref lets us no-op for those stale close events instead of marking the
+    // freshly-reopened connection as closed.
+    const sock = this.socket;
+    sock.setEncoding("utf8");
+    sock.on("data", (chunk: string) => { if (sock === this.socket) this.receive(chunk); });
+    sock.on("error", (error) => { if (sock === this.socket) this.failAll(error); });
+    sock.on("close", () => {
+      // Stale: another socket has taken over (via reopen). Ignore.
+      if (sock !== this.socket) return;
+      const wasAlreadyClosed = this.closed;
       this.closed = true;
+      if (this.closedAt === null) this.closedAt = Date.now();
+      // Only emit the unexpected-close log line for the FIRST close (so a
+      // detach/dispose followed by socket close doesn't double-log) and only
+      // when neither dispose() nor detach() initiated it.
+      if (!wasAlreadyClosed && !this.isIntentionalClose()) {
+        logUnexpectedClose(this);
+      }
       this.emitInternal("close");
       this.failAll(new Error("Pi RPC supervisor connection closed"));
     });
+  }
+
+  /**
+   * Try to recover a closed handle by opening a fresh socket to the same
+   * supervisor and re-running the hello/ack handshake with resumeFromSeq
+   * set to our lastSeq (so the supervisor replays any events we missed
+   * while disconnected). Returns true on success, false on failure.
+   *
+   * Idempotent / deduped: concurrent callers awaiting the same reopen
+   * share the underlying promise. Intentional closes (dispose / detach)
+   * are NEVER reopened.
+   */
+  private async tryReopen(requestType: string): Promise<boolean> {
+    if (this.disposeRequested || this.detached) return false;
+    if (!this.socketPath) return false; // can't reconnect without knowing where
+    if (!this.closed) return true; // already healthy
+    if (this.reopenAttempts >= SupervisedRpcProcess.RECONNECT_MAX_ATTEMPTS_PER_REQUEST) {
+      // Per-handle cap so we don't spin in a tight loop against a permanently
+      // broken supervisor. Reset on each successful request (see below).
+      return false;
+    }
+    if (this.reopening) return this.reopening;
+
+    this.reopenAttempts += 1;
+    const ctx = this.observabilityContext;
+    const resumeFromSeq = this.lastSeq;
+    logReopenAttempt(this, requestType);
+
+    this.reopening = (async () => {
+      try {
+        const newSocket = await connectSocket(this.socketPath!);
+        // Replace the socket FIRST so the old socket's close handler no-ops.
+        const oldSocket = this.socket;
+        this.socket = newSocket;
+        // Clear closed flags so the new socket's handshake & subsequent
+        // request can write through. Note: failAll() ran when the old socket
+        // closed, so this.pending is already empty.
+        this.closed = false;
+        this.closedAt = null;
+        this.buffer = "";
+        this.attachSocketHandlers();
+        // Tear down the old socket now that it can't affect us.
+        try { oldSocket.destroy(); } catch { /* ignore */ }
+
+        // Re-run the hello handshake. The supervisor's currentClient is
+        // replaced by this new connection; resumeFromSeq tells it to backfill
+        // missed ring events to our event listeners.
+        await this.handshake(resumeFromSeq);
+        logReopenSucceeded(this, requestType, resumeFromSeq);
+        return true;
+      } catch (err) {
+        this.closed = true;
+        if (this.closedAt === null) this.closedAt = Date.now();
+        logReopenFailed(this, requestType, err);
+        return false;
+      } finally {
+        this.reopening = null;
+      }
+    })();
+    return this.reopening;
   }
 
   private async closeSocket(): Promise<void> {
@@ -1029,7 +1180,7 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
 }
 
 function contentText(content: unknown): string {
-  return contentTextAndImages(content).text;
+  return sharedContentTextAndThinking(content).text;
 }
 
 /**
@@ -1047,22 +1198,18 @@ function extractToolResultArtifact(details: unknown): unknown {
 }
 
 function contentTextAndImages(content: unknown): { text: string; images: NonNullable<SessionMessage["images"]> } {
-  // Reuse the unified extractor and drop thinking on the floor for callers
+  // Reuse the canonical extractor and drop thinking on the floor for callers
   // (user / system / toolResult) that don't surface a separate thinking
   // field. Assistant messages go through contentTextAndThinking instead.
-  const { text, images } = contentTextAndThinking(content);
-  return { text, images };
+  const { text, images } = sharedContentTextAndThinking(content);
+  return { text, images: images as NonNullable<SessionMessage["images"]> };
 }
 
 /**
- * Decompose a SessionMessage `content` payload into its visible-text,
- * thinking, and image components. Mirrors the on-disk pirpc / Anthropic-
- * messages content-block shape:
- *
- *   string                                 -> { text, thinking:'', images:[] }
- *   [{type:'text',text}, {type:'thinking',thinking}, {type:'image',data}]
- *                                          -> per-field decomposition
- *   anything else                          -> JSON.stringify fallback
+ * Pirpc-flavoured decomposer that also returns extracted image attachments.
+ * Delegates to the canonical helper in shared/wire-content.ts and just
+ * widens its readonly `images` type back to the SessionMessage mutable
+ * shape the HTTP layer expects.
  *
  * Exported because the /messages HTTP route (toDashboardMessages in
  * http-api-server.ts) needs the same fan-out as the adapter's own
@@ -1073,23 +1220,8 @@ function contentTextAndImages(content: unknown): { text: string; images: NonNull
  * by tests/playwright/structured-content-tool-calls.spec.ts.
  */
 export function contentTextAndThinking(content: unknown): { text: string; thinking: string; images: NonNullable<SessionMessage["images"]> } {
-  if (typeof content === "string") return { text: content, thinking: "", images: [] };
-  if (!Array.isArray(content)) return { text: content === undefined ? "" : JSON.stringify(content), thinking: "", images: [] };
-  const text: string[] = [];
-  const thinking: string[] = [];
-  const images: { data: string; mimeType: string }[] = [];
-  for (const block of content) {
-    if (!isRecord(block)) continue;
-    // Order matters for stop-reason-error edge cases: a thinking block
-    // with no following text still produces an entry, but the user-visible
-    // bubble stays empty (thinking renders in its own collapsed widget).
-    if (typeof block.thinking === "string") thinking.push(block.thinking);
-    if (typeof block.text === "string") text.push(block.text);
-    if (block.type === "image" && typeof block.data === "string") {
-      images.push({ data: block.data, mimeType: String(block.mimeType ?? "image/png") });
-    }
-  }
-  return { text: text.join("\n"), thinking: thinking.join("\n\n"), images };
+  const { text, thinking, images } = sharedContentTextAndThinking(content);
+  return { text, thinking, images: images as NonNullable<SessionMessage["images"]> };
 }
 
 async function ensureSessionManagerFileExists(sessionManager: SessionManager, sessionFile: string): Promise<void> {
@@ -1125,211 +1257,87 @@ function parseCloneResult(data: unknown): CloneSessionResult {
   return { cancelled: isRecord(data) && data.cancelled === true };
 }
 
-function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function dateLikeToTime(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (value instanceof Date) {
-    const time = value.getTime();
-    return Number.isFinite(time) ? time : undefined;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const time = Date.parse(value);
-    return Number.isFinite(time) ? time : undefined;
-  }
-  return undefined;
-}
-
-function sumNumbers(record: Record<string, unknown> | undefined, keys: readonly string[]): number {
-  if (!record) return 0;
-  return keys.reduce((sum, key) => sum + Number(record[key] ?? 0), 0);
-}
-
 // ---------------------------------------------------------------------------
-// Fast session lister: head+tail scan, no full-file parse.
+// Observability helpers (added 2026-05-24). These are structured-log shims
+// that surface the silent "supervisor handle closed but nobody noticed"
+// failure mode we hit in production. Both emit a single JSON line to stderr
+// per event so an operator can `grep pirpc.handle.unexpected_close` (or
+// pipe to a log aggregator) and see exactly which sessions broke and when.
+//
+// Why structured? Lets you `grep -E '"event":"pirpc.handle.unexpected_close"'`
+// or jq your way through the API stderr without false positives from the
+// surrounding human-readable log noise.
 // ---------------------------------------------------------------------------
 
-/** Bytes we read from the start of each session jsonl. Holds the
- * `type:"session"` header plus the first few messages (firstMessage) and
- * an initial `session_info` rename. */
-const FAST_LIST_HEAD_BYTES = 16 * 1024;
-/** Bytes we read from the end of each session jsonl. Holds the most recent
- * `session_info` and a timestamp for lastActivity. */
-const FAST_LIST_TAIL_BYTES = 32 * 1024;
-/** Cap on parallel file-handle open()s while scanning the sessions dir. */
-const FAST_LIST_CONCURRENCY = 32;
-
-interface ScannedSession {
-  readonly id: string;
-  readonly cwd: string;
-  readonly sessionFile: string;
-  readonly sessionName?: string;
-  readonly firstMessage?: string;
-  readonly createdAt: number | null;
-  readonly lastActivity: number;
-}
-
-export async function fastListSessions(sessionDir: string | undefined, _cwdFilter?: string): Promise<readonly SessionListItem[]> {
-  if (!sessionDir) return [];
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = await fs.readdir(sessionDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const candidates = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-    .map((entry) => path.join(sessionDir, entry.name));
-
-  // NOTE: We intentionally ignore _cwdFilter here. The historical contract of
-  // SessionManager.list(cwd, sessionDir) in the pi SDK is: when sessionDir is
-  // provided (which pirpc-pi-adapter always does), the cwd argument is only
-  // used to derive a *default* sessionDir, NOT to filter the returned
-  // sessions. listSessionsFromDir() reads every .jsonl in the dir regardless
-  // of header.cwd. A previous version of this function filtered by exact
-  // cwd match and made sessions created in child worktrees disappear from
-  // the sidebar (#106 revert). The pathPolicy security gate in
-  // SessionRegistry.listSessions() still drops sessions whose cwd isn't
-  // under an allowed root, which is the only filter the caller actually
-  // wants.
-  const results: (ScannedSession | null)[] = new Array(candidates.length);
-  let cursor = 0;
-  const worker = async () => {
-    while (true) {
-      const index = cursor++;
-      if (index >= candidates.length) return;
-      results[index] = await scanSessionFile(candidates[index]!);
-    }
+function logUnexpectedClose(rpc: SupervisedRpcProcess): void {
+  const ctx = rpc.observabilityContext;
+  const ageMs = (rpc.closedAt ?? Date.now()) - rpc.openedAt;
+  const payload = {
+    level: "warn",
+    event: "pirpc.handle.unexpected_close",
+    ts: new Date().toISOString(),
+    sessionId: ctx.sessionId,
+    supervisorPid: ctx.supervisorPid,
+    socketPath: ctx.socketPath,
+    ageMs,
+    lastRequestType: rpc.lastRequestType,
   };
-  await Promise.all(Array.from({ length: Math.min(FAST_LIST_CONCURRENCY, candidates.length) }, worker));
-
-  const sessions: SessionListItem[] = [];
-  for (const item of results) {
-    if (!item) continue;
-    sessions.push({
-      id: item.id,
-      cwd: item.cwd,
-      sessionFile: item.sessionFile,
-      ...optional({ sessionName: item.sessionName }),
-      ...optional({ firstMessage: item.firstMessage }),
-      createdAt: item.createdAt,
-      lastActivity: item.lastActivity,
-    });
-  }
-  // Match SessionManager.list()'s ordering: most-recently-modified first.
-  sessions.sort((a, b) => (b.lastActivity ?? 0) - (a.lastActivity ?? 0));
-  return sessions;
+  // Use console.warn so it lands on stderr separately from regular console.log
+  // output; one line per event keeps it grep-friendly.
+  console.warn(JSON.stringify(payload));
 }
 
-async function scanSessionFile(filePath: string): Promise<ScannedSession | null> {
-  let stat: import("node:fs").Stats;
-  try { stat = await fs.stat(filePath); } catch { return null; }
-  if (!stat.isFile() || stat.size === 0) return null;
-
-  const headSize = Math.min(FAST_LIST_HEAD_BYTES, stat.size);
-  const tailStart = Math.max(headSize, stat.size - FAST_LIST_TAIL_BYTES);
-  const tailSize = stat.size - tailStart;
-
-  let fd: import("node:fs/promises").FileHandle;
-  try { fd = await fs.open(filePath, "r"); } catch { return null; }
-  try {
-    const headBuf = Buffer.alloc(headSize);
-    await fd.read(headBuf, 0, headSize, 0);
-    let tailText = "";
-    if (tailSize > 0 && tailStart > 0) {
-      const tailBuf = Buffer.alloc(tailSize);
-      await fd.read(tailBuf, 0, tailSize, tailStart);
-      tailText = tailBuf.toString("utf8");
-      // Drop the (likely partial) first line in the tail window so we don't
-      // parse a fragment.
-      const firstNewline = tailText.indexOf("\n");
-      if (firstNewline >= 0) tailText = tailText.slice(firstNewline + 1);
-    }
-    const headText = headBuf.toString("utf8");
-    // If head and tail overlap (small file) we'll iterate twice; the merge
-    // logic below tolerates duplicates.
-    return parseScannedSession(filePath, stat, headText, tailText);
-  } finally {
-    await fd.close();
-  }
+function logReopenAttempt(rpc: SupervisedRpcProcess, requestType: string): void {
+  const ctx = rpc.observabilityContext;
+  console.warn(JSON.stringify({
+    level: "warn",
+    event: "pirpc.handle.reopen_attempt",
+    ts: new Date().toISOString(),
+    sessionId: ctx.sessionId,
+    supervisorPid: ctx.supervisorPid,
+    socketPath: ctx.socketPath,
+    requestType,
+  }));
 }
 
-function parseScannedSession(
-  filePath: string,
-  stat: import("node:fs").Stats,
-  headText: string,
-  tailText: string,
-): ScannedSession | null {
-  let id: string | undefined;
-  let cwd: string | undefined;
-  let createdAt: number | null = null;
-  let firstMessage: string | undefined;
-  let sessionName: string | undefined;
-  let sessionNameSeenAt = -1; // entry index of latest session_info
-  let lastActivity = 0;
-  let entryIndex = 0;
+function logReopenSucceeded(rpc: SupervisedRpcProcess, requestType: string, resumeFromSeq: number): void {
+  const ctx = rpc.observabilityContext;
+  console.warn(JSON.stringify({
+    level: "info",
+    event: "pirpc.handle.reopen_succeeded",
+    ts: new Date().toISOString(),
+    sessionId: ctx.sessionId,
+    supervisorPid: ctx.supervisorPid,
+    requestType,
+    resumeFromSeq,
+  }));
+}
 
-  const handleLine = (line: string) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let entry: unknown;
-    try { entry = JSON.parse(trimmed); } catch { return; }
-    if (!entry || typeof entry !== "object") return;
-    const record = entry as Record<string, unknown>;
-    const i = entryIndex++;
-    if (record.type === "session") {
-      if (id === undefined && typeof record.id === "string") id = record.id;
-      if (cwd === undefined && typeof record.cwd === "string") cwd = record.cwd;
-      if (createdAt === null) createdAt = dateLikeToTime(record.timestamp) ?? null;
-      const ts = dateLikeToTime(record.timestamp);
-      if (ts !== undefined && ts > lastActivity) lastActivity = ts;
-      return;
-    }
-    if (record.type === "session_info") {
-      if (i > sessionNameSeenAt) {
-        sessionNameSeenAt = i;
-        const candidate = typeof record.name === "string" ? record.name.trim() : "";
-        sessionName = candidate || undefined;
-      }
-    }
-    if (record.type === "message") {
-      const inner = isRecord(record.message) ? record.message : undefined;
-      const ts = dateLikeToTime(inner?.timestamp) ?? dateLikeToTime(record.timestamp);
-      if (ts !== undefined && ts > lastActivity) lastActivity = ts;
-      if (firstMessage === undefined && inner && inner.role === "user") {
-        firstMessage = extractFirstMessageText(inner.content);
-      }
-    }
+function logReopenFailed(rpc: SupervisedRpcProcess, requestType: string, err: unknown): void {
+  const ctx = rpc.observabilityContext;
+  console.error(JSON.stringify({
+    level: "error",
+    event: "pirpc.handle.reopen_failed",
+    ts: new Date().toISOString(),
+    sessionId: ctx.sessionId,
+    supervisorPid: ctx.supervisorPid,
+    socketPath: ctx.socketPath,
+    requestType,
+    error: err instanceof Error ? err.message : String(err),
+  }));
+}
+
+function logRejectedHandleClosed(rpc: SupervisedRpcProcess, requestType: string): void {
+  const ctx = rpc.observabilityContext;
+  const closedAt = rpc.closedAt ?? Date.now();
+  const payload = {
+    level: "error",
+    event: "pirpc.request.rejected_handle_closed",
+    ts: new Date().toISOString(),
+    sessionId: ctx.sessionId,
+    supervisorPid: ctx.supervisorPid,
+    requestType,
+    closedAgeMs: Date.now() - closedAt,
   };
-
-  for (const line of headText.split("\n")) handleLine(line);
-  for (const line of tailText.split("\n")) handleLine(line);
-
-  if (!id) return null;
-  const resolvedCwd = cwd ?? "";
-  if (lastActivity === 0) lastActivity = stat.mtimeMs;
-  return {
-    id,
-    cwd: resolvedCwd,
-    sessionFile: filePath,
-    ...optional({ sessionName }),
-    ...optional({ firstMessage }),
-    createdAt: createdAt ?? null,
-    lastActivity,
-  };
-}
-
-function extractFirstMessageText(content: unknown): string | undefined {
-  if (typeof content === "string") return content.slice(0, 240);
-  if (Array.isArray(content)) {
-    for (const block of content) {
-      if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
-        const text = (block as { text?: unknown }).text;
-        if (typeof text === "string" && text.trim()) return text.slice(0, 240);
-      }
-    }
-  }
-  return undefined;
+  console.error(JSON.stringify(payload));
 }

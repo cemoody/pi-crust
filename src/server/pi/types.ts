@@ -158,6 +158,13 @@ export interface PiSessionHandle {
   dispose(): Promise<void>;
   /** Close the worker connection without killing it (used on API SIGTERM/SIGINT). */
   detach?(): Promise<void>;
+  /**
+   * Server-side observability: returns true iff this handle's underlying
+   * worker connection is still open. Used by /api/health to surface broken
+   * session handles before users hit them. Optional so non-RPC adapters
+   * (e.g. the mock adapter in tests) can omit it.
+   */
+  isHealthy?(): boolean;
 }
 
 export interface PiAdapter {

@@ -156,4 +156,47 @@ describe("Pi event reducer", () => {
     expect(failed.status).toBe("error");
     expect(failed.retry).toMatchObject({ active: false, finalError: "still rate limited" });
   });
+
+  // TDD characterization: bug-fix lock-in. Before the shared/wire-content
+  // consolidation, message_start / message_end on an assistant message whose
+  // wire `content` was a structured-content ARRAY containing a thinking
+  // block would JSON.stringify the entire thinking block into
+  // WebMessage.text — so the assistant bubble would render literal
+  // `{"type":"thinking","thinking":"..."}` JSON to the user, and
+  // WebMessage.thinking stayed empty. The canonical wire-content helper
+  // separates the two; this test pins down the corrected behavior so we
+  // can't regress.
+  it("separates thinking and text from a structured-content assistant message", () => {
+    const started = reducePiEvent(initialWebSessionState, {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "reasoning step" },
+          { type: "text", text: "visible answer" },
+        ],
+      },
+    });
+    expect(started.messages).toHaveLength(1);
+    expect(started.messages[0]!.text).toBe("visible answer");
+    expect(started.messages[0]!.thinking).toBe("reasoning step");
+  });
+
+  it("skips toolCall / unknown blocks instead of stringifying them into text", () => {
+    const ended = reducePiEvent(initialWebSessionState, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "before" },
+          { type: "toolCall", id: "t1", name: "bash" },
+          { type: "weird-extension" },
+          { type: "text", text: "after" },
+        ],
+      },
+    });
+    const message = ended.messages[ended.messages.length - 1]!;
+    expect(message.text).toBe("before\nafter");
+    expect(message.thinking).toBe("");
+  });
 });

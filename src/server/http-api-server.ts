@@ -21,7 +21,8 @@ import { serializeExtensions } from "../extensions/metadata.js";
 import { installExtensionPackage, readPrcSettings, removeExtensionPackage, setExtensionEnabled, writePrcSettings, type PrcAppBrandingSettings, type PrcSettings } from "../extensions/packages.js";
 import { createPrcExtensionRuntime, type PrcExtensionRuntime } from "../extensions/runtime.js";
 import { defaultArtifactFileRoots, resolveArtifactFile, streamArtifactFile } from "./artifact-file.js";
-import { isRecord } from "../shared/util.js";
+import { coerceTimestamp, isRecord } from "../shared/util.js";
+import { lookupSessionMessage } from "./http-api-message-lookup.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -82,10 +83,42 @@ interface HttpApiServerContext extends HttpApiServerOptions {
 
 const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
 
-/** Append-only JSON-lines logger used for client telemetry. Lazy-creates the file. */
+/**
+ * Append-only JSON-lines logger used for client telemetry. Lazy-creates the
+ * file. Also maintains an in-memory rolling ring of the most recent events
+ * so /api/client-event/stats can answer "what's been happening in the last
+ * 5 minutes?" without re-reading the (potentially huge) jsonl from disk.
+ *
+ * The ring is purely additive observability — it never replaces or alters
+ * the on-disk log, and a full ring drops the OLDEST events (so the most
+ * recent N are always available for the stats query the dashboard polls).
+ */
 interface ClientEventLog {
   append(payload: Record<string, unknown>): Promise<void>;
+  stats(windowMs: number): ClientEventStats;
 }
+
+export interface ClientEventStats {
+  /** The window the stats were computed over, in ms. */
+  windowMs: number;
+  /** Total events in window. */
+  total: number;
+  /** Number of events the in-memory ring has dropped due to capacity. */
+  bufferDropped: number;
+  /** Histogram of event 'kind' values. */
+  byKind: Record<string, number>;
+  /** Histogram of status codes for 'api-error' events (PR-B). */
+  byApiErrorStatus: Record<string, number>;
+  /** Top 5 sessionIds by event count (a single very-broken session is a leading indicator). */
+  topSessions: Array<{ sessionId: string; count: number }>;
+  /** Top 5 api-error paths by count. */
+  topApiErrorPaths: Array<{ path: string; count: number }>;
+}
+
+// Max events kept in memory for /stats. ~5 KB per event * 4096 = ~20 MB max.
+// More than enough for a 5-minute window on a busy box; older events fall off
+// into the on-disk jsonl which remains the source of truth for deep dives.
+export const CLIENT_EVENT_RING_CAPACITY = 4096;
 
 function resolveContextGitSha(value: string | (() => string) | undefined): string {
   if (typeof value === "function") {
@@ -218,8 +251,18 @@ function createExtensionSessionApi(registry: SessionRegistry) {
 
 function createClientEventLog(filePath: string): ClientEventLog {
   let queue: Promise<void> = Promise.resolve();
+  // In-memory ring of (serverTs, payload) pairs. Used by stats() only;
+  // does not affect the on-disk log. Pre-allocated array + head index so
+  // additions are O(1) and don't generate GC churn under load.
+  const ring: Array<{ ts: number; payload: Record<string, unknown> } | undefined> = new Array(CLIENT_EVENT_RING_CAPACITY);
+  let ringHead = 0; // next slot to write
+  let totalAppended = 0;
   return {
     append(payload) {
+      const ts = typeof payload.serverTs === "number" ? payload.serverTs : Date.now();
+      ring[ringHead] = { ts, payload };
+      ringHead = (ringHead + 1) % CLIENT_EVENT_RING_CAPACITY;
+      totalAppended += 1;
       queue = queue.then(async () => {
         try {
           await fsp.mkdir(path.dirname(filePath), { recursive: true });
@@ -230,7 +273,55 @@ function createClientEventLog(filePath: string): ClientEventLog {
       });
       return queue;
     },
+    stats(windowMs: number): ClientEventStats {
+      return summarizeClientEventRing(ring, windowMs, totalAppended);
+    },
   };
+}
+
+/**
+ * Pure-function aggregation over the ring. Exported (via the in-test
+ * factory below) so tests can pin the histogram shape without spinning up
+ * a real HTTP server.
+ */
+export function summarizeClientEventRing(
+  ring: ReadonlyArray<{ ts: number; payload: Record<string, unknown> } | undefined>,
+  windowMs: number,
+  totalAppended: number,
+): ClientEventStats {
+  const cutoff = Date.now() - windowMs;
+  const byKind: Record<string, number> = {};
+  const byApiErrorStatus: Record<string, number> = {};
+  const sessionCounts = new Map<string, number>();
+  const pathCounts = new Map<string, number>();
+  let total = 0;
+  for (const slot of ring) {
+    if (!slot) continue;
+    if (slot.ts < cutoff) continue;
+    total += 1;
+    const kind = typeof slot.payload.kind === "string" ? slot.payload.kind : "<unknown>";
+    byKind[kind] = (byKind[kind] ?? 0) + 1;
+    const sid = typeof slot.payload.sessionId === "string" ? slot.payload.sessionId : null;
+    if (sid) sessionCounts.set(sid, (sessionCounts.get(sid) ?? 0) + 1);
+    if (kind === "api-error") {
+      const status = String(slot.payload.status ?? "unknown");
+      byApiErrorStatus[status] = (byApiErrorStatus[status] ?? 0) + 1;
+      const p = typeof slot.payload.path === "string" ? slot.payload.path : null;
+      if (p) pathCounts.set(p, (pathCounts.get(p) ?? 0) + 1);
+    }
+  }
+  const topSessions = [...sessionCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([sessionId, count]) => ({ sessionId, count }));
+  const topApiErrorPaths = [...pathCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([p, count]) => ({ path: p, count }));
+  // bufferDropped tells operators if their window covers the buffer (i.e. is
+  // their stats query missing data because the ring overwrote it?).
+  const bufferDropped = Math.max(0, totalAppended - CLIENT_EVENT_RING_CAPACITY);
+  return { windowMs, total, bufferDropped, byKind, byApiErrorStatus, topSessions, topApiErrorPaths };
 }
 
 export function createHttpApiServer(options: HttpApiServerOptions): http.Server {
@@ -363,6 +454,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   }
 
   if (req.method === "GET" && url.pathname === "/api/health") {
+    // Session-handle health snapshot. Surfaces silently-broken handles
+    // (the 2026-05-24 outage signature) before users hit them. A non-zero
+    // `sessions.broken` is the leading indicator that the API needs a
+    // bounce or (post-PR-D) a reconnect.
+    const sessions = context.registry.getSessionHealthSnapshot();
     return sendJson(res, 200, {
       ok: true,
       adapter: context.adapterKind,
@@ -375,11 +471,38 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       homeCwd: os.homedir(),
       ...(await resolveAppBranding(context)),
       gitSha: resolveContextGitSha(context.gitSha),
+      sessions: {
+        total: sessions.total,
+        healthy: sessions.healthy,
+        broken: sessions.broken,
+        ...(sessions.broken > 0 ? { brokenSessionIds: sessions.brokenSessionIds } : {}),
+      },
     });
   }
 
   if (req.method === "POST" && url.pathname === "/api/client-event") {
     return handleClientEvent(req, res, context);
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/client-event/stats") {
+    // Aggregated histogram over the most recent client telemetry events,
+    // computed from an in-memory ring buffer. Lets an operator (or the
+    // dashboard) see "how many api-errors / sse-silences in last 5 minutes?"
+    // without grepping /home/coder/.../client-events.jsonl. The defaults
+    // target the dashboard's polling cadence; max is capped to avoid CPU
+    // pegging on a pathological query.
+    const requestedMs = Number(url.searchParams.get("windowMs") ?? 5 * 60_000);
+    const windowMs = Math.max(1_000, Math.min(60 * 60_000, Number.isFinite(requestedMs) ? requestedMs : 5 * 60_000));
+    const stats = context.clientEventLog?.stats(windowMs) ?? {
+      windowMs,
+      total: 0,
+      bufferDropped: 0,
+      byKind: {},
+      byApiErrorStatus: {},
+      topSessions: [],
+      topApiErrorPaths: [],
+    };
+    return sendJson(res, 200, stats);
   }
 
   if (req.method === "GET" && url.pathname === "/api/extensions") {
@@ -669,17 +792,17 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     return sendJson(res, 200, toDashboardMessages(messages, { sessionId: session.id }));
   }
 
+  // Shared by the three /messages/:msgid/{images,details,tool-output}
+  // routes below: open the session and find one message by id.
+  const lookupContext = { getOrOpenSession: (id: string) => getOrOpenSession(context, id) };
+
   // Lazy fetch of inline image bytes that we strip from /messages payloads
   // to keep the timeline JSON small. Image URLs are issued by
   // toDashboardMessages; this route resolves them back to raw bytes.
   const imageMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/images\/(\d+)$/);
   if (req.method === "GET" && imageMatch) {
-    const session = await getOrOpenSession(context, decodeURIComponent(imageMatch[1]!));
-    const messageId = decodeURIComponent(imageMatch[2]!);
-    const imageIndex = Number(imageMatch[3]!);
-    const allMessages = await session.handle.getMessages();
-    const message = findMessageById(allMessages, messageId);
-    const image = message?.images?.[imageIndex];
+    const message = await lookupSessionMessage(lookupContext, decodeURIComponent(imageMatch[1]!), decodeURIComponent(imageMatch[2]!));
+    const image = message?.images?.[Number(imageMatch[3]!)];
     if (!image) return sendJson(res, 404, { error: "image not found" });
     const bytes = Buffer.from(image.data, "base64");
     res.writeHead(200, {
@@ -696,10 +819,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   // exceeds MAX_INLINE_DETAILS_BYTES.
   const detailsMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/details$/);
   if (req.method === "GET" && detailsMatch) {
-    const session = await getOrOpenSession(context, decodeURIComponent(detailsMatch[1]!));
-    const messageId = decodeURIComponent(detailsMatch[2]!);
-    const allMessages = await session.handle.getMessages();
-    const message = findMessageById(allMessages, messageId);
+    const message = await lookupSessionMessage(lookupContext, decodeURIComponent(detailsMatch[1]!), decodeURIComponent(detailsMatch[2]!));
     if (!message?.details) return sendJson(res, 404, { error: "details not found" });
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
@@ -712,10 +832,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   // Lazy fetch of full tool output that we truncate in /messages payloads.
   const toolOutputMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/tool-output$/);
   if (req.method === "GET" && toolOutputMatch) {
-    const session = await getOrOpenSession(context, decodeURIComponent(toolOutputMatch[1]!));
-    const messageId = decodeURIComponent(toolOutputMatch[2]!);
-    const allMessages = await session.handle.getMessages();
-    const message = findMessageById(allMessages, messageId);
+    const message = await lookupSessionMessage(lookupContext, decodeURIComponent(toolOutputMatch[1]!), decodeURIComponent(toolOutputMatch[2]!));
     if (!message?.tool) return sendJson(res, 404, { error: "tool output not found" });
     res.writeHead(200, {
       "Content-Type": "text/plain; charset=utf-8",
@@ -1067,12 +1184,12 @@ function parseTimelineLine(line: string): { createdAt?: number | null; userActiv
   try { entry = JSON.parse(line); } catch { return undefined; }
   if (!isRecord(entry)) return undefined;
   if (entry.type === "session") {
-    return { createdAt: coerceTime(entry.timestamp) };
+    return { createdAt: coerceTimestamp(entry.timestamp) ?? null };
   }
   if (entry.type !== "message" || !isRecord(entry.message)) return undefined;
   if (entry.message.role !== "user") return undefined;
-  const timestamp = coerceTime(entry.message.timestamp) ?? coerceTime(entry.timestamp);
-  if (timestamp === null) return undefined;
+  const timestamp = coerceTimestamp(entry.message.timestamp) ?? coerceTimestamp(entry.timestamp);
+  if (timestamp === undefined) return undefined;
   return { userActivity: timestamp };
 }
 
@@ -1141,19 +1258,6 @@ async function flushDirtyTimelineIndexes(): Promise<void> {
       // Best-effort; we'll try again on the next /statuses call.
     }
   }));
-}
-
-function coerceTime(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (value instanceof Date) {
-    const time = value.getTime();
-    return Number.isFinite(time) ? time : null;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const time = Date.parse(value);
-    return Number.isFinite(time) ? time : null;
-  }
-  return null;
 }
 
 function toSessionListCard(session: SessionListItem, metadata: SessionTimelineMetadata = { createdAt: null, lastUserActivity: null }) {
@@ -1339,14 +1443,6 @@ function stripDetailsForTransport(
     detailsTruncated: true,
     detailsFullBytes: fullBytes,
   };
-}
-
-function findMessageById(messages: readonly SessionMessage[], id: string): SessionMessage | undefined {
-  for (let index = 0; index < messages.length; index++) {
-    const candidate = messages[index]!;
-    if (`${candidate.timestamp}-${index}` === id) return candidate;
-  }
-  return undefined;
 }
 
 /**

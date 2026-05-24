@@ -44,6 +44,49 @@ export function optional<T extends Record<string, unknown>>(
 }
 
 /**
+ * Server-side timestamp coercer. Accepts a finite number (ms), a Date,
+ * or a parseable ISO date string; returns ms-since-epoch or `undefined`.
+ *
+ * Unifies what were four near-identical copies across the server
+ * (`dateLikeToTime` in pirpc-pi-adapter, `coerceTime` in http-api-server,
+ * `coerceTimestamp` in sdk-pi-adapter). `undefined` is the historical
+ * dominant return type; callers that wanted `null` keep using
+ * `coerceTimestamp(x) ?? null`.
+ */
+export function coerceTimestamp(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : undefined;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? time : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Narrows an unknown to a finite number, returning `null` for anything
+ * else (including string-numbers, NaN, Infinity, undefined, null, objects).
+ * Use when the caller wants explicit-null for "no value" in a numeric
+ * field. For string-number tolerance use `Number(...)` directly.
+ */
+export function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Sum the numeric values at the given keys of `record`, treating missing
+ * keys as zero. String-numbers are coerced via `Number(...)`. Returns 0
+ * when the record itself is undefined.
+ */
+export function sumNumbers(record: Record<string, unknown> | undefined, keys: readonly string[]): number {
+  if (!record) return 0;
+  return keys.reduce((sum, key) => sum + Number(record[key] ?? 0), 0);
+}
+
+/**
  * Best-effort, user-facing error string. Handles `Error`, `DOMException`
  * (where `name` is sometimes more informative than the empty `message`),
  * and arbitrary thrown values without ever returning the literal

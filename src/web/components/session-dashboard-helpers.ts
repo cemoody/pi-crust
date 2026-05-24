@@ -9,47 +9,11 @@ import { isRecord, optional } from "../../shared/util.js";
 import type { ExtensionUiRequest } from "../../shared/protocol.js";
 import type { BranchMessageOption, DashboardArtifact, PromptAttachment, SessionCardData, SessionCardStats } from "../api/session-api.js";
 
-// ---------- wire-message content fan-out ----------
-
-export function contentText(content: unknown): string {
-  return contentTextAndThinking(content).text;
-}
-
-/**
- * Split a wire-message content array into its visible-text and thinking
- * components. Mirrors the server-side helper in pirpc-pi-adapter so SSE
- * `message_update` / `message_end` events stay consistent with the
- * post-reload pipeline (PR #47): the assistant bubble renders only
- * `text`, the Thought card renders only `thinking`, and we never flatten
- * the two into a single Markdown body.
- */
-export function contentTextAndThinking(content: unknown): { text: string; thinking: string } {
-  if (typeof content === "string") return { text: content, thinking: "" };
-  if (!Array.isArray(content)) return { text: content === undefined ? "" : JSON.stringify(content), thinking: "" };
-  const text: string[] = [];
-  const thinking: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    if ("thinking" in block && typeof (block as { thinking: unknown }).thinking === "string") {
-      thinking.push(String((block as { thinking: string }).thinking));
-      continue;
-    }
-    if ("text" in block && typeof (block as { text: unknown }).text === "string") {
-      text.push(String((block as { text: string }).text));
-      continue;
-    }
-    if ("type" in block && (block as { type?: unknown }).type === "toolCall") {
-      continue;
-    }
-    text.push(JSON.stringify(block));
-  }
-  return { text: text.filter(Boolean).join("\n"), thinking: thinking.join("\n\n") };
-}
-
-export function toolResultText(result: unknown): string {
-  if (!isRecord(result) || !Array.isArray(result.content)) return "";
-  return result.content.map((item) => isRecord(item) ? String(item.text ?? "") : "").join("\n");
-}
+// Re-export the canonical wire-content helpers so existing import paths
+// keep working. Behavior change vs. the prior local copy: unknown blocks
+// (toolCall, extension types) are now silently skipped instead of being
+// JSON-stringified into `text`. See src/shared/wire-content.ts.
+export { contentText, contentTextAndThinking, toolResultText } from "../../shared/wire-content.js";
 
 export function extractArtifact(result: unknown): DashboardArtifact | undefined {
   if (!isRecord(result) || !isRecord(result.details)) return undefined;
