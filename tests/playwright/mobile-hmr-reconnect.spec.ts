@@ -75,7 +75,7 @@ async function openSeededSessionWithDraft(page: Page, text: string): Promise<num
   await installViteHmrSocketProbe(page);
 
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   const draft = page.getByLabel('Prompt draft');
   await draft.fill(text);

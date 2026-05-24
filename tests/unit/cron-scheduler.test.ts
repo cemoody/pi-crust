@@ -73,7 +73,7 @@ describe("CronScheduler.runJobNow", () => {
   // Production repro: PiRpcSessionHandle.prompt() awaits the agent_end event
   // and therefore doesn't resolve until the LLM finishes the entire turn
   // (often many minutes). The previous CronScheduler.runJob awaited that
-  // prompt promise, so the HTTP request from the WUI's "Run now" button
+  // prompt promise, so the HTTP request from the pi-crust's "Run now" button
   // hung for the duration of the agent run, and cron-jobs.json wasn't
   // updated with lastRun/lastSessionId until the very end. From the user's
   // perspective the click did nothing.

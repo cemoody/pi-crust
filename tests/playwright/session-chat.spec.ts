@@ -3,8 +3,8 @@ import { expect, test } from '@playwright/test';
 test('can select a listed cold session and send hello without unknown-session error', async ({ page }) => {
   await page.goto('/');
 
-  await expect(page.getByRole('button', { name: /^Seeded session\b/ })).toBeVisible();
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await expect(page.getByRole('link', { name: /^Seeded session\b/ })).toBeVisible();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   await page.getByLabel('Prompt draft').fill('hello');
   await page.getByRole('button', { name: 'Send' }).click();
@@ -19,7 +19,7 @@ test('can select a listed cold session and send hello without unknown-session er
 
 test('shows existing session history and renders markdown when a session is selected', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   await expect(page.getByText('previously sent hello')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Plan' })).toBeVisible();
@@ -33,7 +33,7 @@ test('shows existing session history and renders markdown when a session is sele
 test('default copy puts only the last assistant text on the clipboard', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   const footer = page.getByLabel('Turn actions').first();
   await expect(footer).toBeVisible();
@@ -49,7 +49,7 @@ test('default copy puts only the last assistant text on the clipboard', async ({
 test('overflow menu can copy the entire turn as markdown', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   const footer = page.getByLabel('Turn actions').first();
   await footer.getByRole('button', { name: 'More copy options' }).click();
@@ -65,7 +65,7 @@ test('overflow menu can copy the entire turn as markdown', async ({ page, contex
 
 test('preserves the active session in the URL across reloads', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
   await expect(page).toHaveURL(/[?&]session=seeded-session-0001/);
 
   await page.reload();
@@ -75,7 +75,7 @@ test('preserves the active session in the URL across reloads', async ({ page }) 
 
 test('fork button creates a new session with the selected prompt restored', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   await page.getByRole('button', { name: 'Fork', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Fork session' });
@@ -89,7 +89,7 @@ test('fork button creates a new session with the selected prompt restored', asyn
 
 test('/fork slash command accepts a fork message index', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   await page.getByLabel('Prompt draft').fill('/fork 1');
   await page.getByRole('button', { name: 'Send' }).click();
@@ -100,7 +100,7 @@ test('/fork slash command accepts a fork message index', async ({ page }) => {
 
 test('/clear slash command starts a fresh session (alias for /new)', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   // Confirm we're sitting on the seeded session before /clear.
   await expect(page.getByRole('heading', { name: /^Seeded session/ })).toBeVisible();
@@ -117,7 +117,7 @@ test('/clear slash command starts a fresh session (alias for /new)', async ({ pa
 
 test('top-right session actions reflect implemented extension commands', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   await expect(page.getByRole('button', { name: 'Compact', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Tree', exact: true })).toHaveCount(0);
@@ -127,7 +127,7 @@ test('top-right session actions reflect implemented extension commands', async (
 
 test('opens model picker for /model slash command instead of sending it as a prompt', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   await page.getByLabel('Prompt draft').fill('/model');
   await page.getByRole('button', { name: 'Send' }).click();
@@ -155,7 +155,7 @@ test('opens model picker for /model slash command instead of sending it as a pro
 
 test('streams the user and assistant messages over SSE during a turn', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
   await page.getByLabel('Prompt draft').fill('streaming hello');
   await page.getByRole('button', { name: 'Send' }).click();
 
@@ -165,7 +165,7 @@ test('streams the user and assistant messages over SSE during a turn', async ({ 
 
 test('pasted image flows end-to-end: user bubble preview, no raw JSON, assistant acknowledges', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
   const draft = page.getByLabel('Prompt draft');
   await draft.focus();
 
@@ -199,7 +199,7 @@ test('pasted image flows end-to-end: user bubble preview, no raw JSON, assistant
 
 test('pasting an image attaches it as an attachment instead of inserting raw text', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
   const draft = page.getByLabel('Prompt draft');
   await draft.focus();
 
@@ -221,7 +221,7 @@ test('pasting an image attaches it as an attachment instead of inserting raw tex
 test('real browser clipboard image paste reaches the mock backend', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:5174' });
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   const clipboardSupport = await page.evaluate(() => ({
     secure: window.isSecureContext,
@@ -261,7 +261,7 @@ test('real browser clipboard image paste reaches the mock backend', async ({ pag
 
 test('raw image JSON paste is rejected with a friendly warning', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
   const draft = page.getByLabel('Prompt draft');
   await draft.focus();
 
@@ -279,12 +279,15 @@ test('raw image JSON paste is rejected with a friendly warning', async ({ page }
 
 test('shows status row beneath composer with cwd, model, and TUI-style stats', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   const status = page.getByLabel('Session status');
   await expect(status).toBeVisible();
   await expect(status).toContainText('idle');
-  await expect(status).toContainText(/pi-remote-control|no-success-paste-warning|delete-session-persistence|trol-/);
+  // Match any plausible cwd substring. CI checkout dir is still 'pi-remote-control'
+  // until the GitHub repo itself is renamed; local clones may be 'pi-crust' or a
+  // worktree variant.
+  await expect(status).toContainText(/pi-crust|pi-remote-control|no-success-paste-warning|delete-session-persistence|trol-/);
   await expect(status).toContainText(/no model selected|mock\/mock\/mock-echo/);
   await expect(status).toContainText('↑0');
   await expect(status).toContainText('↓0');
@@ -312,7 +315,7 @@ test('sidebar collapses without shrinking the main area', async ({ page }) => {
 
 test('shortcut modal opens with ? outside an input, ignored inside textarea', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   await page.locator('body').press('Shift+?');
   await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible();
@@ -331,7 +334,7 @@ test('deleted sessions stay deleted after frontend reload', async ({ page }) => 
   // Inline 'New session' flow: clicking the menu item immediately spawns
   // a session and focuses the prompt; the optional name is entered in an
   // inline input above the composer, not a modal.
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New session' }).click();
   await page.getByLabel('Name this session').fill('Delete persistence check');
   // The rename commits on blur; tab away from the field to trigger it.
   await page.getByLabel('Name this session').press('Tab');
@@ -348,7 +351,7 @@ test('deleted sessions stay deleted after frontend reload', async ({ page }) => 
 test('can create a new session and send hello', async ({ page }) => {
   await page.goto('/');
 
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: 'New session' }).click();
   // Inline name input → first prompt commits the rename alongside the
   // send, no modal in between.
   await page.getByLabel('Name this session').fill('Playwright new session');

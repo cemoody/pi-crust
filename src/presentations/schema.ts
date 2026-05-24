@@ -1,6 +1,10 @@
 export const PRESENTATION_MIME = "application/vnd.pi.presentation+json";
 
 export interface PresentationDeck {
+  /** Optional stable identifier used as the filename component for
+   *  per-session persisted edits (`<deckId>.deck.json`). The
+   *  `show_presentation` tool assigns a slug of the title when omitted. */
+  readonly id?: string;
   readonly title: string;
   readonly subtitle?: string;
   readonly theme?: "light" | "dark" | string;

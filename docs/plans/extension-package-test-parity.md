@@ -1,6 +1,6 @@
-# PRC extension/package test parity with Pi Coding Agent
+# pi-crust extension/package test parity with Pi Coding Agent
 
-This inventories Pi Coding Agent tests that are relevant to PRC's emerging extension/package framework and tracks what PRC now covers in this worktree.
+This inventories Pi Coding Agent tests that are relevant to pi-crust's emerging extension/package framework and tracks what pi-crust now covers in this worktree.
 
 ## Highly relevant Pi tests
 
@@ -23,12 +23,12 @@ Relevant behaviors:
 - load extension and verify command/tool/renderer/event/shortcut/flag contribution;
 - invalid code / missing export / initialization throw yields diagnostics.
 
-PRC coverage now:
+pi-crust coverage now:
 
 - package manifest single entry: `tests/unit/extension-package-resolver.test.ts`;
 - package manifest multiple entries: `tests/unit/extension-loader.test.ts`;
 - package-root manifest precedence over index: `tests/unit/extension-package-resolver.test.ts`;
-- package without PRC manifest falls back to index: `tests/unit/extension-package-resolver.test.ts`;
+- package without pi-crust manifest falls back to index: `tests/unit/extension-package-resolver.test.ts`;
 - include/exclude manifest patterns: `tests/unit/extension-package-resolver.test.ts`;
 - Pi-like one-level extension directory discovery: `tests/unit/extension-package-resolver.test.ts`;
 - subdirectory manifest precedence over index: `tests/unit/extension-package-resolver.test.ts`;
@@ -54,9 +54,9 @@ Relevant behaviors:
 - contribution conflict behavior;
 - disposable/unregister behavior;
 - shortcut conflicts with reserved/builtin bindings;
-- message renderers/flags/provider/tool hooks, where analogous PRC registries exist later.
+- message renderers/flags/provider/tool hooks, where analogous pi-crust registries exist later.
 
-PRC coverage now:
+pi-crust coverage now:
 
 - command registration/execution: `tests/unit/extension-registry.test.ts`;
 - duplicate command suffixing: `tests/unit/extension-registry.test.ts`;
@@ -94,9 +94,9 @@ Relevant behaviors:
 - force include `+` and force exclude `-` patterns;
 - package deduplication, project scope wins over global;
 - multi-file extension discovery: only top-level direct files and subdirectory index/manifest, not helper modules;
-- npm/git install/update/offline behavior once PRC package manager supports network package sources.
+- npm/git install/update/offline behavior once pi-crust package manager supports network package sources.
 
-PRC coverage now:
+pi-crust coverage now:
 
 - resolve installed local package settings with supplied cwd: `tests/unit/extension-package-resolver.test.ts`;
 - empty/no package sources: `tests/unit/extension-package-resolver.test.ts`;
@@ -117,8 +117,8 @@ PRC coverage now:
 Still relevant/not fully covered:
 
 - npm/git source parsing/install/update/offline behavior;
-- project-local settings file semantics once PRC exposes them;
-- package resource types beyond extensions, e.g. themes/prompts if PRC adds them.
+- project-local settings file semantics once pi-crust exposes them;
+- package resource types beyond extensions, e.g. themes/prompts if pi-crust adds them.
 
 ### `packages/coding-agent/test/package-command-paths.test.ts`
 
@@ -127,16 +127,16 @@ Relevant behaviors:
 - `install ./local-package` persists paths relative to settings;
 - remove local package using trailing slash/equivalent path;
 - install help/unknown option/missing source friendly errors;
-- self-update tests are Pi-specific and not relevant to PRC extension framework yet.
+- self-update tests are Pi-specific and not relevant to pi-crust extension framework yet.
 
-PRC coverage now:
+pi-crust coverage now:
 
 - install local package relative to isolated settings: `tests/integration/extension-install.test.ts`;
 - remove with trailing slash/equivalent path: `tests/integration/extension-install.test.ts`.
 
 Still relevant/not fully covered:
 
-- actual CLI `pi-remote-control install` command does not exist yet;
+- actual CLI `pi-crust install` command does not exist yet;
 - help/unknown-option/missing-source CLI tests should be added with CLI implementation.
 
 ### `packages/coding-agent/test/resource-loader.test.ts`
@@ -151,14 +151,14 @@ Relevant behaviors:
 - explicit CLI extensions prefer over discovered extensions on conflicts;
 - conflict diagnostics.
 
-PRC coverage now:
+pi-crust coverage now:
 
 - duplicate command disambiguation: `tests/unit/extension-registry.test.ts`;
 - package global/project dedupe with project winning: `tests/unit/extension-package-resolver.test.ts`.
 
 Still relevant/not fully covered:
 
-- no full PRC resource loader/reload exists yet;
+- no full pi-crust resource loader/reload exists yet;
 - global/project/explicit extension discovery order not implemented yet;
 - symlinked extension dirs need a dedicated test once discovery dirs exist.
 
@@ -168,17 +168,17 @@ Relevant behaviors:
 
 - `--extension` parses repeatable extension paths;
 - `--no-extensions` disables discovery/loading;
-- resource-related flags (`--skill`, `--theme`, etc.) are only relevant if PRC adds analogous resources.
+- resource-related flags (`--skill`, `--theme`, etc.) are only relevant if pi-crust adds analogous resources.
 
-PRC coverage now:
+pi-crust coverage now:
 
 - none; CLI flags are future work.
 
 Still relevant/not fully covered:
 
-- `pi-remote-control --extension/-e ./extension`;
-- `pi-remote-control --no-extensions`;
-- env equivalents such as `PI_REMOTE_EXTENSIONS` / `PI_REMOTE_NO_EXTENSIONS`.
+- `pi-crust --extension/-e ./extension`;
+- `pi-crust --no-extensions`;
+- env equivalents such as `PI_CRUST_EXTENSIONS` / `PI_CRUST_NO_EXTENSIONS`.
 
 ### `packages/coding-agent/test/test-harness.test.ts` and `test/suite/harness.ts`
 
@@ -188,7 +188,7 @@ Relevant behaviors:
 - duplicate command disambiguation;
 - fake/faux session/model runtime avoids API keys.
 
-PRC coverage now:
+pi-crust coverage now:
 
 - `tests/helpers/extension-harness.ts` provides inline extension factories;
 - uses existing `MockPiAdapter` for HTTP/server E2E tests;
@@ -201,16 +201,16 @@ Still relevant/not fully covered:
 
 ### Other Pi extension-related tests
 
-- `agent-session-dynamic-tools.test.ts`: relevant by analogy for late/dynamic contribution registration after startup. PRC should add tests when extensions can reload or register after initial render.
-- regressions `2835`, `3592`: Pi tool allowlist behavior is agent-tool-specific; relevant only if PRC introduces contribution allowlists/enablement filters.
-- compaction/trigger-compact/model-extension/input-event tests: Pi-agent lifecycle-specific; mostly not relevant to PRC web/server extension framework except as examples for future event-bus tests.
+- `agent-session-dynamic-tools.test.ts`: relevant by analogy for late/dynamic contribution registration after startup. pi-crust should add tests when extensions can reload or register after initial render.
+- regressions `2835`, `3592`: Pi tool allowlist behavior is agent-tool-specific; relevant only if pi-crust introduces contribution allowlists/enablement filters.
+- compaction/trigger-compact/model-extension/input-event tests: Pi-agent lifecycle-specific; mostly not relevant to pi-crust web/server extension framework except as examples for future event-bus tests.
 
-## Newly added PRC tests in this worktree
+## Newly added pi-crust tests in this worktree
 
 - `tests/unit/extension-loader.test.ts` — dynamic import module shapes, bad module diagnostics, multiple manifest entries import/activation.
 - `tests/unit/extension-registry.test.ts` — inline extension host, commands, slash names, duplicate commands, duplicate slash behavior, activity disposal, full host cleanup, partial activation cleanup, activation precedence, built-in activation parity, error isolation, server route dispatch.
 - `tests/unit/extension-package-resolver.test.ts` — manifest resolution, fallback index behavior, non-extension ignores, no-extensions contract, missing explicit-path diagnostics, patterns, one-level discovery, directory pattern discovery, subdir manifest precedence, layered filters, force include/exclude, global/project dedupe, symlink dedupe.
 - `tests/integration/extension-install.test.ts` — install, dedupe install, remove equivalent path, install -> resolve -> import -> activate -> run command.
 - `tests/e2e/http-api-extension-route.test.ts` — real HTTP server serves extension routes mounted under `/api/extensions/:extensionId/*`, including extension registry metadata at `/api/extensions`, method isolation, decoded params, custom headers/status, and handler errors.
-- `tests/unit/extension-bootstrap.test.ts` — config/env bootstrap loads explicit, project, global, and built-in extensions in precedence order; honors `PI_REMOTE_EXTENSIONS` and `PI_REMOTE_NO_EXTENSIONS`; reports explicit path diagnostics; resolves `PI_REMOTE_CONFIG_DIR`.
+- `tests/unit/extension-bootstrap.test.ts` — config/env bootstrap loads explicit, project, global, and built-in extensions in precedence order; honors `PI_CRUST_EXTENSIONS` and `PI_CRUST_NO_EXTENSIONS`; reports explicit path diagnostics; resolves `PI_CRUST_CONFIG_DIR`.
 - `tests/playwright/installed-extension-ui.spec.ts` — skipped north-star browser E2E for install -> UI contribution -> route -> command/session behavior.

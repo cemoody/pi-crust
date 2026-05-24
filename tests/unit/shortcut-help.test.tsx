@@ -4,9 +4,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ShortcutHelp } from "../../src/web/components/ShortcutHelp.js";
 
-// vite's `define` injects __PI_REMOTE_GIT_SHA__ as a global; tests run under
+// vite's `define` injects __PI_CRUST_GIT_SHA__ as a global; tests run under
 // vitest which doesn't apply that define, so we declare it via globalThis.
-(globalThis as { __PI_REMOTE_GIT_SHA__?: string }).__PI_REMOTE_GIT_SHA__ = "frontendsh4f3";
+(globalThis as { __PI_CRUST_GIT_SHA__?: string }).__PI_CRUST_GIT_SHA__ = "frontendsh4f3";
 
 describe("ShortcutHelp", () => {
   it("opens when ? is pressed outside an input", () => {
@@ -61,15 +61,15 @@ describe("ShortcutHelp", () => {
     await waitFor(() => expect(dialog.textContent ?? "").toMatch(/unknown/));
   });
 
-  it("in dev (no __PI_REMOTE_GIT_SHA__ define) the frontend row shows the live backend SHA", async () => {
+  it("in dev (no __PI_CRUST_GIT_SHA__ define) the frontend row shows the live backend SHA", async () => {
     // Simulate `vite serve` where the build-time define is omitted: the
     // help dialog should show the backend's live gitSha for BOTH rows,
     // matching the running checkout. This is the fix for 'I merged a PR
     // but the help page still shows the old SHA': in dev, the bundle's
     // baked SHA is meaningless (HMR has replaced modules), so we just
     // mirror the api.
-    const prior = (globalThis as { __PI_REMOTE_GIT_SHA__?: string }).__PI_REMOTE_GIT_SHA__;
-    delete (globalThis as { __PI_REMOTE_GIT_SHA__?: string }).__PI_REMOTE_GIT_SHA__;
+    const prior = (globalThis as { __PI_CRUST_GIT_SHA__?: string }).__PI_CRUST_GIT_SHA__;
+    delete (globalThis as { __PI_CRUST_GIT_SHA__?: string }).__PI_CRUST_GIT_SHA__;
     try {
       const fetchBackend = vi.fn(async () => ({ gitSha: "livesha98e4" }));
       render(<ShortcutHelp fetchBackendInfo={fetchBackend} />);
@@ -83,7 +83,7 @@ describe("ShortcutHelp", () => {
         expect(codes.every((c) => c.textContent === "livesha98e4")).toBe(true);
       });
     } finally {
-      if (prior !== undefined) (globalThis as { __PI_REMOTE_GIT_SHA__?: string }).__PI_REMOTE_GIT_SHA__ = prior;
+      if (prior !== undefined) (globalThis as { __PI_CRUST_GIT_SHA__?: string }).__PI_CRUST_GIT_SHA__ = prior;
     }
   });
 });

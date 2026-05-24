@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 140" width="140" height="140" role="img" aria-label="π crust logo">
+  <!-- The crust: a thin circular outline -->
+  <circle cx="70" cy="70" r="62" fill="none" stroke="#1a1a1a" stroke-width="3"/>
+  <!-- A pie wedge cut out, suggesting a slice -->
+  <path d="M70 70 L70 8 A62 62 0 0 1 124 39 Z" fill="#1a1a1a" opacity="0.08"/>
+  <line x1="70" y1="70" x2="70" y2="8" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+  <line x1="70" y1="70" x2="124" y2="39" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+  <!-- The π glyph -->
+  <text x="70" y="108" font-family="Georgia, 'Times New Roman', serif" font-size="78" font-weight="700" text-anchor="middle" fill="#1a1a1a">π</text>
+</svg>

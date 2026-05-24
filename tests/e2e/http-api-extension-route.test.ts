@@ -12,7 +12,7 @@ import { createHttpApiServer } from "../../src/server/http-api-server.js";
 import { MockPiAdapter } from "../../src/server/pi/mock-pi-adapter.js";
 import { PathPolicy } from "../../src/server/security/path-policy.js";
 import { SessionRegistry } from "../../src/server/session/session-registry.js";
-import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-prc-home.js";
+import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
 
 const servers: http.Server[] = [];
 const homes: TempPrcHome[] = [];

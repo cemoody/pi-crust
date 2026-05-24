@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 140" width="140" height="140" role="img" aria-label="π crust logo">
+  <circle cx="70" cy="70" r="62" fill="none" stroke="#f5f5f5" stroke-width="3"/>
+  <path d="M70 70 L70 8 A62 62 0 0 1 124 39 Z" fill="#f5f5f5" opacity="0.12"/>
+  <line x1="70" y1="70" x2="70" y2="8" stroke="#f5f5f5" stroke-width="2" stroke-linecap="round"/>
+  <line x1="70" y1="70" x2="124" y2="39" stroke="#f5f5f5" stroke-width="2" stroke-linecap="round"/>
+  <text x="70" y="108" font-family="Georgia, 'Times New Roman', serif" font-size="78" font-weight="700" text-anchor="middle" fill="#f5f5f5">π</text>
+</svg>

@@ -7,7 +7,7 @@ const SCREENSHOT = path.join(OUT_DIR, 'tool-wrap-iphone-14.png');
 
 async function selectToolWrapSession(page: Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Tool wrap repro session\b/ }).click();
+  await page.getByRole('link', { name: /^Tool wrap repro session\b/ }).click();
   await page.getByText('new test in a new git work tree').waitFor();
   // Let the mobile drawer slide-out transition complete before measuring or
   // screenshotting the active session.

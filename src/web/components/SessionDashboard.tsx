@@ -3,7 +3,15 @@ import type { Dispatch, SetStateAction } from "react";
 import type { ExtensionUiRequest, ExtensionUiResponse, WireMessage } from "../../shared/protocol.js";
 import type { BranchCloneResult, BranchForkResult, BranchMessageOption, DashboardArtifact, DashboardMessage, DashboardToolDetails, ExtensionRegistryInfo, ExtensionSettingsResponse, SessionCardData, SessionDashboardApi } from "../api/session-api.js";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
+
+/** How many recent messages to fetch on initial session-open. Older history
+ *  is paginated on scroll. Sized to comfortably cover a typical viewport
+ *  plus some scroll-back without dragging the whole transcript over the
+ *  network for long sessions (e.g. the autotime-series-2 session whose full
+ *  /messages payload was ~28 MB before this limit was applied). */
+const INITIAL_MESSAGES_LIMIT = 200;
 import { MessageTimeline, type TimelineMessage } from "./MessageTimeline.js";
+import { SessionContentErrorBoundary } from "./SessionContentErrorBoundary.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { PromptComposer, type ComposerAttachment } from "./PromptComposer.js";
 import { ShortcutHelp } from "./ShortcutHelp.js";
@@ -29,7 +37,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   // decide whether $HOME is a safe default for new sessions or whether
   // we should fall back to the API server's own cwd.
   const [projectRoot, setProjectRoot] = useState("");
-  const [appName, setAppName] = useState("pi remote");
+  const [appName, setAppName] = useState("π crust");
   const [appIcon, setAppIcon] = useState<string | undefined>(undefined);
   // The user's home directory (server-side). Preferred as the New Session
   // dialog default; falls back to defaultCwd when the API doesn't expose it.
@@ -141,7 +149,10 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   }, [filtersOpen]);
 
   useEffect(() => {
-    document.title = appName === "pi remote" ? "pi remote control" : appName;
+    // Browser tab title mirrors the app name. The pre-rename special case
+    // (where the bare default "pi remote" expanded to "pi remote control")
+    // is gone now that the default is already the full brand name.
+    document.title = appName;
     updateFavicon(appIcon);
   }, [appName, appIcon]);
 
@@ -171,7 +182,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             const info = await api.getServerInfo();
             if (!cancelled) {
               setProjectRoot(info.projectRoot ?? "");
-              setAppName(info.appName || "pi remote");
+              setAppName(info.appName || "π crust");
               setAppIcon(info.appIcon);
             }
           } catch {
@@ -265,29 +276,59 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     let cancelled = false;
     let pendingRefresh: ReturnType<typeof setTimeout> | undefined;
 
-    const refresh = async (options: { readonly preserveLastActivity?: boolean } = {}) => {
+    const applyRefreshedSession = (refreshed: import("../api/session-api.js").SessionCardData, options: { readonly preserveLastActivity?: boolean }) => {
+      setSessions((current) => current.map((session) => {
+        if (session.id !== refreshed.id) return session;
+        return {
+          ...session,
+          status: refreshed.status,
+          ...(refreshed.model === undefined ? {} : { model: refreshed.model }),
+          ...(refreshed.tokenSummary === undefined ? {} : { tokenSummary: refreshed.tokenSummary }),
+          ...(refreshed.stats === undefined ? {} : { stats: refreshed.stats }),
+          ...(refreshed.createdAt === undefined ? {} : { createdAt: refreshed.createdAt }),
+          ...(refreshed.lastUserActivity === undefined ? {} : { lastUserActivity: refreshed.lastUserActivity }),
+          lastActivity: options.preserveLastActivity ? session.lastActivity : refreshed.lastActivity,
+        };
+      }));
+    };
+
+    // Initial mount: pull the full transcript once. After this point we rely
+    // on the SSE event stream (applyRealtimeEvent below) for incremental
+    // message updates so we don't re-fetch the entire jsonl every time the
+    // agent sends a message_end / agent_end event.
+    const refreshAll = async (options: { readonly preserveLastActivity?: boolean } = {}) => {
       try {
+        // Bound the initial transcript fetch to the most recent
+        // INITIAL_MESSAGES_LIMIT entries so opening a multi-MB session
+        // doesn't slurp + JSON.parse the whole jsonl on the server (which
+        // would block the Node event loop for tens of seconds and starve
+        // every other request) and doesn't ship tens of MB of JSON over
+        // the wire to be reparsed in the browser. Older history is loaded
+        // on demand when the user scrolls up; new activity is appended via
+        // the SSE event stream (applyRealtimeEvent).
         const [messages, refreshed] = await Promise.all([
-          api.getMessages(activeSessionId),
+          api.getMessages(activeSessionId, { limit: INITIAL_MESSAGES_LIMIT }),
           api.getSession ? api.getSession(activeSessionId) : Promise.resolve(null),
         ]);
         if (cancelled) return;
         setMessagesBySession((current) => ({ ...current, [activeSessionId]: messages.map(toTimelineMessage) }));
-        if (refreshed) {
-          setSessions((current) => current.map((session) => {
-            if (session.id !== refreshed.id) return session;
-            return {
-              ...session,
-              status: refreshed.status,
-              ...(refreshed.model === undefined ? {} : { model: refreshed.model }),
-              ...(refreshed.tokenSummary === undefined ? {} : { tokenSummary: refreshed.tokenSummary }),
-              ...(refreshed.stats === undefined ? {} : { stats: refreshed.stats }),
-              ...(refreshed.createdAt === undefined ? {} : { createdAt: refreshed.createdAt }),
-              ...(refreshed.lastUserActivity === undefined ? {} : { lastUserActivity: refreshed.lastUserActivity }),
-              lastActivity: options.preserveLastActivity ? session.lastActivity : refreshed.lastActivity,
-            };
-          }));
-        }
+        if (refreshed) applyRefreshedSession(refreshed, options);
+      } catch (caught) {
+        if (!cancelled) setError(errorMessage(caught));
+      }
+    };
+
+    // Lightweight metadata-only refresh: updates the session card (status,
+    // token usage, lastActivity) but does NOT re-fetch the message timeline.
+    // The historical implementation always called api.getMessages here as a
+    // belt-and-braces resync, which ballooned to ~57 s / 29 MB on long
+    // image-heavy transcripts. Live message updates come from SSE.
+    const refreshSessionMeta = async () => {
+      if (!api.getSession) return;
+      try {
+        const refreshed = await api.getSession(activeSessionId);
+        if (cancelled || !refreshed) return;
+        applyRefreshedSession(refreshed, {});
       } catch (caught) {
         if (!cancelled) setError(errorMessage(caught));
       }
@@ -298,7 +339,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       if (pendingRefresh) clearTimeout(pendingRefresh);
       pendingRefresh = setTimeout(() => {
         pendingRefresh = undefined;
-        void refresh();
+        void refreshSessionMeta();
       }, 80);
     };
 
@@ -333,7 +374,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     // only a view action. Keep its existing sort timestamp so the row does not
     // jump out from under the pointer just because it was clicked. Real agent
     // activity still updates the timestamp through scheduled refreshes below.
-    void refresh({ preserveLastActivity: true });
+    void refreshAll({ preserveLastActivity: true });
     const unsubscribe = api.streamEvents ? api.streamEvents(activeSessionId, applyStreamEvent) : () => undefined;
 
     return () => {
@@ -742,7 +783,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
           }
           return;
         }
-        setNotice(`Command \"/${name}\" is recognised in the TUI but not yet implemented in the WUI.`);
+        setNotice(`Command \"/${name}\" is recognised in the TUI but not yet implemented in the pi-crust.`);
       }
     }
   }
@@ -808,7 +849,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
 
       <aside className="session-sidebar" aria-label="Sessions" aria-hidden={!sidebarOpen}>
         <header>
-          <AppBrand appName={appName} {...(appIcon ? { appIcon } : {})} />
+          <AppBrand
+            appName={appName}
+            {...(appIcon ? { appIcon } : {})}
+            onNavigateRoot={() => { setActiveSessionId(null); setView("sessions"); }}
+          />
           <button
             type="button"
             className="sidebar-toggle"
@@ -821,46 +866,68 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         </header>
 
         <nav aria-label="Workspace" className="sidebar-menu">
-          <button
-            type="button"
-            className={`sidebar-menu-item ${creatingSessionFromMenu ? "loading" : ""}`}
-            aria-busy={creatingSessionFromMenu}
-            aria-label={creatingSessionFromMenu ? "Creating session" : "New session"}
-            disabled={creatingSessionFromMenu}
-            onClick={() => { void createSessionFromMenu(); }}
-          >
-            {creatingSessionFromMenu ? <LoadingEllipsisIcon /> : <NewSessionGlyph />}
-            {creatingSessionFromMenu ? (
+          {creatingSessionFromMenu ? (
+            <button
+              type="button"
+              className="sidebar-menu-item loading"
+              aria-busy={true}
+              aria-label="Creating session"
+              disabled={true}
+            >
+              <LoadingEllipsisIcon />
               <span>
                 Creating<span className="loading-ellipsis" aria-hidden="true">...</span>
               </span>
-            ) : "New session"}
-          </button>
+            </button>
+          ) : (
+            <a
+              href="/"
+              className="sidebar-menu-item"
+              aria-label="New session"
+              onClick={(event) => {
+                if (!isPlainLeftClick(event)) return;
+                event.preventDefault();
+                void createSessionFromMenu();
+              }}
+            >
+              <NewSessionGlyph />
+              New session
+            </a>
+          )}
           {webActivities.map((activity) => {
             const activityView = `activity:${activity.id}` as DashboardView;
+            const isActive = view === activityView;
             return (
-              <button
+              <a
                 key={activity.id}
-                type="button"
-                className={`sidebar-menu-item ${view === activityView ? "active" : ""}`}
-                aria-pressed={view === activityView}
-                onClick={() => setView(view === activityView ? "sessions" : activityView)}
+                href="/"
+                className={`sidebar-menu-item ${isActive ? "active" : ""}`}
+                aria-pressed={isActive}
+                onClick={(event) => {
+                  if (!isPlainLeftClick(event)) return;
+                  event.preventDefault();
+                  setView(isActive ? "sessions" : activityView);
+                }}
               >
                 {activity.extensionId === "core.schedule" ? <CronGlyph /> : <ExtensionGlyph />}
                 {activity.title}
-              </button>
+              </a>
             );
           })}
           {api.getExtensionSettings || api.setExtensionEnabled || api.installExtensionPackage || api.reloadExtensions ? (
-            <button
-              type="button"
+            <a
+              href="/"
               className={`sidebar-menu-item ${view === "settings" ? "active" : ""}`}
               aria-pressed={view === "settings"}
-              onClick={() => setView(view === "settings" ? "sessions" : "settings")}
+              onClick={(event) => {
+                if (!isPlainLeftClick(event)) return;
+                event.preventDefault();
+                setView(view === "settings" ? "sessions" : "settings");
+              }}
             >
               <ExtensionGlyph />
               Settings
-            </button>
+            </a>
           ) : null}
         </nav>
 
@@ -904,10 +971,15 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         <ul className="session-list">
           {visibleSessions.map((session) => (
             <li key={session.id}>
-              <button
-                type="button"
+              <a
+                href={`?session=${encodeURIComponent(session.id)}`}
                 className={session.id === activeSessionId ? "active" : ""}
-                onClick={() => { setActiveSessionId(session.id); setView("sessions"); }}
+                onClick={(event) => {
+                  if (!isPlainLeftClick(event)) return;
+                  event.preventDefault();
+                  setActiveSessionId(session.id);
+                  setView("sessions");
+                }}
               >
                 <span
                   className={`session-row-dot ${session.status === "streaming" ? "streaming" : ""}`}
@@ -920,7 +992,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 <span className="session-row-id">
                   {showPaths ? <span>{session.cwd}</span> : <span>{basename(session.cwd)}</span>}
                 </span>
-              </button>
+              </a>
             </li>
           ))}
         </ul>
@@ -937,7 +1009,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             onNotice={setNotice}
             {...(api.setAppBranding ? { onSaveBranding: async (branding) => {
               const result = await api.setAppBranding!(branding);
-              setAppName(result.appName || "pi remote");
+              setAppName(result.appName || "π crust");
               setAppIcon(result.appIcon);
               if (api.getExtensionSettings) await refreshExtensionSettings();
             } } : {})}
@@ -1009,11 +1081,14 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             </header>
 
             <div className="active-session-workspace">
-              <MessageTimeline
-                messages={messagesBySession[activeSession.id] ?? []}
-                streaming={activeSession.status === "streaming"}
-                enabledArtifactMimes={enabledArtifactMimes}
-              />
+              <SessionContentErrorBoundary resetKey={activeSession.id}>
+                <MessageTimeline
+                  messages={messagesBySession[activeSession.id] ?? []}
+                  streaming={activeSession.status === "streaming"}
+                  enabledArtifactMimes={enabledArtifactMimes}
+                  sessionId={activeSession.id}
+                />
+              </SessionContentErrorBoundary>
               <ExtensionUiHost
                 requests={extensionUiBySession[activeSession.id] ?? []}
                 onValueResponse={(id, value) => respondToExtensionUi({ id, value })}
@@ -1131,13 +1206,45 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
  * state so keystrokes don't bubble up to SessionDashboard re-renders
  * (and therefore don't churn the MessageTimeline). Commits on blur.
  */
-function AppBrand({ appName, appIcon }: { readonly appName: string; readonly appIcon?: string }) {
+function AppBrand({
+  appName,
+  appIcon,
+  onNavigateRoot,
+}: {
+  readonly appName: string;
+  readonly appIcon?: string;
+  readonly onNavigateRoot?: () => void;
+}) {
   return (
-    <div className="app-brand">
+    <a
+      className="app-brand"
+      href="/"
+      aria-label={appName}
+      onClick={(event) => {
+        if (!isPlainLeftClick(event)) return;
+        event.preventDefault();
+        onNavigateRoot?.();
+      }}
+    >
       {appIcon ? <BrandIcon value={appIcon} /> : null}
       <h1>{appName}</h1>
-    </div>
+    </a>
   );
+}
+
+/**
+ * A plain left-click (no modifier keys, primary mouse button) is the
+ * signal that we should handle the navigation in-app. Modifier-clicks
+ * (cmd/ctrl/shift/alt) and middle-clicks should fall through to the
+ * browser so the user gets a real "open in new tab" affordance from
+ * any sidebar item.
+ */
+function isPlainLeftClick(event: React.MouseEvent): boolean {
+  return event.button === 0
+    && !event.metaKey
+    && !event.ctrlKey
+    && !event.shiftKey
+    && !event.altKey;
 }
 
 function BrandIcon({ value }: { readonly value: string }) {
@@ -1731,7 +1838,7 @@ function readSessionFromUrl(): string | null {
 // so a reload or new tab preserves the same sidebar order the user
 // established. Failures (no localStorage, quota errors, parse errors) all
 // degrade silently to an empty map.
-const USER_ACTIVITY_STORAGE_KEY = "pi-remote-control:lastUserActivityById:v1";
+const USER_ACTIVITY_STORAGE_KEY = "pi-crust:lastUserActivityById:v1";
 
 function recentSortKey(session: SessionCardData, optimisticUserActivityById: Record<string, number>): number {
   if (typeof session.lastUserActivity === "number" && Number.isFinite(session.lastUserActivity)) {
@@ -1781,7 +1888,7 @@ function ExtensionActivityPanel({ activity, extensions }: { readonly activity: i
         </div>
       </header>
       <div className="extension-activity-body">
-        <p>This activity was contributed by a PRC extension. Custom web rendering will be enabled as the extension framework matures.</p>
+        <p>This activity was contributed by a pi-crust extension. Custom web rendering will be enabled as the extension framework matures.</p>
         {commands.length > 0 ? (
           <section>
             <h3>Commands</h3>
@@ -2017,7 +2124,12 @@ function toTimelineMessage(message: import("../api/session-api.js").DashboardMes
       ? {
           images: message.images.map((image, index) => ({
             id: `${message.id}-img-${index}`,
-            src: `data:${image.mimeType};base64,${image.data}`,
+            // Prefer the server-hosted URL (set when the server strips inline
+            // base64 to keep /messages payloads small). Fall back to the
+            // inline data URL for back-compat with smaller responses.
+            src: image.url
+              ? `${import.meta.env.VITE_PI_CRUST_API_BASE ?? ""}${image.url}`
+              : `data:${image.mimeType};base64,${image.data ?? ""}`,
             alt: "image attachment",
           })),
         }

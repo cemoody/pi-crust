@@ -1,6 +1,6 @@
-# pi-remote-control — Rich Artifacts Plan
+# pi-crust — Rich Artifacts Plan
 
-Add a "scientific notebook" rendering layer to pi-remote-control so the LLM can return
+Add a "scientific notebook" rendering layer to pi-crust so the LLM can return
 **inline images, sandboxed HTML/D3 snippets, and declarative Vega-Lite/Plotly charts**
 alongside text. Implemented as a pi extension plus a small web-side renderer registry,
 with bytes served out-of-band over HTTP.
@@ -10,7 +10,7 @@ This plan implements the recommended combo from the design exploration:
 
 ## Guiding principles
 
-- **No fork of pi.** Everything lives in a project-local pi extension (`.pi/extensions/artifact/`) plus the existing pi-remote-control server + web client.
+- **No fork of pi.** Everything lives in a project-local pi extension (`.pi/extensions/artifact/`) plus the existing pi-crust server + web client.
 - **No protocol version bump.** Artifacts ride inside the already-opaque `WireMessage.content` / `details` payloads. Add a `customType` and a MIME envelope, nothing else.
 - **Tool args/results stay tiny.** Bytes never go on the wire as base64-in-args. The LLM passes file paths or specs; the extension materializes bytes and writes them to a per-session artifact dir.
 - **Artifacts are first-class messages**, not nested inside a tool card. Emitted via `pi.sendMessage({ customType: "artifact", ... })` so they appear in the timeline like assistant messages, survive `/tree`, and persist in JSONL.
@@ -30,7 +30,7 @@ pi extension  (.pi/extensions/artifact/)
   └─ return short text result to LLM ("Displayed image/png.")
        │
        ▼
-pi-remote-control server
+pi-crust server
   ├─ forwards session_event → WebSocket (already works, no changes)
   └─ NEW: GET /artifacts/:sessionId/:artifactId   (auth-gated, allowlisted)
        │

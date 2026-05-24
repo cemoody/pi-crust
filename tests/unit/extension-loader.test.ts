@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadPrcExtensionFactory, loadResolvedExtensionEntries } from "../../src/extensions/loader.js";
 import { resolvePackageExtensions } from "../../src/extensions/packages.js";
 import { createPrcExtensionHost } from "../../src/extensions/registry.js";
-import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-prc-home.js";
+import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
 import { writeLocalExtensionPackage } from "../helpers/local-extension-package.js";
 
 let homes: TempPrcHome[] = [];
@@ -13,7 +13,7 @@ afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => home.cleanup()))
 });
 
-describe("PRC extension dynamic loader", () => {
+describe("pi-crust extension dynamic loader", () => {
   it("loads a default function export", async () => {
     const filePath = await writeExtensionModule("default-function.mjs", "export default function activate(prc) { prc.commands.register({ id: 'loaded.default', title: 'Loaded', run: () => 'ok' }); }\n");
 

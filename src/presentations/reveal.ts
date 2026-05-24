@@ -10,6 +10,11 @@ export interface CompilePresentationOptions {
    *  function with (packId, layoutKey, slots) and uses the returned HTML
    *  as the slide body (equivalent to setting `slide.html`). */
   readonly templatePackResolver?: TemplatePackResolver;
+  /** When true, every editable text node carries `data-deck-path` (RFC6902
+   *  JSON pointer) + `contenteditable="plaintext-only"`, and a wrapper
+   *  script forwards `input` events to `window.parent` via postMessage as
+   *  `{ type: "pi-deck-edit", path, value, deckId }`. */
+  readonly editable?: boolean;
 }
 
 export type TemplatePackResolver = (
@@ -21,24 +26,25 @@ export type TemplatePackResolver = (
 export function compileRevealHtml(deck: PresentationDeck, options: CompilePresentationOptions = {}): string {
   const start = Math.max(0, Math.min(deck.slides.length - 1, options.startSlide ?? 0));
   const title = options.title ?? deck.title;
+  const editable = options.editable === true;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(title)}</title>
-<style>${presentationCss(deck)}</style>
+<style>${presentationCss(deck)}${editable ? editableCss() : ""}</style>
 </head>
-<body data-start-slide="${start}">
+<body data-start-slide="${start}"${editable ? ` data-editable="true" data-deck-id="${escapeAttr(deck.id ?? "")}"` : ""}>
 <main class="deck" aria-label="${escapeHtml(deck.title)}">
-${deck.slides.map((slide, index) => renderSlide(deck, slide, index, false, options.assetResolver)).join("\n")}
+${deck.slides.map((slide, index) => renderSlide(deck, slide, index, false, options.assetResolver, editable)).join("\n")}
 </main>
 <nav class="deck-controls" aria-label="Slide controls">
   <button type="button" data-prev aria-label="Previous slide">‹</button>
   <span data-counter></span>
   <button type="button" data-next aria-label="Next slide">›</button>
 </nav>
-<script>${presentationScript()}</script>
+<script>${presentationScript()}${editable ? editableScript() : ""}</script>
 </body>
 </html>`;
 }
@@ -74,22 +80,23 @@ async function resolveLayoutHtml(
 export function renderStaticSlideHtml(deck: PresentationDeck, slideIndex = 0, options: CompilePresentationOptions = {}): string {
   const slide = deck.slides[Math.max(0, Math.min(deck.slides.length - 1, slideIndex))];
   if (!slide) return "";
-  return `<div class="presentation-static"><style>${presentationCss(deck)}</style>${renderSlide(deck, slide, slideIndex, true, options.assetResolver)}</div>`;
+  return `<div class="presentation-static"><style>${presentationCss(deck)}</style>${renderSlide(deck, slide, slideIndex, true, options.assetResolver, options.editable === true)}</div>`;
 }
 
-function renderSlide(deck: PresentationDeck, slide: PresentationSlide, index: number, forceActive = false, assetResolver?: PresentationAssetResolver): string {
+function renderSlide(deck: PresentationDeck, slide: PresentationSlide, index: number, forceActive = false, assetResolver?: PresentationAssetResolver, editable = false): string {
   const template = slide.template ?? inferTemplate(slide);
   if (typeof slide.html === "string" && slide.html.length > 0) return renderHtmlSlide(deck, slide, index, forceActive);
-  if (template === "title") return renderTitleSlide(deck, slide, index, forceActive, assetResolver);
+  if (template === "title") return renderTitleSlide(deck, slide, index, forceActive, assetResolver, editable);
+  const ce = editableAttrs(editable);
   return `<section class="slide slide-${escapeAttr(template)}${forceActive || index === 0 ? " active" : ""}" data-slide-index="${index}" data-template="${escapeAttr(template)}">
   <div class="slide-inner">
-    ${slide.eyebrow ? `<p class="eyebrow">${escapeHtml(slide.eyebrow)}</p>` : ""}
-    ${slide.title ? `<h1>${escapeHtml(slide.title)}</h1>` : ""}
-    ${slide.subtitle ? `<p class="subtitle">${escapeHtml(slide.subtitle)}</p>` : ""}
-    ${renderMainContent(slide, template, assetResolver)}
+    ${slide.eyebrow ? `<p class="eyebrow"${ce(`/slides/${index}/eyebrow`)}>${escapeHtml(slide.eyebrow)}</p>` : ""}
+    ${slide.title ? `<h1${ce(`/slides/${index}/title`)}>${escapeHtml(slide.title)}</h1>` : ""}
+    ${slide.subtitle ? `<p class="subtitle"${ce(`/slides/${index}/subtitle`)}>${escapeHtml(slide.subtitle)}</p>` : ""}
+    ${renderMainContent(slide, template, index, assetResolver, editable)}
   </div>
   ${renderBrandChrome(deck, index, assetResolver)}
-  ${slide.notes ? `<aside class="notes">${escapeHtml(slide.notes)}</aside>` : ""}
+  ${slide.notes ? `<aside class="notes"${ce(`/slides/${index}/notes`)}>${escapeHtml(slide.notes)}</aside>` : ""}
 </section>`;
 }
 
@@ -97,37 +104,39 @@ function renderHtmlSlide(deck: PresentationDeck, slide: PresentationSlide, index
   // Pass-through for template-pack extensions that ship pre-rendered HTML.
   // No escaping: callers (other extensions) are trusted to produce safe HTML.
   const template = slide.template ?? "html";
-  return `<section class="slide slide-${escapeAttr(template)}${forceActive || index === 0 ? " active" : ""}" data-slide-index="${index}" data-template="${escapeAttr(template)}">\n  <div class="slide-inner slide-html">${slide.html}</div>\n  ${slide.notes ? `<aside class="notes">${escapeHtml(slide.notes)}</aside>` : ""}\n</section>`;
+  return `<section class="slide slide-${escapeAttr(template)}${forceActive || index === 0 ? " active" : ""}" data-slide-index="${index}" data-template="${escapeAttr(template)}" data-non-editable="templated">\n  <div class="slide-inner slide-html">${slide.html}</div>\n  ${slide.notes ? `<aside class="notes">${escapeHtml(slide.notes)}</aside>` : ""}\n</section>`;
 }
 
-function renderTitleSlide(deck: PresentationDeck, slide: PresentationSlide, index: number, forceActive = false, assetResolver?: PresentationAssetResolver): string {
+function renderTitleSlide(deck: PresentationDeck, slide: PresentationSlide, index: number, forceActive = false, assetResolver?: PresentationAssetResolver, editable = false): string {
   const rawLines = (slide.title ?? deck.title).split(/\r?\n/).filter(Boolean);
   const lines = rawLines.length > 0 ? rawLines : [deck.title, deck.subtitle ?? ""].filter(Boolean);
   const primary = lines[0] ?? "";
   const secondary = lines.slice(1).join("\n") || slide.subtitle || deck.subtitle || "";
+  const ce = editableAttrs(editable);
   return `<section class="slide slide-title${forceActive || index === 0 ? " active" : ""}" data-slide-index="${index}" data-template="title">
   <div class="title-block" aria-label="${escapeAttr([primary, secondary].filter(Boolean).join(" "))}">
-    <span class="title-primary">${escapeHtml(primary)}</span>${secondary ? `<span class="title-secondary">${escapeHtml(secondary)}</span>` : ""}
+    <span class="title-primary"${ce(`/slides/${index}/title`)}>${escapeHtml(primary)}</span>${secondary ? `<span class="title-secondary"${ce(`/slides/${index}/subtitle`)}>${escapeHtml(secondary)}</span>` : ""}
   </div>
   <div class="title-date">${escapeHtml(deck.date ?? "[Date]")}</div>
   <div class="title-client">${escapeHtml(deck.client ?? "[Client]")}</div>
-  ${slide.body ? `<p class="title-summary">${escapeHtml(slide.body)}</p>` : ""}
+  ${slide.body ? `<p class="title-summary"${ce(`/slides/${index}/body`)}>${escapeHtml(slide.body)}</p>` : ""}
   ${renderBrandChrome(deck, index, assetResolver)}
-  ${slide.notes ? `<aside class="notes">${escapeHtml(slide.notes)}</aside>` : ""}
+  ${slide.notes ? `<aside class="notes"${ce(`/slides/${index}/notes`)}>${escapeHtml(slide.notes)}</aside>` : ""}
 </section>`;
 }
 
-function renderMainContent(slide: PresentationSlide, template: string, assetResolver?: PresentationAssetResolver): string {
+function renderMainContent(slide: PresentationSlide, template: string, slideIndex: number, assetResolver?: PresentationAssetResolver, editable = false): string {
+  const ce = editableAttrs(editable);
   if (template === "quote") {
-    return `<blockquote>${escapeHtml(slide.quote ?? slide.body ?? "")}</blockquote>${slide.attribution ? `<cite>${escapeHtml(slide.attribution)}</cite>` : ""}`;
+    return `<blockquote${ce(`/slides/${slideIndex}/quote`)}>${escapeHtml(slide.quote ?? slide.body ?? "")}</blockquote>${slide.attribution ? `<cite${ce(`/slides/${slideIndex}/attribution`)}>${escapeHtml(slide.attribution)}</cite>` : ""}`;
   }
   const parts: string[] = [];
-  if (slide.body) parts.push(`<p class="body">${escapeHtml(slide.body)}</p>`);
-  if (slide.bullets?.length) parts.push(renderBullets(slide.bullets));
-  if (slide.stats?.length) parts.push(`<div class="stats">${slide.stats.map((stat) => `<div class="stat"><strong>${escapeHtml(stat.value)}</strong>${stat.label ? `<span>${escapeHtml(stat.label)}</span>` : ""}</div>`).join("")}</div>`);
-  if (slide.columns?.length) parts.push(`<div class="columns">${slide.columns.map((column) => `<article class="column-card">${column.title ? `<h2>${escapeHtml(column.title)}</h2>` : ""}${column.body ? `<p>${escapeHtml(column.body)}</p>` : ""}${column.bullets?.length ? renderBullets(column.bullets) : ""}</article>`).join("")}</div>`);
+  if (slide.body) parts.push(`<p class="body"${ce(`/slides/${slideIndex}/body`)}>${escapeHtml(slide.body)}</p>`);
+  if (slide.bullets?.length) parts.push(renderBullets(slide.bullets, `/slides/${slideIndex}/bullets`, editable));
+  if (slide.stats?.length) parts.push(`<div class="stats">${slide.stats.map((stat, m) => `<div class="stat"><strong${ce(`/slides/${slideIndex}/stats/${m}/value`)}>${escapeHtml(stat.value)}</strong>${stat.label ? `<span${ce(`/slides/${slideIndex}/stats/${m}/label`)}>${escapeHtml(stat.label)}</span>` : ""}</div>`).join("")}</div>`);
+  if (slide.columns?.length) parts.push(`<div class="columns">${slide.columns.map((column, m) => `<article class="column-card">${column.title ? `<h2${ce(`/slides/${slideIndex}/columns/${m}/title`)}>${escapeHtml(column.title)}</h2>` : ""}${column.body ? `<p${ce(`/slides/${slideIndex}/columns/${m}/body`)}>${escapeHtml(column.body)}</p>` : ""}${column.bullets?.length ? renderBullets(column.bullets, `/slides/${slideIndex}/columns/${m}/bullets`, editable) : ""}</article>`).join("")}</div>`);
   if (slide.image) parts.push(`<figure class="slide-image"><img src="${escapeAttr(resolvePresentationAssetSrc(slide.image.src, assetResolver))}" alt="${escapeAttr(slide.image.alt ?? slide.title ?? "slide image")}" /></figure>`);
-  if (slide.fragments?.length) parts.push(`<ol class="fragments">${slide.fragments.map((fragment) => `<li>${escapeHtml(fragment)}</li>`).join("")}</ol>`);
+  if (slide.fragments?.length) parts.push(`<ol class="fragments">${slide.fragments.map((fragment, m) => `<li${ce(`/slides/${slideIndex}/fragments/${m}`)}>${escapeHtml(fragment)}</li>`).join("")}</ol>`);
   return `<div class="content">${parts.join("\n")}</div>`;
 }
 
@@ -138,10 +147,11 @@ function renderBrandChrome(deck: PresentationDeck, index: number, assetResolver?
   return `<div class="brand-rule brand-rule-top" aria-hidden="true"></div>${logo}<div class="brand-rule brand-rule-footer" aria-hidden="true"></div><footer><span>${escapeHtml(deck.confidential ?? "Confidential and Proprietary")}</span><span>${index + 1}</span></footer>`;
 }
 
-function renderBullets(bullets: readonly (string | PresentationBullet)[]): string {
-  return `<ul class="bullets">${bullets.map((bullet) => {
-    if (typeof bullet === "string") return `<li>${escapeHtml(bullet)}</li>`;
-    return `<li><span>${escapeHtml(bullet.text)}</span>${bullet.detail ? `<small>${escapeHtml(bullet.detail)}</small>` : ""}</li>`;
+function renderBullets(bullets: readonly (string | PresentationBullet)[], basePath: string, editable = false): string {
+  const ce = editableAttrs(editable);
+  return `<ul class="bullets">${bullets.map((bullet, m) => {
+    if (typeof bullet === "string") return `<li${ce(`${basePath}/${m}`)}>${escapeHtml(bullet)}</li>`;
+    return `<li><span${ce(`${basePath}/${m}/text`)}>${escapeHtml(bullet.text)}</span>${bullet.detail ? `<small${ce(`${basePath}/${m}/detail`)}>${escapeHtml(bullet.detail)}</small>` : ""}</li>`;
   }).join("")}</ul>`;
 }
 
@@ -159,7 +169,30 @@ function presentationCss(deck: PresentationDeck): string {
 }
 
 function presentationScript(): string {
-  return `(()=>{const slides=[...document.querySelectorAll('.slide')];let i=Number(document.body.dataset.startSlide)||0;const counter=document.querySelector('[data-counter]');function show(n){i=Math.max(0,Math.min(slides.length-1,n));slides.forEach((s,idx)=>s.classList.toggle('active',idx===i));if(counter)counter.textContent=(i+1)+' / '+slides.length;}document.querySelector('[data-prev]')?.addEventListener('click',()=>show(i-1));document.querySelector('[data-next]')?.addEventListener('click',()=>show(i+1));addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();show(i+1)}if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();show(i-1)}});show(i);})();`;
+  // Note: keyboard nav is disabled while the focused element is
+  // contenteditable so editable slides don't lose space/arrow keystrokes
+  // to the slide-advance handler.
+  return `(()=>{const slides=[...document.querySelectorAll('.slide')];let i=Number(document.body.dataset.startSlide)||0;const counter=document.querySelector('[data-counter]');function show(n){i=Math.max(0,Math.min(slides.length-1,n));slides.forEach((s,idx)=>s.classList.toggle('active',idx===i));if(counter)counter.textContent=(i+1)+' / '+slides.length;}document.querySelector('[data-prev]')?.addEventListener('click',()=>show(i-1));document.querySelector('[data-next]')?.addEventListener('click',()=>show(i+1));addEventListener('keydown',e=>{const t=e.target;if(t&&(t.isContentEditable||(t.tagName==='INPUT'||t.tagName==='TEXTAREA')))return;if(['ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();show(i+1)}if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();show(i-1)}});show(i);})();`;
+}
+
+/** Returns an attribute-emitting helper. When `editable` is true, the
+ *  helper produces ` data-deck-path="…" contenteditable="plaintext-only"`.
+ *  Otherwise it returns the empty string. */
+function editableAttrs(editable: boolean): (path: string) => string {
+  if (!editable) return () => "";
+  return (path) => ` data-deck-path="${escapeAttr(path)}" contenteditable="plaintext-only"`;
+}
+
+function editableCss(): string {
+  return `[data-editable="true"] [contenteditable]{outline:1px dashed rgba(37,99,235,.4);outline-offset:.2vw;border-radius:.25vw;transition:outline-color .15s ease}[data-editable="true"] [contenteditable]:hover{outline-color:rgba(37,99,235,.7)}[data-editable="true"] [contenteditable]:focus{outline:2px solid var(--accent);outline-offset:.2vw;background:rgba(37,99,235,.06)}`;
+}
+
+function editableScript(): string {
+  // Forwards every input on a [data-deck-path] node to window.parent as
+  // `{ type: 'pi-deck-edit', deckId, path, value }`. Plain-text only because
+  // contenteditable is `plaintext-only`. Keep this script byte-cheap; it's
+  // inlined into every editable iframe.
+  return `;(()=>{const id=document.body.dataset.deckId||'';document.body.addEventListener('input',e=>{const t=e.target;if(!t||!t.getAttribute)return;const p=t.getAttribute('data-deck-path');if(!p)return;const v=t.innerText.replace(/\\n+$/,'');try{window.parent&&window.parent.postMessage({type:'pi-deck-edit',deckId:id,path:p,value:v},'*');}catch(_){}});})();`;
 }
 
 function escapeHtml(value: string): string {

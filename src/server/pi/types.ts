@@ -111,6 +111,10 @@ export interface SessionToolDetails {
   readonly startedAt?: number;
   /** Epoch-ms when the toolResult arrived. Undefined while still running. */
   readonly completedAt?: number;
+  /** Optional artifact payload extracted from the tool's result.details.
+   *  Currently used by show_presentation/show_artifact to attach inline
+   *  preview data so it survives a page reload. */
+  readonly artifact?: unknown;
 }
 
 export interface CreateSessionOptions {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { installExtensionPackage, parsePackageSource, readPrcSettings, removeExtensionPackage } from "../../src/extensions/packages.js";
-import { createTempPrcHome } from "../helpers/temp-prc-home.js";
+import { createTempPrcHome } from "../helpers/temp-pi-crust-home.js";
 
 describe("extension package source support", () => {
   it("parses local, npm, and git package sources", () => {

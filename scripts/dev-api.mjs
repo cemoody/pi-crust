@@ -35,8 +35,9 @@
  *   DEV_API_RESTART_MS    delay before respawn after exit (default 800)
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -60,10 +61,42 @@ const DEBOUNCE_MS = Number(process.env.DEV_API_DEBOUNCE_MS ?? 500);
 // crashes, we back off, retry, eventually pull is done and boot succeeds).
 const RESTART_DELAY_MS = Number(process.env.DEV_API_RESTART_MS ?? 800);
 
+// Optional hint: when set, the supervisor probes the listeners on this
+// TCP port whenever the child exits with a non-zero code, and logs the
+// holder's pid + cwd + cmdline. Without this hint a port collision is
+// completely opaque — the operator sees only "already in use" and has
+// no idea what's holding the port. The probe + log are throttled to
+// ELEVATION_INTERVAL_MS so a crash-loop doesn't fill the log.
+//
+// Default: 8787 (the api's own port). Tests override via DEV_API_PORT_HINT.
+const PORT_HINT = Number(process.env.DEV_API_PORT_HINT ?? 8787);
+const ELEVATION_INTERVAL_MS = Number(process.env.DEV_API_ELEVATION_INTERVAL_MS ?? 30_000);
+
 // File extensions worth watching. Tests are excluded so editing tests
 // doesn't bounce the api.
 const SOURCE_PATTERN = /\.(ts|tsx|mjs|cjs|js)$/;
 const TEST_PATTERN = /\.test\.(ts|tsx|js)$/;
+
+// Circuit breaker. If the supervisor has NEVER successfully spawned a child
+// that lived past STARTUP_GRACE_MS and we've burned through this many
+// consecutive failed spawns, exit non-zero rather than loop forever. The
+// production rationale: a long-lived dev-api that has never served a single
+// successful boot is misconfigured — the operator (or `prc-loop.sh`, or
+// systemd) should be notified, not silently CPU-stress the machine.
+//
+// This is the difference between "transient git-pull race" (a few failures
+// then success — fine) and "orphaned test fixture chewing a core forever"
+// (the 2026-05-23 outage — not fine).
+//
+// Defaults are deliberately generous so production never trips this. Tests
+// override via DEV_API_MAX_FAILED_SPAWNS_BEFORE_GIVE_UP.
+const MAX_FAILED_SPAWNS_BEFORE_GIVE_UP = Number(
+  process.env.DEV_API_MAX_FAILED_SPAWNS_BEFORE_GIVE_UP ?? 100,
+);
+// A child that lives at least this long counts as "the supervisor has
+// proven it can boot something" — from then on we'll respawn forever, as is
+// the in-prod contract. Anything shorter is treated as a failed spawn.
+const STARTUP_GRACE_MS = Number(process.env.DEV_API_STARTUP_GRACE_MS ?? 3_000);
 
 // --- argv parsing ----------------------------------------------------
 
@@ -83,9 +116,12 @@ const COMMAND = parseCommand();
 
 let child = null;
 let shuttingDown = false;
+let consecutiveFailedSpawns = 0;
+let everSucceeded = false;
 let respawnTimer = null;
 let debounceTimer = null;
 let pendingFiles = new Set();
+let lastElevationLogAt = 0;
 
 function log(msg) {
   console.log(`[dev-api ${new Date().toISOString()}] ${msg}`);
@@ -115,37 +151,289 @@ function killGroup(pid, signal) {
   }
 }
 
+/**
+ * Detect and repair a node_modules tree that's been clobbered such that
+ * `spawn()` of an npm-resolved binary (e.g. tsx, npm itself) hits ELOOP.
+ * Returns true if a heal was actually performed (caller should schedule
+ * a respawn after a short delay so the fresh node_modules has time to
+ * materialize).
+ *
+ * Two known pathological states, both observed multiple times in 24h:
+ *
+ *   (A) `node_modules` itself is a self-referential symlink:
+ *         $ ls -la node_modules
+ *         lrwxrwxrwx ... node_modules -> ../<this-dir-name>/node_modules
+ *       Root cause: an agent ran `ln -s ../pi-remote-control/node_modules
+ *       node_modules` from INSIDE the canonical worktree (the recipe is
+ *       correct for sibling worktrees but loops on the canonical one).
+ *
+ *   (B) `node_modules` is a normal directory but contains a nested
+ *       symlink that ELOOPs (e.g. `node_modules/tsx` → `../tsx` from a
+ *       half-finished install, or any other bad symlink). The previous
+ *       version of this heal bailed early via `!stat.isSymbolicLink()`
+ *       and the supervisor would sit in `Will retry` forever with no
+ *       API up. Observed 2026-05-23: a 33-minute outage where `dev:api`
+ *       loop-spammed `spawn() threw synchronously: spawn ELOOP. Will
+ *       retry.` until a human ran `npm install` manually.
+ *
+ * Heal procedure:
+ *   - Case (A): unlink the bad symlink, then `npm install`.
+ *   - Case (B): just `npm install` (it'll repair whatever's broken).
+ * `npm install` is the same thing a human would do; we just do it
+ * automatically because the same mistakes recur often enough that
+ * paying the ~7s warm-cache cost is much cheaper than a human-in-the-loop.
+ *
+ * A small cooldown prevents tight respawn → spawn ELOOP → heal → respawn
+ * loops if `npm install` itself can't fix the underlying breakage.
+ */
+let lastHealAt = 0;
+const HEAL_COOLDOWN_MS = 30_000;
+
+function tryHealCyclicNodeModules() {
+  const now = Date.now();
+  if (now - lastHealAt < HEAL_COOLDOWN_MS) {
+    log(`heal cooldown active (${Math.round((HEAL_COOLDOWN_MS - (now - lastHealAt)) / 1000)}s left); skipping`);
+    return false;
+  }
+
+  const nm = path.join(projectRoot, "node_modules");
+
+  // Case (A): node_modules itself is a cyclic symlink. Detect and unlink
+  // BEFORE we let npm install try (npm install will refuse to install
+  // into a symlink that doesn't resolve).
+  let stat = null;
+  try { stat = fsSync.lstatSync(nm); } catch { /* missing is fine */ }
+  if (stat && stat.isSymbolicLink()) {
+    let target = "<unreadable>";
+    try { target = fsSync.readlinkSync(nm); } catch { /* ignore */ }
+    let isCyclic = false;
+    try { fsSync.realpathSync(nm); }
+    catch (err) { if (err && err.code === "ELOOP") isCyclic = true; }
+    if (isCyclic) {
+      log(`detected cyclic node_modules symlink (target=${target}). Removing before npm install.`);
+      try { fsSync.unlinkSync(nm); }
+      catch (err) {
+        log(`failed to unlink bad symlink: ${err && err.message ? err.message : err}`);
+        return false;
+      }
+    } else {
+      // A non-cyclic symlink (e.g. sibling worktree sharing canonical
+      // install) is by design and is NOT the bug. Don't touch it; let
+      // the user/operator figure out what's wrong. Falling through here
+      // would let npm install rewrite the symlink, which is bad.
+      log(`node_modules is a symlink (target=${target}) but resolves cleanly; nothing to heal here`);
+      return false;
+    }
+  }
+
+  // Case (B): `node_modules` is a directory (or just got unlinked in case
+  // A) but spawn() still ELOOPed — meaning the bad symlink is nested.
+  // Reproducing the exact offender is finicky and not worth it: just run
+  // `npm install`, which fixes whatever's broken (missing dirs, bad
+  // symlinks, half-installed packages).
+  lastHealAt = now;
+  log(`running \`npm install --no-audit --no-fund\` to rebuild node_modules…`);
+  const result = spawnSync("npm", ["install", "--no-audit", "--no-fund"], {
+    cwd: projectRoot,
+    stdio: "inherit",
+    env: process.env,
+  });
+  if (result.status === 0) {
+    log(`npm install completed; the next respawn should succeed.`);
+    return true;
+  }
+  log(`npm install exited code=${result.status} signal=${result.signal}; next respawn will retry the heal after cooldown.`);
+  return false;
+}
+
+/**
+ * On EADDRINUSE-shaped failures, probe the port the api is supposed
+ * to bind and log the holder's pid, cwd, and cmdline. Throttled to
+ * ELEVATION_INTERVAL_MS so a fast crash-loop doesn't spam the log.
+ */
+function logPortHolderIfAny() {
+  if (!PORT_HINT || PORT_HINT <= 0) return;
+  const now = Date.now();
+  if (now - lastElevationLogAt < ELEVATION_INTERVAL_MS) return;
+  const holders = findTcpListeners(PORT_HINT);
+  if (holders.length === 0) return;
+  for (const pid of holders) {
+    const meta = readProcMeta(pid);
+    log(`port ${PORT_HINT} still held by pid=${pid} cwd=${meta.cwd} cmd=${meta.cmd}`);
+  }
+  lastElevationLogAt = now;
+}
+
+function findTcpListeners(port) {
+  // Prefer ss; fall back to lsof; fall back to /proc/net/tcp scan.
+  const ss = spawnSync("ss", ["-tlnpH", `sport = :${port}`], { encoding: "utf8" });
+  if (ss.status === 0 && ss.stdout) {
+    const pids = new Set();
+    for (const m of ss.stdout.matchAll(/pid=(\d+)/g)) pids.add(Number(m[1]));
+    return [...pids];
+  }
+  const lsof = spawnSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" });
+  if (lsof.status === 0 && lsof.stdout) {
+    return lsof.stdout.trim().split("\n").filter(Boolean).map(Number);
+  }
+  return [];
+}
+
+function readProcMeta(pid) {
+  try {
+    const cmdline = fsSync.readFileSync(`/proc/${pid}/cmdline`, "utf8")
+      .replace(/\0+$/, "").split("\0").join(" ").trim();
+    const cwd = fsSync.readlinkSync(`/proc/${pid}/cwd`);
+    return { cwd, cmd: cmdline || "(unknown)" };
+  } catch {
+    return { cwd: "?", cmd: "?" };
+  }
+}
+
+function scheduleRespawn(reason) {
+  if (shuttingDown) return;
+  if (respawnTimer) return; // already queued
+  if (reason) log(`scheduling respawn in ${RESTART_DELAY_MS}ms (${reason})`);
+  respawnTimer = setTimeout(spawnChild, RESTART_DELAY_MS);
+}
+
+/**
+ * Circuit breaker. Called after each failed spawn (sync throw, no-pid,
+ * or a child that exited before STARTUP_GRACE_MS without ever surviving).
+ * If we've never seen a successful boot AND we're past the give-up
+ * threshold, exit non-zero. Production code that's misconfigured or being
+ * run in a chaos sandbox should not silently burn CPU forever.
+ */
+function noteFailedSpawn(reason) {
+  if (everSucceeded) return; // post-first-success: respawn forever, as designed.
+  consecutiveFailedSpawns += 1;
+  if (consecutiveFailedSpawns >= MAX_FAILED_SPAWNS_BEFORE_GIVE_UP) {
+    log(
+      `giving up: ${consecutiveFailedSpawns} consecutive failed spawns and child has never ` +
+      `survived ${STARTUP_GRACE_MS}ms. last reason: ${reason}. exiting 75 (EX_TEMPFAIL).`,
+    );
+    // Exit 75 = EX_TEMPFAIL per sysexits.h. Outer loops (prc-loop.sh / tmux
+    // pane / systemd) can choose to restart us or escalate to a human.
+    process.exit(75);
+  }
+}
+
 function spawnChild() {
   if (shuttingDown) return;
   if (respawnTimer) { clearTimeout(respawnTimer); respawnTimer = null; }
 
-  child = spawn(COMMAND[0], COMMAND.slice(1), {
-    cwd: projectRoot,
-    stdio: "inherit",
-    env: process.env,
-    // New process group: child.pid is the group leader. Lets us signal the
-    // entire tree (npm → sh → tsx → node) atomically via process.kill(-pid).
-    detached: true,
-  });
+  // `spawn()` can throw SYNCHRONOUSLY for immediate failures like ENOENT,
+  // EACCES, or ELOOP (cyclic symlink — e.g. node_modules pointing at
+  // itself). Without this try/catch the exception escapes the supervisor
+  // entirely and the whole `npm run dev:api:loop` chain crashes, leaving
+  // the api down with no respawn. Observed in the wild after a separate
+  // bug recreated the cyclic node_modules symlink.
+  try {
+    child = spawn(COMMAND[0], COMMAND.slice(1), {
+      cwd: projectRoot,
+      stdio: "inherit",
+      env: process.env,
+      // New process group: child.pid is the group leader. Lets us signal the
+      // entire tree (npm → sh → tsx → node) atomically via process.kill(-pid).
+      detached: true,
+    });
+  } catch (err) {
+    log(`spawn() threw synchronously: ${err && err.message ? err.message : err}. Will retry.`);
+    child = null;
+    noteFailedSpawn(`sync spawn ${err && err.code ? err.code : "throw"}`);
+    // ELOOP at spawn-time is almost always a cyclic node_modules symlink
+    // (the canonical install pointing at itself). It's a known recurring
+    // failure mode — see scripts/safe-symlink-node-modules.sh for the
+    // recipe that prevents it. Try to heal it automatically so the api
+    // doesn't sit in a permanent retry loop while waiting for a human.
+    if (err && err.code === "ELOOP") {
+      const healed = tryHealCyclicNodeModules();
+      if (healed) scheduleRespawn("after node_modules heal");
+      else scheduleRespawn("sync ELOOP, heal deferred/failed");
+    } else {
+      scheduleRespawn("sync spawn() failure");
+    }
+    return;
+  }
+
+  // Attach the error handler IMMEDIATELY (before any short-circuit) so an
+  // async 'error' event from a half-spawned child doesn't become an
+  // uncaughtException at the supervisor level. spawn() can return a ChildProcess
+  // handle with no pid (e.g. ENOENT happens async on some platforms); the
+  // child then emits 'error', and without a listener Node converts that to
+  // a fatal exception.
+  if (child) {
+    child.on("error", (err) => {
+      // Async spawn errors. Diagnostic only; the matching 'exit' (or our
+      // early-return below) will schedule the respawn.
+      log(`child spawn error (async): ${err && err.message ? err.message : err}`);
+    });
+  }
+
+  // Even if spawn() returns, the child might be in a half-broken state.
+  // child.pid is undefined when the platform refused the spawn outright.
+  if (!child || child.pid == null) {
+    log(`spawn() returned no pid. Treating as failure; will retry.`);
+    child = null;
+    noteFailedSpawn("no pid after spawn");
+    scheduleRespawn("no pid after spawn");
+    return;
+  }
+
   const pid = child.pid;
   log(`spawned pid=${pid} (pgid=${pid}): ${COMMAND.join(" ")}`);
+
+  // STARTUP_GRACE_MS is the threshold for "this child is a real boot, not
+  // an instant-crash." Once we cross it, the circuit breaker is permanently
+  // disabled — production deploys MUST be able to respawn forever after
+  // their first successful boot (git pulls, file edits, etc).
+  //
+  // Optimization: once everSucceeded is permanently true, don't bother
+  // scheduling new startup timers — they're no-ops, and a fast-respawning
+  // child (every ~100–300 ms in some tests) would otherwise keep dozens
+  // of pending 3-second timers in the event-loop queue.
+  const target = child;
+  const startupTimer = everSucceeded ? null : setTimeout(() => {
+    if (child === target) {
+      everSucceeded = true;
+      consecutiveFailedSpawns = 0;
+    }
+  }, STARTUP_GRACE_MS);
+  if (startupTimer) startupTimer.unref();
 
   child.on("exit", (code, signal) => {
     log(`child pid=${pid} exited code=${code} signal=${signal}`);
     // Reap any grandchildren that survived the group signal (defensive;
     // shouldn't happen but we paid the cost once already).
     killGroup(pid, "SIGKILL");
+    if (startupTimer) clearTimeout(startupTimer);
+    if (!everSucceeded) noteFailedSpawn(`exit code=${code} signal=${signal}`);
     child = null;
-    if (shuttingDown) return;
-    respawnTimer = setTimeout(spawnChild, RESTART_DELAY_MS);
+    // EADDRINUSE-shaped exits (non-zero code, no signal) are almost
+    // always a port collision with another supervisor or a stale
+    // orphan. Probe the configured port and log the holder's identity
+    // so the operator has something actionable. logPortHolderIfAny is
+    // internally throttled to once per ELEVATION_INTERVAL_MS.
+    if (code !== 0 && code !== null && signal === null) logPortHolderIfAny();
+    scheduleRespawn();
   });
 
-  child.on("error", (err) => {
-    log(`child spawn error: ${err.message}`);
-    // 'error' events are typically followed by 'exit'; the exit handler
-    // will schedule the respawn.
-  });
+  // (the async 'error' handler is attached above, before the pid check)
 }
+
+// One last belt-and-suspenders: if any unhandled async failure reaches
+// the top of the supervisor, log it and try to keep going rather than
+// letting the process die. The api can't restart if the supervisor is
+// dead, so this is the difference between "glitch survives" and "sysop
+// has to manually `npm run dev:api:loop` again".
+process.on("uncaughtException", (err) => {
+  log(`uncaughtException: ${err && err.stack ? err.stack : err}`);
+  scheduleRespawn("uncaughtException");
+});
+process.on("unhandledRejection", (reason) => {
+  log(`unhandledRejection: ${reason && reason.stack ? reason.stack : reason}`);
+  scheduleRespawn("unhandledRejection");
+});
 
 function triggerRestart(reason) {
   if (shuttingDown) return;

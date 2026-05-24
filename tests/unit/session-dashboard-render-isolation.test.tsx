@@ -68,7 +68,7 @@ async function renderActiveDashboard() {
     { id: "s1", cwd: "/repo/app", sessionName: "Original", status: "idle", lastActivity: 1 },
   ])} />);
   await screen.findByText("Original");
-  fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+  fireEvent.click(screen.getByRole("link", { name: /Original/ }));
   await screen.findByRole("heading", { name: "Original" });
   await screen.findByTestId("mock-message-timeline");
 }
@@ -95,7 +95,7 @@ describe("SessionDashboard modal input render isolation", () => {
     // we snapshot the count after those settle and assert keystrokes add
     // zero on top of that.)
     await renderActiveDashboard();
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    fireEvent.click(screen.getByRole("link", { name: "New session" }));
     const nameInput = await screen.findByLabelText("Name this session");
     // Allow any post-create batched state updates to flush before we lock
     // in the baseline.

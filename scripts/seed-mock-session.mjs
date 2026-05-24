@@ -1,8 +1,16 @@
+/**
+ * seed-mock-session — write a deterministic mock session JSON into
+ * .tmp/playwright-sessions so Playwright suites have a stable session
+ * to attach to. Used by tests/playwright fixtures that need a populated
+ * sidebar without bringing up a real pi worker.
+ *
+ * No-op idempotent: re-running the script overwrites the same file.
+ */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve('.tmp/playwright-sessions');
-const cwd = path.resolve(process.env.PI_REMOTE_PROJECT_ROOT ?? process.cwd());
+const cwd = path.resolve(process.env.PI_CRUST_PROJECT_ROOT ?? process.cwd());
 const id = 'seeded-session-0001';
 const sessionFile = path.join(root, '0000000000000_seeded-session-0001.mock-session.json');
 await fs.mkdir(root, { recursive: true });
@@ -112,19 +120,19 @@ addThoughtAndTool({
 addThoughtAndTool({
   thought: 'Exploring git worktrees',
   id: 'tool-wrap-3',
-  command: 'cd /home/coder/code/pi-remote-control && git worktree list --porcelain',
+  command: 'cd /home/coder/code/pi-crust && git worktree list --porcelain',
   durationMs: 5000,
 });
 addThoughtAndTool({
   thought: 'Creating a new worktree',
   id: 'tool-wrap-4',
-  command: 'cd /home/coder/code/pi-remote-control && git worktree add -b test/mobile-tool-wrap-repro ../pi-remote-control-mobile-tool-wrap-repro main',
+  command: 'cd /home/coder/code/pi-crust && git worktree add -b test/mobile-tool-wrap-repro ../pi-crust-mobile-tool-wrap-repro main',
   durationMs: 4000,
 });
 addThoughtAndTool({
   thought: 'Checking current branch and status',
   id: 'tool-wrap-5',
-  command: 'cd /home/coder/code/pi-remote-control-mobile-tool-wrap-repro && git status --short && git branch --show-current',
+  command: 'cd /home/coder/code/pi-crust-mobile-tool-wrap-repro && git status --short && git branch --show-current',
   durationMs: 30,
 });
 await fs.writeFile(toolWrapSessionFile, JSON.stringify({
@@ -159,6 +167,7 @@ await fs.writeFile(presentationSessionFile, JSON.stringify({
         artifacts: [{
           mime: 'application/vnd.pi.presentation+json',
           spec: {
+            id: 'executive-signal-brief',
             title: 'Executive Signal Brief',
             subtitle: 'Demand, weather, and pricing signals',
             theme: 'light',
@@ -173,6 +182,7 @@ await fs.writeFile(presentationSessionFile, JSON.stringify({
                 { value: '$25B', label: 'addressable branch spend under monitoring' },
                 { value: '8%', label: 'weekly signal movement in priority markets' },
               ] },
+              { template: 'html', html: '<section style="padding:4vw"><h1>Pre-rendered slide</h1><p>This slide came from a template pack and is read-only in edit mode.</p></section>' },
             ],
           },
         }],
@@ -182,3 +192,451 @@ await fs.writeFile(presentationSessionFile, JSON.stringify({
   lastActivity: Date.now(),
 }, null, 2) + '\n');
 console.log(`seeded ${presentationSessionFile}`);
+
+// Fifth seeded session: show_presentation tool result with artifact attached.
+// Reproduces the bug where /api/sessions/:id/messages used to drop the
+// tool result's details.piRemoteControlArtifact, leaving the pi-crust showing
+// raw JSON instead of the inline slide preview after a page reload.
+const toolPresId = 'seeded-session-tool-presentation';
+const toolPresFile = path.join(root, '0000000000004_seeded-session-tool-presentation.mock-session.json');
+const toolPresDeck = {
+  title: 'Tool-result Signal Brief',
+  subtitle: 'Pi tool show_presentation flow',
+  theme: 'light',
+  slides: [
+    { template: 'title', title: 'Tool-result Signal Brief', subtitle: 'Show_presentation persistence' },
+    { template: 'title-bullets', title: 'Why this test exists', bullets: [
+      'Tool emits details.piRemoteControlArtifact in result',
+      'Server propagates it to message.tool.artifact',
+      'pi-crust renders the same card after a page reload',
+    ] },
+  ],
+};
+await fs.writeFile(toolPresFile, JSON.stringify({
+  id: toolPresId,
+  cwd,
+  sessionFile: toolPresFile,
+  sessionName: 'Tool presentation reload',
+  messages: [
+    { role: 'user', content: 'Make a tool-result deck', timestamp: 1700000005000 },
+    {
+      role: 'tool',
+      content: 'Displayed presentation deck: Tool-result Signal Brief (2 slides).',
+      timestamp: 1700000005100,
+      tool: {
+        id: 'call_tool_pres',
+        name: 'show_presentation',
+        args: { title: toolPresDeck.title, slides: toolPresDeck.slides },
+        status: 'success',
+        output: 'Displayed presentation deck: Tool-result Signal Brief (2 slides).',
+        startedAt: 1700000005050,
+        completedAt: 1700000005100,
+        artifact: {
+          version: 1,
+          kind: 'presentation',
+          title: toolPresDeck.title,
+          data: toolPresDeck,
+        },
+      },
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${toolPresFile}`);
+
+// Sixth seeded session: image-bearing deck used by the
+// presentation-cdn-shippable e2e suite to validate that the Download HTML
+// flow produces a fully self-contained, CDN-uploadable file (zero network
+// requests when loaded from file://).
+//
+// We write two tiny image files into <cwd>/.pi/presentations/<sessionId>/
+// so the presentations extension's asset route can serve them, and so the
+// e2e harness can read them off disk and inline via the standalone
+// compiler.
+const imageDeckId = 'seeded-session-image-deck';
+const imageDeckFile = path.join(root, '0000000000006_seeded-session-image-deck.mock-session.json');
+const imageDeckAssetDir = path.join(cwd, '.pi/presentations', imageDeckId);
+await fs.mkdir(imageDeckAssetDir, { recursive: true });
+
+// 1x1 red PNG (smallest meaningful PNG payload).
+const redPngBase64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Z3l/2EAAAAASUVORK5CYII=';
+await fs.writeFile(path.join(imageDeckAssetDir, 'cover.png'), Buffer.from(redPngBase64, 'base64'));
+
+// Minimal valid SVG.
+const plotSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect width="32" height="32" fill="#1f6feb"/>
+  <circle cx="16" cy="16" r="8" fill="#ffd166"/>
+</svg>
+`;
+await fs.writeFile(path.join(imageDeckAssetDir, 'plot.svg'), plotSvg, 'utf8');
+
+await fs.writeFile(imageDeckFile, JSON.stringify({
+  id: imageDeckId,
+  cwd,
+  sessionFile: imageDeckFile,
+  sessionName: 'Image-deck presentation',
+  messages: [
+    { role: 'user', content: 'Make an image-bearing deck for the CDN test', timestamp: 1700000006000 },
+    {
+      role: 'custom',
+      content: 'Presentation generated by Pi.',
+      timestamp: 1700000006001,
+      customType: 'artifact',
+      details: {
+        version: 1,
+        artifactGroupId: 'presentation-image-deck',
+        caption: 'Image-Bearing Deck',
+        artifacts: [{
+          mime: 'application/vnd.pi.presentation+json',
+          spec: {
+            title: 'Image-Bearing Deck',
+            subtitle: 'CDN-shippable single-file test deck',
+            theme: 'light',
+            logo: { src: 'cover.png', alt: 'Cover logo' },
+            slides: [
+              { template: 'title', title: 'Image-Bearing Deck', subtitle: 'CDN-shippable single-file test deck', image: { src: 'cover.png', alt: 'Cover image' } },
+              { template: 'title-bullets', title: 'Why this deck exists', image: { src: 'plot.svg', alt: 'Diagram' }, bullets: [
+                'Cover image inlined as a data URI',
+                'Diagram inlined as a data URI',
+                'Loads offline from any static CDN',
+              ] },
+            ],
+          },
+        }],
+      },
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${imageDeckFile}`);
+
+// Regression for the "session goes blank after sidebar flash" bug. The
+// underlying class of failure is: somewhere in the message graph an
+// assistant or artifact `text` / `content` field is not a string, and
+// `<ReactMarkdown>` throws inside React's render — taking the whole
+// session pane down with it because nothing on the path is an error
+// boundary. Pinned by tests/playwright/markdown-safe.spec.ts.
+const blankBugId = 'seeded-session-blank-bug';
+const blankBugFile = path.join(root, '0000000000010_seeded-session-blank-bug.mock-session.json');
+await fs.writeFile(blankBugFile, JSON.stringify({
+  id: blankBugId,
+  cwd,
+  sessionFile: blankBugFile,
+  sessionName: 'Blank-bug repro session',
+  messages: [
+    { role: 'user', content: 'hello', timestamp: 1700000010000 },
+    // An assistant message whose `content` is an object — would feed
+    // react-markdown a non-string children prop without the safe-markdown
+    // coercion shipped with this fix.
+    {
+      role: 'assistant',
+      content: { type: 'wrong-shape', value: 'this should be a string' },
+      timestamp: 1700000010001,
+    },
+    { role: 'user', content: 'and a follow-up that should still render', timestamp: 1700000010002 },
+    { role: 'assistant', content: 'follow-up reply', timestamp: 1700000010003 },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${blankBugFile}`);
+
+// Repro for the "tool calls + thinking render as raw JSON after reload" bug.
+//
+// Production pirpc sessions persist assistant turns as a structured
+// `content` ARRAY of typed blocks (text, thinking, toolCall) — not a flat
+// string. The pirpc-pi-adapter normally fans those blocks out into
+// separate timeline entries (assistant body, thinking card, tool row +
+// matching tool result) via its contentTextAndThinking() helper. The
+// /messages API mapping in toDashboardMessages, however, sets
+// `text: message.content` verbatim — so a SessionMessage that still has
+// an array content payload at that point bypasses the normalization step
+// and the pi-crust receives `text: [{type:'text'},{type:'toolCall'},...]`.
+//
+// Symptoms in the pi-crust: literal `{ "type": "toolCall", "name": "bash",
+// ... }` text rendered inside the assistant bubble (because the array is
+// stringified by the safe-markdown coercion shipped in PR #110/#111), and
+// no tool card at all because the toolCall block was never split out
+// into its own `role: "tool"` entry.
+//
+// We pin the bug here by writing a .mock-session.json whose `messages`
+// field carries structured-array content directly. The mock adapter
+// faithfully forwards it through getMessages(), toDashboardMessages then
+// hands the array to the pi-crust as `text`, and any UI code path that
+// expects a string sees the raw blocks.
+//
+// Pinned by tests/playwright/structured-content-tool-calls.spec.ts.
+const structuredId = 'seeded-session-structured-content';
+const structuredMockFile = path.join(root, '0000000000011_seeded-session-structured-content.mock-session.json');
+
+const structuredTs0 = 1700000020000;
+const structuredTs1 = 1700000020100;
+const structuredTs2 = 1700000020200;
+
+await fs.writeFile(structuredMockFile, JSON.stringify({
+  id: structuredId,
+  cwd,
+  sessionFile: structuredMockFile,
+  sessionName: 'Structured tool-call session',
+  messages: [
+    {
+      role: 'user',
+      // Structured user content: a single text block. Real pirpc/Anthropic
+      // sessions store user prompts this way once attachments enter the
+      // picture.
+      content: [{ type: 'text', text: 'find the slides extension' }],
+      timestamp: structuredTs0,
+    },
+    {
+      role: 'assistant',
+      // The structured assistant turn that triggers the regression:
+      // text + thinking + toolCall blocks side-by-side. The pirpc-pi-
+      // adapter would normally split this into (assistant body) +
+      // (thinking card) + (tool row), but if anything in the read path
+      // skips the contentTextAndThinking() helper the pi-crust sees the raw
+      // array.
+      content: [
+        { type: 'text', text: 'Let me look under `extensions/`.' },
+        {
+          type: 'thinking',
+          thinking: 'Let me locate the slides extension and inspect its layout.',
+          thinkingSignature: 'sig-fixture-1',
+        },
+        {
+          type: 'toolCall',
+          id: 'toolu_seeded_bash_find_slides',
+          name: 'bash',
+          arguments: { command: 'find /home/coder -type d -name "*slide*" 2>/dev/null | head -20' },
+        },
+      ],
+      timestamp: structuredTs1,
+    },
+    {
+      role: 'tool',
+      content: '/home/coder/code/pi-crust/extensions/slides',
+      timestamp: structuredTs1 + 50,
+      tool: {
+        id: 'toolu_seeded_bash_find_slides',
+        name: 'bash',
+        args: { command: 'find /home/coder -type d -name "*slide*" 2>/dev/null | head -20' },
+        status: 'success',
+        output: '/home/coder/code/pi-crust/extensions/slides',
+        startedAt: structuredTs1,
+        completedAt: structuredTs1 + 50,
+      },
+    },
+    {
+      role: 'assistant',
+      // Pure-text structured content (no thinking, no toolCall). Even
+      // this minimal shape currently breaks the timeline because
+      // toDashboardMessages sets text=[{type:'text',text:'...'}] verbatim
+      // and the markdown renderer treats it as a JSON blob.
+      content: [
+        { type: 'text', text: '## Found the extension\n\nIt lives under `extensions/slides`. Here is the **plan**.' },
+      ],
+      timestamp: structuredTs2,
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${structuredMockFile}`);
+
+// Generic-surface "kitchen-sink" seed. Used by tests/playwright/
+// kitchen-sink-rendering.spec.ts and related generic regression specs.
+//
+// The goal is to pack one mock session with every common shape the
+// timeline / artifact renderers know how to render, so that a regression
+// in any one shape — falling back to raw JSON, blanking the page, or
+// silently dropping a renderer — fails a single CI spec instead of
+// requiring per-shape fixtures sprinkled across the repo.
+//
+// Shapes covered:
+//   - Plain user text + plain assistant text (sanity)
+//   - Assistant markdown: heading, list, *italic*, **bold**, inline `code`,
+//     fenced ```ts code block``` — exercises ReactMarkdown + the
+//     coerceMarkdownInput safe path.
+//   - A `thinking` block (renders as a thinking tool-card).
+//   - A toolCall + matching tool result (renders as tool-card "bash").
+//   - A multi-MIME `customType: 'artifact'` row with text/markdown +
+//     image/png + text/html representations — exercises
+//     pickRenderableRepresentation across the three most common mimes.
+//   - A vega-lite artifact attached to a tool result (exercises the
+//     Suspense-loaded LazyVegaLiteChart code path).
+const kitchenSinkId = 'seeded-session-kitchen-sink';
+const kitchenSinkFile = path.join(root, '0000000000020_seeded-session-kitchen-sink.mock-session.json');
+
+// 1x1 transparent PNG.
+const tinyPngBase64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+const kitchenTs = 1700000030000;
+
+await fs.writeFile(kitchenSinkFile, JSON.stringify({
+  id: kitchenSinkId,
+  cwd,
+  sessionFile: kitchenSinkFile,
+  sessionName: 'Kitchen sink session',
+  messages: [
+    { role: 'user', content: 'render everything you know how to render', timestamp: kitchenTs },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: '## Rendering checklist\n\n- **bold step** with `inline code`\n- another *italic* step\n- [a link](https://example.com)\n\n```ts\nconst answer = 42;\n```' },
+        {
+          type: 'thinking',
+          thinking: 'I should narrate every renderer the pi-crust supports.',
+          thinkingSignature: 'sig-kitchen-sink-1',
+        },
+        {
+          type: 'toolCall',
+          id: 'toolu_kitchen_bash_echo',
+          name: 'bash',
+          arguments: { command: 'echo "kitchen sink"' },
+        },
+      ],
+      timestamp: kitchenTs + 1,
+    },
+    {
+      role: 'tool',
+      content: 'kitchen sink\n',
+      timestamp: kitchenTs + 2,
+      tool: {
+        id: 'toolu_kitchen_bash_echo',
+        name: 'bash',
+        args: { command: 'echo "kitchen sink"' },
+        status: 'success',
+        output: 'kitchen sink\n',
+        startedAt: kitchenTs + 1,
+        completedAt: kitchenTs + 2,
+      },
+    },
+    // Multi-MIME pi-artifact row: markdown + image + html, in priority
+    // order. The pi-crust's pickRenderableRepresentation walks the array and
+    // picks the first recognized mime, so the order here matters for
+    // assertions in the spec.
+    {
+      role: 'custom',
+      content: 'Kitchen-sink multi-MIME artifact',
+      timestamp: kitchenTs + 3,
+      customType: 'artifact',
+      details: {
+        version: 1,
+        artifactGroupId: 'kitchen-sink-artifact',
+        caption: 'Multi-MIME demo',
+        artifacts: [
+          { mime: 'text/markdown', text: '### Markdown rep\n\nA **markdown** representation.' },
+          { mime: 'image/png', src: { kind: 'url', url: `data:image/png;base64,${tinyPngBase64}` }, alt: 'tiny pixel' },
+          { mime: 'text/html', html: '<!doctype html><html><body><p id="kitchen-html">html-rep-ok</p></body></html>', height: 80 },
+        ],
+      },
+    },
+    // Vega-lite artifact attached to a tool result. This is the path the
+    // pi-artifact / show_artifact(kind=vega-lite) tool uses in prod.
+    {
+      role: 'tool',
+      content: 'Rendered chart',
+      timestamp: kitchenTs + 4,
+      tool: {
+        id: 'toolu_kitchen_vega',
+        name: 'show_artifact',
+        args: { kind: 'vega-lite' },
+        status: 'success',
+        output: 'Rendered chart',
+        startedAt: kitchenTs + 3,
+        completedAt: kitchenTs + 4,
+      },
+    },
+    {
+      role: 'custom',
+      content: 'Vega-lite chart artifact',
+      timestamp: kitchenTs + 5,
+      customType: 'artifact',
+      details: {
+        version: 1,
+        artifactGroupId: 'kitchen-sink-vega',
+        caption: 'Tiny bar chart',
+        artifacts: [
+          {
+            mime: 'application/vnd.vega-lite.v5+json',
+            spec: {
+              $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+              data: { values: [
+                { category: 'A', value: 4 },
+                { category: 'B', value: 6 },
+                { category: 'C', value: 10 },
+              ] },
+              mark: 'bar',
+              encoding: {
+                x: { field: 'category', type: 'nominal' },
+                y: { field: 'value', type: 'quantitative' },
+              },
+            },
+          },
+        ],
+      },
+    },
+    // Trailing assistant text — make sure the timeline still flows
+    // normal messages after a stack of custom rows.
+    {
+      role: 'assistant',
+      content: 'All shapes emitted. Nothing here should appear as raw JSON.',
+      timestamp: kitchenTs + 6,
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${kitchenSinkFile}`);
+
+// Generic-surface "message shape extras" seed. Pins distinct rendering
+// for the rarer message shapes the timeline knows about but no existing
+// fixture exercises:
+//
+//   - role:"summary", summaryKind:"compaction"  → "Compaction summary"
+//   - role:"summary", summaryKind:"branch"      → "Branch summary"
+//   - assistant with errorMessage / stopReason:"error" → error badge +
+//     scoped error message rendered in its own <p role="alert">
+//
+// Used by tests/playwright/message-shapes-extras.spec.ts.
+const shapeExtrasId = 'seeded-session-shape-extras';
+const shapeExtrasFile = path.join(root, '0000000000021_seeded-session-shape-extras.mock-session.json');
+const shapeTs = 1700000040000;
+await fs.writeFile(shapeExtrasFile, JSON.stringify({
+  id: shapeExtrasId,
+  cwd,
+  sessionFile: shapeExtrasFile,
+  sessionName: 'Message shape extras',
+  messages: [
+    { role: 'user', content: 'kick off the long-running flow', timestamp: shapeTs },
+    {
+      role: 'summary',
+      summaryKind: 'compaction',
+      content: 'Conversation was compacted to save context. Older turns are summarized.',
+      timestamp: shapeTs + 1,
+    },
+    {
+      role: 'assistant',
+      content: 'After compaction, here is what I remember and what we should do next.',
+      timestamp: shapeTs + 2,
+    },
+    {
+      role: 'summary',
+      summaryKind: 'branch',
+      content: 'Forked from message #1 of the parent session.',
+      timestamp: shapeTs + 3,
+    },
+    {
+      role: 'user',
+      content: 'try the action that fails',
+      timestamp: shapeTs + 4,
+    },
+    {
+      role: 'assistant',
+      content: '',
+      timestamp: shapeTs + 5,
+      stopReason: 'error',
+      errorMessage: 'provider returned 500: simulated upstream error',
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${shapeExtrasFile}`);

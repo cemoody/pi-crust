@@ -1,5 +1,14 @@
 export type SessionCardStatus = "idle" | "streaming" | "waiting_for_approval" | "compacting" | "retrying" | "error";
 
+/** Options accepted by api.getMessages(). The server's /messages endpoint
+ *  supports a tail-windowed read so a multi-MB transcript doesn't have to
+ *  ship in one shot — the pi-crust should pass `limit` on initial mount to keep
+ *  page-open fast even on very long sessions. */
+export interface GetMessagesOptions {
+  readonly limit?: number;
+  readonly before?: number;
+}
+
 export interface SessionCardData {
   readonly id: string;
   readonly cwd: string;
@@ -86,7 +95,12 @@ export interface PromptAttachment {
 }
 
 export interface DashboardMessageImage {
-  readonly data: string;
+  /** Base64 image bytes. Only present for inline (small) images; for larger
+   *  payloads the server strips this and provides `url` instead so the
+   *  /messages JSON stays small. */
+  readonly data?: string;
+  /** Server-hosted URL for the image bytes; preferred over `data` when set. */
+  readonly url?: string;
   readonly mimeType: string;
 }
 
@@ -241,7 +255,7 @@ export interface ServerInfo extends AppBrandingInfo {
 }
 
 export interface SessionDashboardApi {
-  /** Generic host HTTP helper for web extensions. Paths are relative to PRC's API origin, e.g. /api/extensions/x/jobs. */
+  /** Generic host HTTP helper for web extensions. Paths are relative to pi-crust's API origin, e.g. /api/extensions/x/jobs. */
   request?<T = unknown>(path: string, options?: { readonly method?: string; readonly body?: unknown }): Promise<T>;
   getDefaultCwd?(): Promise<string>;
   /** Server-side user home directory, used as the New Session dialog default. */
@@ -263,7 +277,7 @@ export interface SessionDashboardApi {
   createSession(input: NewSessionInput): Promise<SessionCardData>;
   renameSession(sessionId: string, name: string): Promise<SessionCardData>;
   deleteSession(sessionId: string): Promise<void>;
-  getMessages(sessionId: string): Promise<readonly DashboardMessage[]>;
+  getMessages(sessionId: string, options?: GetMessagesOptions): Promise<readonly DashboardMessage[]>;
   prompt(sessionId: string, text: string, attachments?: readonly PromptAttachment[]): Promise<readonly DashboardMessage[]>;
   bash(sessionId: string, command: string, includeInContext: boolean): Promise<readonly DashboardMessage[]>;
   abort(sessionId: string): Promise<void>;

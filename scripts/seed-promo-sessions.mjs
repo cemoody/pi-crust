@@ -16,8 +16,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(process.env.PI_REMOTE_SESSION_ROOT ?? ".tmp/playwright-sessions");
-const cwd = path.resolve(process.env.PI_REMOTE_PROJECT_ROOT ?? process.cwd());
+const root = path.resolve(process.env.PI_CRUST_SESSION_ROOT ?? ".tmp/playwright-sessions");
+const cwd = path.resolve(process.env.PI_CRUST_PROJECT_ROOT ?? process.cwd());
 await fs.mkdir(root, { recursive: true });
 
 async function loadAsDataUrl(relPath, mime) {
@@ -398,19 +398,19 @@ await writeSession({
 // Session 6: Markdown artifact (inception — the markdown is itself the pitch)
 // ───────────────────────────────────────────────────────────────────────
 
-const inceptionMarkdown = `# Why pi-remote-control? 👋
+const inceptionMarkdown = `# Why pi-crust? 👋
 
 You are reading this **inside the agent's reply**, on your phone, rendered
 from a \`show_artifact\` tool call. No screen share. No copy-paste.
 
 ## What you get
-- **Mobile-first WUI** — drive long-lived \`pi\` sessions from any browser
+- **Mobile-first pi-crust** — drive long-lived \`pi\` sessions from any browser
 - **Rich artifacts inline** — Markdown, images, Vega-Lite, D3, HTML, JSON, tables
 - **Detached workers** — close the laptop, keep the session; reconnect from your phone
 - **Tailscale-friendly** — self-hosted, private, no third-party cloud
 
 ## A tiny table
-| Feature          | Terminal | pi-remote-control |
+| Feature          | Terminal | pi-crust |
 |------------------|:--------:|:-----------------:|
 | Inline charts    |    ❌    |        ✅         |
 | Drag a D3 graph  |    ❌    |        ✅         |
@@ -420,19 +420,19 @@ from a \`show_artifact\` tool call. No screen share. No copy-paste.
 await writeSession({
   order: 6,
   id: "promo-markdown-pitch",
-  name: "Why pi-remote-control?",
+  name: "Why pi-crust?",
   messages: [
-    { role: "user", content: "Make me a quick one-pager I can show a teammate explaining why I'd install pi-remote-control.", timestamp: 1700000050100 },
-    { role: "assistant", content: "Easiest way is to just render it as a markdown artifact — that way they see exactly the kind of rich output the WUI gives you.", timestamp: 1700000050200 },
+    { role: "user", content: "Make me a quick one-pager I can show a teammate explaining why I'd install pi-crust.", timestamp: 1700000050100 },
+    { role: "assistant", content: "Easiest way is to just render it as a markdown artifact — that way they see exactly the kind of rich output the pi-crust gives you.", timestamp: 1700000050200 },
     {
       role: "custom",
-      content: "Why pi-remote-control?",
+      content: "Why pi-crust?",
       timestamp: 1700000050300,
       customType: "artifact",
       details: {
         version: 1,
         artifactGroupId: "promo-markdown-pitch-group",
-        caption: "Why pi-remote-control?",
+        caption: "Why pi-crust?",
         artifacts: [
           { mime: "text/markdown", text: inceptionMarkdown },
           { mime: "text/plain", text: inceptionMarkdown },
@@ -669,17 +669,17 @@ await writeSession({
   id: "promo-showcase-tour",
   name: "Showcase tour",
   messages: [
-    { role: "user", content: "Give me a quick guided tour of what the WUI can render — markdown, a live D3 animation, a real statistical plot, and an interactive widget. Stack them in one session so I can scroll through.", timestamp: 1700000060100 },
+    { role: "user", content: "Give me a quick guided tour of what the pi-crust can render — markdown, a live D3 animation, a real statistical plot, and an interactive widget. Stack them in one session so I can scroll through.", timestamp: 1700000060100 },
     { role: "assistant", content: "Coming up — four artifacts in this conversation, one of each kind.", timestamp: 1700000060200 },
     {
       role: "custom",
-      content: "Why pi-remote-control?",
+      content: "Why pi-crust?",
       timestamp: 1700000060300,
       customType: "artifact",
       details: {
         version: 1,
         artifactGroupId: "tour-md-group",
-        caption: "Why pi-remote-control?",
+        caption: "Why pi-crust?",
         artifacts: [
           { mime: "text/markdown", text: inceptionMarkdown },
           { mime: "text/plain", text: inceptionMarkdown },

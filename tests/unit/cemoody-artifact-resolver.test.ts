@@ -6,18 +6,18 @@ import { resolveCemoodyArtifactExtension } from "../../src/server/pi/pirpc-pi-ad
 
 // Validates the auto-registration plumbing for the bundled
 // @cemoody/pi-artifact extension. Mirrors the resolver pattern used for
-// pi-remote-control's own pi-remote-artifacts.ts: a lazy filesystem lookup
+// pi-crust's own pi-crust-artifacts.ts: a lazy filesystem lookup
 // guarded by an env var, with an optional override path for local dev.
 //
 // The resolver under test accepts an injected `env` and `searchRoots` so
 // the tests can be hermetic — without that, the resolver would walk up from
 // this file's location and pick up the *real* @cemoody/pi-artifact under
-// pi-remote-control's own node_modules, defeating the test setup.
+// pi-crust's own node_modules, defeating the test setup.
 
 let tmpRoot: string;
 
 beforeEach(async () => {
-  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pirc-cemoody-"));
+  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-cemoody-"));
 });
 
 afterEach(async () => {
@@ -25,28 +25,28 @@ afterEach(async () => {
 });
 
 describe("resolveCemoodyArtifactExtension", () => {
-  it("returns undefined when PI_REMOTE_DISABLE_CEMOODY_ARTIFACT=1", async () => {
+  it("returns undefined when PI_CRUST_DISABLE_CEMOODY_ARTIFACT=1", async () => {
     const result = await resolveCemoodyArtifactExtension({
-      env: { PI_REMOTE_DISABLE_CEMOODY_ARTIFACT: "1" },
+      env: { PI_CRUST_DISABLE_CEMOODY_ARTIFACT: "1" },
       searchRoots: [tmpRoot],
     });
     expect(result).toBeUndefined();
   });
 
-  it("honors PI_REMOTE_CEMOODY_ARTIFACT_PATH override when the file exists", async () => {
+  it("honors PI_CRUST_CEMOODY_ARTIFACT_PATH override when the file exists", async () => {
     const override = path.join(tmpRoot, "src", "index.ts");
     await fs.mkdir(path.dirname(override), { recursive: true });
     await fs.writeFile(override, "export default () => {};\n");
     const result = await resolveCemoodyArtifactExtension({
-      env: { PI_REMOTE_CEMOODY_ARTIFACT_PATH: override },
+      env: { PI_CRUST_CEMOODY_ARTIFACT_PATH: override },
       searchRoots: [tmpRoot],
     });
     expect(result).toBe(path.resolve(override));
   });
 
-  it("ignores a missing PI_REMOTE_CEMOODY_ARTIFACT_PATH and falls through to node_modules lookup", async () => {
+  it("ignores a missing PI_CRUST_CEMOODY_ARTIFACT_PATH and falls through to node_modules lookup", async () => {
     const result = await resolveCemoodyArtifactExtension({
-      env: { PI_REMOTE_CEMOODY_ARTIFACT_PATH: path.join(tmpRoot, "does-not-exist.ts") },
+      env: { PI_CRUST_CEMOODY_ARTIFACT_PATH: path.join(tmpRoot, "does-not-exist.ts") },
       searchRoots: [tmpRoot],
     });
     expect(result).toBeUndefined();

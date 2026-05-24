@@ -1,5 +1,5 @@
 import { createPrcExtensionHost, type ActivateExtensionInput, type PrcExtensionHost } from "../../src/extensions/registry.js";
-import { createTempPrcHome, type TempPrcHome } from "./temp-prc-home.js";
+import { createTempPrcHome, type TempPrcHome } from "./temp-pi-crust-home.js";
 
 export interface PrcExtensionHarness {
   readonly home: TempPrcHome;

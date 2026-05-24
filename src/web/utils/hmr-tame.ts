@@ -7,7 +7,7 @@
  * because Safari suspends the WS the moment a tab goes background, and
  * resuming the tab triggers a full reload that destroys scroll position
  * and any composer draft. Telemetry showed every observed "random refresh"
- * on the WUI was this exact code path.
+ * on the pi-crust was this exact code path.
  *
  * Fix: intercept Vite's `vite:beforeFullReload` event and cancel it when
  * the reload would be due to a transient disconnect (tab in the background
@@ -43,7 +43,7 @@ export function shouldSuppressReload(deps: ReloadDecisionDeps, lastVisibleAt: nu
 }
 
 /**
- * Install the listeners. Exported for tests to drive directly; in the WUI,
+ * Install the listeners. Exported for tests to drive directly; in the pi-crust,
  * we call it once at the top of main.tsx with the live document and the
  * live import.meta.hot.
  */

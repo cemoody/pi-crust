@@ -27,7 +27,7 @@ async function shot(page: Page, vp: { name: string }, name: string) {
 }
 
 async function selectSeeded(page: Page) {
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
   await page.getByText('previously sent hello').waitFor();
   // Let the mobile drawer slide-out transition complete before screenshotting.
   await page.waitForTimeout(280);
@@ -51,7 +51,7 @@ for (const vp of VIEWPORTS) {
 
     test('01 session list (cold landing)', async ({ page }) => {
       await page.goto('/');
-      await page.getByRole('button', { name: /^Seeded session\b/ }).waitFor();
+      await page.getByRole('link', { name: /^Seeded session\b/ }).waitFor();
       await shot(page, vp, '01-session-list');
     });
 
@@ -85,7 +85,7 @@ for (const vp of VIEWPORTS) {
       // surfaces a small 'name this session' input above the composer.
       // The screenshot captures that state for layout review.
       await page.goto('/');
-      await page.getByRole('button', { name: 'New session' }).click();
+      await page.getByRole('link', { name: 'New session' }).click();
       await page.getByLabel('Name this session').waitFor();
       await page.waitForTimeout(280);
       await shot(page, vp, '05-new-session-inline');
@@ -127,7 +127,7 @@ for (const vp of VIEWPORTS) {
 
     test('11 long code block (horizontal scroll repro)', async ({ page }, testInfo) => {
       await page.goto('/');
-      await page.getByRole('button', { name: /^Long code session\b/ }).click();
+      await page.getByRole('link', { name: /^Long code session\b/ }).click();
       await page.getByRole('heading', { name: 'Long output sample' }).waitFor();
       // Let the mobile drawer slide-out transition complete.
       await page.waitForTimeout(280);

@@ -24,7 +24,7 @@ export interface ResolveGitShaOptions {
 export type GitRunner = (args: readonly string[], cwd: string) => string | null;
 
 export function resolveGitSha(options: ResolveGitShaOptions = {}): string {
-  const explicit = options.override ?? options.env?.PI_REMOTE_GIT_SHA;
+  const explicit = options.override ?? options.env?.PI_CRUST_GIT_SHA;
   if (typeof explicit === "string" && explicit.trim()) {
     return explicit.trim().slice(0, 12);
   }
@@ -74,7 +74,7 @@ export interface LiveGitShaOptions {
 export function createLiveGitSha(options: LiveGitShaOptions = {}): () => string {
   // If an explicit override is set (CI, Docker), it never changes; just
   // return a constant getter.
-  const explicit = options.env?.PI_REMOTE_GIT_SHA;
+  const explicit = options.env?.PI_CRUST_GIT_SHA;
   if (typeof explicit === "string" && explicit.trim()) {
     const value = explicit.trim().slice(0, 12);
     return () => value;

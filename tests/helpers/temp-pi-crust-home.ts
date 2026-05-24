@@ -27,12 +27,12 @@ export async function createTempPrcHome(prefix = "pi-remote-extension-test-"): P
     sessionRoot,
     env: {
       ...process.env,
-      PI_REMOTE_CONFIG_DIR: configDir,
-      PI_REMOTE_DATA_DIR: dataDir,
-      PI_REMOTE_PROJECT_ROOT: projectRoot,
-      PI_REMOTE_SESSION_ROOT: sessionRoot,
-      PI_REMOTE_USE_MOCK: "1",
-      PI_REMOTE_OPEN: "0",
+      PI_CRUST_CONFIG_DIR: configDir,
+      PI_CRUST_DATA_DIR: dataDir,
+      PI_CRUST_PROJECT_ROOT: projectRoot,
+      PI_CRUST_SESSION_ROOT: sessionRoot,
+      PI_CRUST_USE_MOCK: "1",
+      PI_CRUST_OPEN: "0",
     },
     cleanup: async () => { await fs.rm(root, { recursive: true, force: true }); },
   };

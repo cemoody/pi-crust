@@ -24,7 +24,7 @@ test.use({
 
 test('prompt textarea has font-size >= 16px on mobile (prevents iOS Safari focus-zoom)', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   const textarea = page.getByLabel('Prompt draft');
   await expect(textarea).toBeVisible();
@@ -39,8 +39,8 @@ test('Inline new-session name input has font-size >= 16px on mobile', async ({ p
   // drawer is open before clicking it. The click immediately spawns a
   // session (no modal) and renders the inline 'name this session' input
   // above the composer — that's the input we check for focus-zoom safety.
-  await page.getByRole('button', { name: /^Seeded session\b/ }).waitFor();
-  await page.getByRole('button', { name: 'New session' }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).waitFor();
+  await page.getByRole('link', { name: 'New session' }).click();
 
   const input = page.getByLabel('Name this session');
   await input.waitFor();
@@ -50,7 +50,7 @@ test('Inline new-session name input has font-size >= 16px on mobile', async ({ p
 
 test('all focusable text inputs in the mobile layout have font-size >= 16px', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
 
   // Collect every input/textarea currently rendered and their computed font-size.
   const offenders = await page.evaluate(() => {

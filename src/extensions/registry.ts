@@ -238,12 +238,14 @@ export class PrcExtensionHost implements Disposable {
           get: (path, handler) => route("GET", path, handler),
           post: (path, handler) => route("POST", path, handler),
           put: (path, handler) => route("PUT", path, handler),
+          patch: (path, handler) => route("PATCH", path, handler),
           delete: (path, handler) => route("DELETE", path, handler),
         },
         api: {
           get: (path, handler) => apiRoute("GET", path, handler),
           post: (path, handler) => apiRoute("POST", path, handler),
           put: (path, handler) => apiRoute("PUT", path, handler),
+          patch: (path, handler) => apiRoute("PATCH", path, handler),
           delete: (path, handler) => apiRoute("DELETE", path, handler),
         },
       },
@@ -257,7 +259,7 @@ export function createPrcExtensionHost(options: PrcExtensionHostOptions = {}): P
 
 function resolveExtensionDataFile(dataDir: string | undefined, extensionId: string, relativePath: string): string {
   if (path.isAbsolute(relativePath)) throw new Error("Extension storage paths must be relative");
-  const root = path.resolve(dataDir ?? path.join(process.cwd(), ".pi-remote-control-data"), "extensions", extensionId);
+  const root = path.resolve(dataDir ?? path.join(process.cwd(), ".pi-crust-data"), "extensions", extensionId);
   const resolved = path.resolve(root, relativePath);
   if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) throw new Error("Extension storage path escapes extension data directory");
   return resolved;

@@ -161,9 +161,9 @@ async function isStaleLock(lockFile) {
 }
 
 function schedulerEnabled() {
-  if (process.env.PI_REMOTE_ENABLE_SCHEDULER === '1') return true;
-  if (process.env.PI_REMOTE_ENABLE_SCHEDULER === '0') return false;
-  if (process.env.PI_REMOTE_USE_MOCK === '1') return false;
+  if (process.env.PI_CRUST_ENABLE_SCHEDULER === '1') return true;
+  if (process.env.PI_CRUST_ENABLE_SCHEDULER === '0') return false;
+  if (process.env.PI_CRUST_USE_MOCK === '1') return false;
   return true;
 }
 

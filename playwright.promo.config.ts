@@ -21,13 +21,13 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
     {
-      command: "rm -rf .tmp/promo-sessions && PI_REMOTE_PROJECT_ROOT=$PWD PI_REMOTE_SESSION_ROOT=$PWD/.tmp/promo-sessions node scripts/seed-promo-sessions.mjs && PI_REMOTE_USE_MOCK=1 PI_REMOTE_PROJECT_ROOT=$PWD PI_REMOTE_SESSION_ROOT=$PWD/.tmp/promo-sessions PI_REMOTE_API_PORT=9789 npm run dev:api",
+      command: "rm -rf .tmp/promo-sessions && PI_CRUST_PROJECT_ROOT=$PWD PI_CRUST_SESSION_ROOT=$PWD/.tmp/promo-sessions node scripts/seed-promo-sessions.mjs && PI_CRUST_USE_MOCK=1 PI_CRUST_PROJECT_ROOT=$PWD PI_CRUST_SESSION_ROOT=$PWD/.tmp/promo-sessions PI_CRUST_API_PORT=9789 npm run dev:api",
       url: "http://127.0.0.1:9789/api/health",
       reuseExistingServer: false,
       timeout: 20_000,
     },
     {
-      command: "VITE_PI_REMOTE_API_BASE=http://127.0.0.1:9789 npm run dev -- --host 127.0.0.1 --port 5176",
+      command: "VITE_PI_CRUST_API_BASE=http://127.0.0.1:9789 npm run dev -- --host 127.0.0.1 --port 5176",
       url: "http://127.0.0.1:5176/",
       reuseExistingServer: false,
       timeout: 20_000,

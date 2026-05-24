@@ -39,13 +39,13 @@ function readFrontendGitSha(): string | null {
   // the same value the backend reports live — and was the source of
   // 'I merged a PR but the help dialog still shows the old SHA' confusion.
   //
-  // Test hook: globalThis.__PI_REMOTE_GIT_SHA__ stands in for the bake.
-  type ShaHolder = { readonly __PI_REMOTE_GIT_SHA__?: unknown };
-  const fromGlobal = (globalThis as unknown as ShaHolder).__PI_REMOTE_GIT_SHA__;
+  // Test hook: globalThis.__PI_CRUST_GIT_SHA__ stands in for the bake.
+  type ShaHolder = { readonly __PI_CRUST_GIT_SHA__?: unknown };
+  const fromGlobal = (globalThis as unknown as ShaHolder).__PI_CRUST_GIT_SHA__;
   if (typeof fromGlobal === "string" && fromGlobal.trim()) return fromGlobal;
   try {
     // eslint-disable-next-line no-new-func
-    const baked = (new Function("return typeof __PI_REMOTE_GIT_SHA__ === 'string' ? __PI_REMOTE_GIT_SHA__ : undefined"))();
+    const baked = (new Function("return typeof __PI_CRUST_GIT_SHA__ === 'string' ? __PI_CRUST_GIT_SHA__ : undefined"))();
     if (typeof baked === "string" && baked.trim()) return baked;
   } catch {
     // ignore

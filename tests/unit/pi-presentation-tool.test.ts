@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import piRemoteArtifacts from "../../src/server/pi/extensions/pi-remote-artifacts.js";
+import piRemoteArtifacts from "../../src/server/pi/extensions/pi-crust-artifacts.js";
 
 type RegisteredTool = {
   name: string;
@@ -10,7 +10,7 @@ type RegisteredTool = {
 };
 
 describe("Pi presentation tool extension", () => {
-  it("registers show_presentation with artifact details consumed by PRC", async () => {
+  it("registers show_presentation with artifact details consumed by pi-crust", async () => {
     const tools: RegisteredTool[] = [];
     piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
 
@@ -47,5 +47,31 @@ describe("Pi presentation tool extension", () => {
     const result = await tool.execute("call-1", { kind: "presentation", title: "Deck", data: deck }) as { details: Record<string, unknown> };
 
     expect(result.details.piRemoteControlArtifact).toMatchObject({ kind: "presentation", title: "Deck", data: deck });
+  });
+
+  it("registers list_presentation_templates that calls the /api/presentations/templates route", async () => {
+    const tools: RegisteredTool[] = [];
+    piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
+    const tool = tools.find((candidate) => candidate.name === "list_presentation_templates");
+    expect(tool).toBeDefined();
+
+    const fetched: string[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      fetched.push(url);
+      return new Response(JSON.stringify({ packs: [
+        { id: "brainco", name: "BrainCo", version: "0.1.0", dir: "/tmp/brainco", layouts: ["title-light", "contents"] },
+      ] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      process.env.PI_CRUST_API_BASE = "http://127.0.0.1:9999";
+      const result = await tool!.execute("toolCallId", {}) as { content: { text: string }[]; details: { packs: { id: string }[] } };
+      expect(fetched).toContain("http://127.0.0.1:9999/api/presentations/templates");
+      expect(result.details.packs[0]?.id).toBe("brainco");
+      expect(result.content[0]?.text).toMatch(/brainco: 2 layout/);
+    } finally {
+      globalThis.fetch = original;
+      delete process.env.PI_CRUST_API_BASE;
+    }
   });
 });

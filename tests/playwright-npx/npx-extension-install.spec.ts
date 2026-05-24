@@ -13,7 +13,7 @@ test("npx-style fresh install can install, render, and hot reload an extension U
   try {
     const tarball = await npmPack(root);
     const home = path.join(root, "home");
-    const configDir = path.join(home, ".pi-remote-control");
+    const configDir = path.join(home, ".pi-crust");
     const projectRoot = path.join(root, "project");
     const sessionRoot = path.join(root, "sessions");
     const extensionDir = path.join(root, "external-schedule");
@@ -25,19 +25,19 @@ test("npx-style fresh install can install, render, and hot reload an extension U
 
     const port = await freePort();
     const url = `http://127.0.0.1:${port}`;
-    server = spawn("npm", ["exec", "--yes", `--package=${tarball}`, "--", "pi-remote-control"], {
+    server = spawn("npm", ["exec", "--yes", `--package=${tarball}`, "--", "pi-crust"], {
       cwd: projectRoot,
       detached: true,
       env: {
         ...process.env,
         HOME: home,
-        PI_REMOTE_CONFIG_DIR: configDir,
-        PI_REMOTE_PROJECT_ROOT: projectRoot,
-        PI_REMOTE_SESSION_ROOT: sessionRoot,
-        PI_REMOTE_API_PORT: String(port),
-        PI_REMOTE_API_HOST: "127.0.0.1",
-        PI_REMOTE_USE_MOCK: "1",
-        PI_REMOTE_OPEN: "0",
+        PI_CRUST_CONFIG_DIR: configDir,
+        PI_CRUST_PROJECT_ROOT: projectRoot,
+        PI_CRUST_SESSION_ROOT: sessionRoot,
+        PI_CRUST_API_PORT: String(port),
+        PI_CRUST_API_HOST: "127.0.0.1",
+        PI_CRUST_USE_MOCK: "1",
+        PI_CRUST_OPEN: "0",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -47,22 +47,22 @@ test("npx-style fresh install can install, render, and hot reload an extension U
     await waitForHttp(`${url}/api/health`, logs);
 
     await page.goto(url);
-    await expect(page.getByRole("heading", { name: "pi remote" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Schedule" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "π crust" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Schedule" })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("link", { name: "Settings" }).click();
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     await page.getByLabel("Extension package source").fill(extensionDir);
     await page.getByRole("button", { name: "Install" }).click();
-    await expect(page.getByRole("button", { name: "Schedule" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Schedule" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Schedule" }).click();
+    await page.getByRole("link", { name: "Schedule" }).click();
     await expect(page.getByText("Blank schedule extension UI")).toBeVisible();
 
     await writeScheduleExtension(extensionDir, "Hot reloaded schedule extension UI");
-    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("link", { name: "Settings" }).click();
     await page.getByRole("button", { name: "Reload" }).click();
-    await page.getByRole("button", { name: "Schedule" }).click();
+    await page.getByRole("link", { name: "Schedule" }).click();
     await expect(page.getByText("Hot reloaded schedule extension UI")).toBeVisible();
   } finally {
     if (server?.pid) {

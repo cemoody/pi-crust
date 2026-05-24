@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadResolvedExtensionEntries } from "../../src/extensions/loader.js";
 import { installExtensionPackage, readPrcSettings, removeExtensionPackage, resolvePackageExtensions } from "../../src/extensions/packages.js";
 import { createPrcExtensionHost } from "../../src/extensions/registry.js";
-import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-prc-home.js";
+import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
 import { writeLocalExtensionPackage } from "../helpers/local-extension-package.js";
 
 const execFileAsync = promisify(execFile);
@@ -16,7 +16,7 @@ afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => home.cleanup()));
 });
 
-describe("PRC extension package install harness", () => {
+describe("pi-crust extension package install harness", () => {
   it("installs a local extension package into isolated settings", async () => {
     const home = await makeHome();
     const packageDir = await writeLocalExtensionPackage(home.configDir, { name: "local-extension" });
@@ -72,7 +72,7 @@ describe("PRC extension package install harness", () => {
     await fs.writeFile(path.join(repo, "index.mjs"), "export default function activate(prc) { prc.commands.register({ id: 'git.hello', title: 'Git', run: () => 'git' }); }\n", "utf8");
     await execFileAsync("git", ["init"], { cwd: repo });
     await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: repo });
-    await execFileAsync("git", ["config", "user.name", "PRC Test"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.name", "pi-crust Test"], { cwd: repo });
     await execFileAsync("git", ["add", "."], { cwd: repo });
     await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
 

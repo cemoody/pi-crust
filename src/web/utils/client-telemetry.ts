@@ -20,8 +20,8 @@
  */
 
 const ENDPOINT = "/api/client-event";
-const BOOT_COUNT_KEY = "pi-rc:bootCount";
-const SESSION_ID_KEY = "pi-rc:tabSessionId";
+const BOOT_COUNT_KEY = "pi-crust:bootCount";
+const SESSION_ID_KEY = "pi-crust:tabSessionId";
 
 export interface ClientEventPayload {
   readonly kind: string;

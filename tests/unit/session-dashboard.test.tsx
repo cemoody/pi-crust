@@ -104,9 +104,9 @@ function makeApi(initial: SessionCardData[] = []): SessionDashboardApi {
 describe("SessionDashboard", () => {
   it("loads with an empty session list", async () => {
     render(<SessionDashboard api={makeApi()} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
     expect(screen.getByText("Select or create a session.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Schedule" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Schedule" })).not.toBeInTheDocument();
   });
 
   it("applies server-provided app name and image icon URL branding", async () => {
@@ -143,9 +143,9 @@ describe("SessionDashboard", () => {
       createSession: vi.fn(() => createSessionDeferred.promise),
     };
     render(<SessionDashboard api={api} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    fireEvent.click(screen.getByRole("link", { name: "New session" }));
 
     const creating = screen.getByRole("button", { name: "Creating session" });
     expect(creating).toBeDisabled();
@@ -161,7 +161,10 @@ describe("SessionDashboard", () => {
       lastActivity: Date.now(),
     });
     await screen.findByLabelText("Prompt draft");
-    await waitFor(() => expect(screen.getByRole("button", { name: "New session" })).not.toBeDisabled());
+    // After the deferred creation resolves the busy <button> swaps back
+    // to the normal <a href="/"> link form (anchors can't be disabled).
+    await waitFor(() => expect(screen.queryByRole("link", { name: "New session" })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Creating session" })).not.toBeInTheDocument();
   });
 
   it("clicking 'New session' immediately creates a session, focuses the prompt, and shows the inline name input", async () => {
@@ -170,9 +173,9 @@ describe("SessionDashboard", () => {
     // textarea gets focus, and a small 'name (optional)' input appears
     // above the composer until the first message is sent.
     render(<SessionDashboard api={makeApi()} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    fireEvent.click(screen.getByRole("link", { name: "New session" }));
     // No modal dialog should ever appear.
     expect(screen.queryByRole("dialog", { name: /Create new session|new session/i })).not.toBeInTheDocument();
 
@@ -207,7 +210,7 @@ describe("SessionDashboard", () => {
     const api = {
       ...makeApi(),
       getExtensionSettings: vi.fn(async () => ({
-        appBranding: { appName: "pi remote", appIconUrl: "" },
+        appBranding: { appName: "π crust", appIconUrl: "" },
         extensions: { commands: [], activities: [], routes: [], diagnostics: [] },
       })),
       setAppBranding: vi.fn(async (branding) => ({
@@ -216,9 +219,9 @@ describe("SessionDashboard", () => {
       })),
     } satisfies SessionDashboardApi;
     const { container } = render(<SessionDashboard api={api} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("link", { name: "Settings" }));
     await screen.findByRole("heading", { name: "Settings" });
     fireEvent.change(screen.getByLabelText("App name"), { target: { value: "Mobile Lab" } });
     fireEvent.change(screen.getByLabelText("App icon image URL"), { target: { value: "https://example.com/mobile-lab.svg" } });
@@ -250,9 +253,9 @@ describe("SessionDashboard", () => {
       })),
     } satisfies SessionDashboardApi;
     render(<SessionDashboard api={api} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("link", { name: "Settings" }));
 
     await screen.findByRole("heading", { name: "Settings" });
     expect(screen.getByLabelText("Installed extensions")).toHaveTextContent("bad config");
@@ -274,7 +277,7 @@ describe("SessionDashboard", () => {
       })),
     } satisfies SessionDashboardApi;
     render(<SessionDashboard api={api} />);
-    await screen.findByRole("button", { name: "Demo" });
+    await screen.findByRole("link", { name: "Demo" });
 
     expect(workspaceButtonNames()).toEqual(["New session", "Demo", "Settings"]);
   });
@@ -290,12 +293,12 @@ describe("SessionDashboard", () => {
       })),
     } satisfies SessionDashboardApi;
     render(<SessionDashboard api={api} />);
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("link", { name: "Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Reload" }));
 
-    await screen.findByRole("button", { name: "Demo" });
+    await screen.findByRole("link", { name: "Demo" });
     expect(api.reloadExtensions).toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent("Extensions reloaded.");
   });
@@ -375,7 +378,7 @@ describe("SessionDashboard", () => {
 
     // User selects 'Newer' and submits a prompt — that's the canonical
     // user-activity bump. Now 'Newer' should pop to the top.
-    fireEvent.click(screen.getByRole("button", { name: /Newer/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Newer/ }));
     fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "hello" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(sessionListButtonNames()).toEqual(["Newer", "Older"]));
@@ -464,7 +467,7 @@ describe("SessionDashboard", () => {
     it("does not let stale browser localStorage pin an old session above newer server-side user input", async () => {
       if (typeof window !== "undefined" && window.localStorage) {
         window.localStorage.clear();
-        window.localStorage.setItem("pi-remote-control:lastUserActivityById:v1", JSON.stringify({
+        window.localStorage.setItem("pi-crust:lastUserActivityById:v1", JSON.stringify({
           "stale-local": 10_000,
         }));
       }
@@ -503,7 +506,7 @@ describe("SessionDashboard", () => {
     expect(sessionListButtonNames()).toEqual(["Beta", "Alpha"]);
 
     // User prompts 'Alpha' — it goes to the top.
-    fireEvent.click(screen.getByRole("button", { name: /Alpha/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Alpha/ }));
     fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "hi" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(sessionListButtonNames()).toEqual(["Alpha", "Beta"]));
@@ -525,7 +528,7 @@ describe("SessionDashboard", () => {
 
   it("the inline name input disappears once the first message is sent", async () => {
     const handlers = renderDashboardCapturingPrompts();
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    fireEvent.click(screen.getByRole("link", { name: "New session" }));
     await screen.findByLabelText("Name this session");
 
     fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: "hello" } });
@@ -536,7 +539,7 @@ describe("SessionDashboard", () => {
 
   it("typing in the inline name input and sending a prompt renames the session", async () => {
     const handlers = renderDashboardCapturingPrompts();
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    fireEvent.click(screen.getByRole("link", { name: "New session" }));
     await screen.findByLabelText("Name this session");
     await waitFor(() => expect(screen.getByRole("heading", { name: "Untitled session" })).toBeInTheDocument());
     const nameInput = screen.getByLabelText("Name this session") as HTMLInputElement;
@@ -561,7 +564,7 @@ describe("SessionDashboard", () => {
       { id: "a", cwd: "/repo/a", status: "idle", model: "m", lastActivity: 1 },
     ])} />);
 
-    await screen.findByRole("heading", { name: "pi remote" });
+    await screen.findByRole("heading", { name: "π crust" });
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), { target: { value: "Beta" } });
     expect(screen.getByText("Beta")).toBeInTheDocument();
     expect(screen.queryByText("Untitled session")).not.toBeInTheDocument();
@@ -601,7 +604,7 @@ describe("SessionDashboard", () => {
     }])} />);
 
     await screen.findByText("Stats");
-    fireEvent.click(screen.getByRole("button", { name: /Stats/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Stats/ }));
 
     const status = await screen.findByLabelText("Session status");
     expect(status).toHaveTextContent("↑12k");
@@ -634,7 +637,7 @@ describe("SessionDashboard", () => {
     }])} />);
 
     await screen.findByText("Stats");
-    fireEvent.click(screen.getByRole("button", { name: /Stats/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Stats/ }));
 
     const status = await screen.findByLabelText("Session status");
     expect(status).toHaveTextContent("12%");
@@ -659,7 +662,7 @@ describe("SessionDashboard", () => {
     await screen.findByText("Newer");
     expect(sessionListButtonNames()).toEqual(["Newer", "Older"]);
 
-    fireEvent.click(screen.getByRole("button", { name: /Older/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Older/ }));
     await screen.findByRole("heading", { name: "Older" });
 
     await waitFor(() => expect(sessionListButtonNames()).toEqual(["Newer", "Older"]));
@@ -690,7 +693,7 @@ describe("SessionDashboard", () => {
 
     render(<SessionDashboard api={api} />);
     await screen.findByText("Live");
-    fireEvent.click(screen.getByRole("button", { name: /Live/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Live/ }));
     await waitFor(() => expect(pushEvent).toBeDefined());
 
     const THINKING = "Exploring BigQuery options";
@@ -766,7 +769,7 @@ describe("SessionDashboard", () => {
 
     render(<SessionDashboard api={api} />);
     await screen.findByText("Live");
-    fireEvent.click(screen.getByRole("button", { name: /Live/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Live/ }));
     await waitFor(() => expect(pushEvent).toBeDefined());
 
     act(() => {
@@ -805,7 +808,7 @@ describe("SessionDashboard", () => {
 
     render(<SessionDashboard api={api} />);
     await screen.findByText("Live");
-    fireEvent.click(screen.getByRole("button", { name: /Live/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Live/ }));
     await waitFor(() => expect(pushEvent).toBeDefined());
 
     act(() => {
@@ -860,7 +863,7 @@ describe("SessionDashboard", () => {
 
     render(<SessionDashboard api={api} />);
     await screen.findByText("Live");
-    fireEvent.click(screen.getByRole("button", { name: /Live/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Live/ }));
     await waitFor(() => expect(pushEvent).toBeDefined());
 
     act(() => {
@@ -892,7 +895,7 @@ describe("SessionDashboard", () => {
 
     render(<SessionDashboard api={api} />);
     await screen.findByText("Original");
-    fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Fork" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Fork" }));
 
@@ -919,7 +922,7 @@ describe("SessionDashboard", () => {
 
     render(<SessionDashboard api={api} />);
     await screen.findByText("Original");
-    fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Fork" })).toBeEnabled());
     fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/fork 2" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -930,7 +933,7 @@ describe("SessionDashboard", () => {
   });
 
   it("/clear is an alias for /new and starts a fresh session", async () => {
-    // pi renamed /clear -> /new (see pi-coding-agent CHANGELOG). The WUI keeps
+    // pi renamed /clear -> /new (see pi-coding-agent CHANGELOG). The pi-crust keeps
     // /clear working as a muscle-memory alias for users coming from Claude
     // Code et al.
     const createSession = vi.fn(async (input: NewSessionInput) => ({
@@ -949,7 +952,7 @@ describe("SessionDashboard", () => {
 
     render(<SessionDashboard api={api} />);
     await screen.findByText("Original");
-    fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
     fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/clear" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -964,7 +967,7 @@ describe("SessionDashboard", () => {
       { id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 },
     ])} />);
     await screen.findByText("Original");
-    fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
 
     await screen.findByRole("button", { name: "Rename" });
     expect(screen.queryByRole("button", { name: "Compact" })).not.toBeInTheDocument();
@@ -978,7 +981,7 @@ describe("SessionDashboard", () => {
       { id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 },
     ])} />);
     await screen.findByText("Original");
-    fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
 
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
     const input = screen.getByLabelText("Session name");
@@ -998,7 +1001,7 @@ describe("SessionDashboard", () => {
     };
     render(<SessionDashboard api={api} />);
     await screen.findByText("Original");
-    fireEvent.click(screen.getByRole("button", { name: /Original/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
 
     const huge = "x".repeat(40_000);
     fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: huge } });
@@ -1028,7 +1031,7 @@ describe("SessionDashboard", () => {
     render(<SessionDashboard api={api} />);
 
     await screen.findByText("Alpha");
-    expect(screen.queryByRole("button", { name: "Schedule" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Schedule" })).not.toBeInTheDocument();
   });
 
   it("requires explicit confirmation before deleting and supports cancel", async () => {
@@ -1036,7 +1039,7 @@ describe("SessionDashboard", () => {
       { id: "a", cwd: "/repo/a", sessionName: "Doomed", status: "idle", model: "m", lastActivity: 1 },
     ])} />);
     await screen.findByText("Doomed");
-    fireEvent.click(screen.getByRole("button", { name: /Doomed/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Doomed/ }));
 
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(screen.getByRole("alertdialog", { name: "Delete session" })).toBeInTheDocument();
@@ -1084,7 +1087,7 @@ describe("SessionDashboard", () => {
     };
     render(<SessionDashboard api={api} />);
     await screen.findByText("Worker");
-    fireEvent.click(screen.getByRole("button", { name: /Worker/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Worker/ }));
     await screen.findByRole("heading", { name: "Worker" });
 
     // First prompt: send 'work on it' — this stays in flight.
@@ -1133,7 +1136,7 @@ describe("SessionDashboard", () => {
     };
     render(<SessionDashboard api={api} />);
     await screen.findByText("Worker");
-    fireEvent.click(screen.getByRole("button", { name: /Worker/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Worker/ }));
     await screen.findByRole("heading", { name: "Worker" });
 
     // Start the first prompt.
@@ -1173,9 +1176,14 @@ describe("SessionDashboard", () => {
 });
 
 function workspaceButtonNames(): string[] {
-  return within(screen.getByRole("navigation", { name: "Workspace" })).getAllByRole("button").map((button) => button.textContent?.replace(/\s+/g, " ").trim() ?? "");
+  const nav = screen.getByRole("navigation", { name: "Workspace" });
+  // The sidebar items are anchor links (so cmd+click opens a new tab),
+  // except for the transient "Creating session" busy state which stays
+  // a real <button disabled aria-busy>. Capture both roles in DOM order.
+  const items = Array.from(nav.querySelectorAll<HTMLElement>("a.sidebar-menu-item, button.sidebar-menu-item"));
+  return items.map((item) => item.textContent?.replace(/\s+/g, " ").trim() ?? "");
 }
 
 function sessionListButtonNames(): string[] {
-  return within(screen.getByRole("list")).getAllByRole("button").map((button) => button.querySelector(".session-row-name")?.textContent ?? "");
+  return within(screen.getByRole("list")).getAllByRole("link").map((item) => item.querySelector(".session-row-name")?.textContent ?? "");
 }

@@ -3,14 +3,14 @@ import { execSync } from "node:child_process";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
-const apiTarget = process.env.VITE_PI_REMOTE_PROXY_TARGET ?? "http://127.0.0.1:8787";
+const apiTarget = process.env.VITE_PI_CRUST_PROXY_TARGET ?? "http://127.0.0.1:8787";
 
 // Resolve the frontend's git SHA at vite-config evaluation time. The result
-// gets baked into the bundle via `define` below as __PI_REMOTE_GIT_SHA__
+// gets baked into the bundle via `define` below as __PI_CRUST_GIT_SHA__
 // and surfaced in the help dialog. CI / Docker builds can pass
-// PI_REMOTE_GIT_SHA explicitly; the local dev case shells out to git.
+// PI_CRUST_GIT_SHA explicitly; the local dev case shells out to git.
 function resolveFrontendGitSha(): string {
-  const fromEnv = process.env.PI_REMOTE_GIT_SHA;
+  const fromEnv = process.env.PI_CRUST_GIT_SHA;
   if (typeof fromEnv === "string" && fromEnv.trim()) return fromEnv.trim().slice(0, 12);
   try {
     return execSync("git rev-parse --short=12 HEAD", { stdio: ["ignore", "pipe", "ignore"], timeout: 2_000 })
@@ -27,23 +27,23 @@ const frontendGitSha = resolveFrontendGitSha();
 // iPhone Safari scroll position is now tamed client-side by
 // public/vite-hmr-resilient-websocket.js, which reconnects Vite's HMR
 // websocket and defers mobile full-reload payloads behind a manual tap.
-// Set VITE_PI_REMOTE_HMR=0 to force HMR off if you ever need to debug
+// Set VITE_PI_CRUST_HMR=0 to force HMR off if you ever need to debug
 // without Vite's HMR client.
-const hmrEnabled = process.env.VITE_PI_REMOTE_HMR !== "0";
+const hmrEnabled = process.env.VITE_PI_CRUST_HMR !== "0";
 
 // Vite (≥6.0) rejects requests whose Host header isn't in `allowedHosts`
 // when bound to a non-localhost interface. The default list is just
 // localhost/127.0.0.1, which blocks legitimate access via Tailscale magic
 // DNS (`<machine>.<tailnet>.ts.net`) and mDNS (`*.local`) — both common
-// for accessing the WUI from another device on the same network.
+// for accessing the pi-crust from another device on the same network.
 //
 // We allow those two suffixes by default (a leading dot in Vite's syntax
 // matches the host AND any subdomain), and let users extend or replace the
-// list via VITE_PI_REMOTE_ALLOWED_HOSTS (comma-separated). Setting it to
+// list via VITE_PI_CRUST_ALLOWED_HOSTS (comma-separated). Setting it to
 // the literal string `all` disables the check entirely — use only on
 // trusted networks.
 const DEFAULT_ALLOWED_HOSTS = [".ts.net", ".local"] as const;
-const rawAllowed = process.env.VITE_PI_REMOTE_ALLOWED_HOSTS;
+const rawAllowed = process.env.VITE_PI_CRUST_ALLOWED_HOSTS;
 const allowedHosts: true | string[] = rawAllowed === "all"
   ? true
   : rawAllowed
@@ -87,7 +87,7 @@ export default defineConfig(({ command }) => ({
   // from and updates after every `git pull`. See
   // src/web/components/ShortcutHelp.tsx for the fallback logic.
   define: command === "build"
-    ? { __PI_REMOTE_GIT_SHA__: JSON.stringify(frontendGitSha) }
+    ? { __PI_CRUST_GIT_SHA__: JSON.stringify(frontendGitSha) }
     : {},
   server: {
     hmr: hmrEnabled,

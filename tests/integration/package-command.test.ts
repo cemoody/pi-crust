@@ -2,7 +2,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { main } from "../../src/cli/package-command.js";
 import { readPrcSettings } from "../../src/extensions/packages.js";
-import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-prc-home.js";
+import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
 import { writeLocalExtensionPackage } from "../helpers/local-extension-package.js";
 
 let homes: TempPrcHome[] = [];
@@ -11,8 +11,8 @@ afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => home.cleanup()));
 });
 
-describe("PRC package command", () => {
-  it("installs and removes local extension packages using PI_REMOTE_CONFIG_DIR", async () => {
+describe("pi-crust package command", () => {
+  it("installs and removes local extension packages using PI_CRUST_CONFIG_DIR", async () => {
     const home = await makeHome();
     const packageDir = await writeLocalExtensionPackage(home.configDir, { name: "cli-extension" });
 

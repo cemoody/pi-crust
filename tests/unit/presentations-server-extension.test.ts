@@ -103,7 +103,7 @@ describe("core.presentations template-pack discovery", () => {
       cwd: root,
       dataDir: path.join(root, "data"),
       bundledPackagePaths: [path.resolve(process.cwd(), "extensions", "presentations")],
-      env: { ...process.env, PI_REMOTE_CONFIG_DIR: configDir },
+      env: { ...process.env, PI_CRUST_CONFIG_DIR: configDir },
     });
 
     const listResponse = await result.host.serverRoutes.dispatch(

@@ -51,10 +51,10 @@ export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOpti
     configDir: options.configDir,
   });
   const env = options.env ?? process.env;
-  if (options.noExtensions || env.PI_REMOTE_NO_EXTENSIONS === "1") return { host, diagnostics: [] };
+  if (options.noExtensions || env.PI_CRUST_NO_EXTENSIONS === "1") return { host, diagnostics: [] };
 
   const packageDiagnostics: PackageDiagnostic[] = [];
-  const explicitPaths = [...(options.explicitExtensionPaths ?? []), ...parseExtensionEnv(env.PI_REMOTE_EXTENSIONS)];
+  const explicitPaths = [...(options.explicitExtensionPaths ?? []), ...parseExtensionEnv(env.PI_CRUST_EXTENSIONS)];
 
   const settings = await readPrcSettings(options.configDir);
   const disabledExtensionIds = new Set(settings.disabledExtensions ?? []);
@@ -84,7 +84,7 @@ export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOpti
 }
 
 export function defaultPrcConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  return path.resolve(env.PI_REMOTE_CONFIG_DIR ?? path.join(env.HOME ?? process.cwd(), ".pi-remote-control"));
+  return path.resolve(env.PI_CRUST_CONFIG_DIR ?? path.join(env.HOME ?? process.cwd(), ".pi-crust"));
 }
 
 function parseExtensionEnv(value: string | undefined): string[] {

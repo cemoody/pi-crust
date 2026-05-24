@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveGitSha, createLiveGitSha } from "../../src/server/git-sha.js";
 
 describe("resolveGitSha", () => {
-  it("honors PI_REMOTE_GIT_SHA from the env when set", () => {
-    expect(resolveGitSha({ env: { PI_REMOTE_GIT_SHA: "deadbeefcafe1234" }, runner: () => null })).toBe("deadbeefcafe");
+  it("honors PI_CRUST_GIT_SHA from the env when set", () => {
+    expect(resolveGitSha({ env: { PI_CRUST_GIT_SHA: "deadbeefcafe1234" }, runner: () => null })).toBe("deadbeefcafe");
   });
 
   it("honors an explicit override above env", () => {
-    expect(resolveGitSha({ env: { PI_REMOTE_GIT_SHA: "from-env" }, override: "fedcba987654321", runner: () => null })).toBe("fedcba987654");
+    expect(resolveGitSha({ env: { PI_CRUST_GIT_SHA: "from-env" }, override: "fedcba987654321", runner: () => null })).toBe("fedcba987654");
   });
 
   it("shells out to git when no override is provided", () => {
@@ -26,7 +26,7 @@ describe("resolveGitSha", () => {
 
   it("ignores whitespace-only env override and falls back to runner", () => {
     const runner = vi.fn(() => "fallback1234");
-    expect(resolveGitSha({ env: { PI_REMOTE_GIT_SHA: "   " }, runner })).toBe("fallback1234");
+    expect(resolveGitSha({ env: { PI_CRUST_GIT_SHA: "   " }, runner })).toBe("fallback1234");
     expect(runner).toHaveBeenCalledOnce();
   });
 });
@@ -107,7 +107,7 @@ describe("createLiveGitSha", () => {
   it("returns the env override as a constant getter (never reshells)", () => {
     const runner = vi.fn();
     const fake = makeFakeFs({ headMs: 100, refMs: 200, headContents: "ref: refs/heads/main\n" });
-    const get = createLiveGitSha({ env: { PI_REMOTE_GIT_SHA: "deadbeefcafe1234" }, runner, fsModule: fake.module });
+    const get = createLiveGitSha({ env: { PI_CRUST_GIT_SHA: "deadbeefcafe1234" }, runner, fsModule: fake.module });
     expect(get()).toBe("deadbeefcafe");
     expect(get()).toBe("deadbeefcafe");
     expect(runner).not.toHaveBeenCalled();

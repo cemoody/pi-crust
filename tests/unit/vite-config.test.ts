@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-// History: the iPhone Safari WUI used to silently reload every time the user
+// History: the iPhone Safari pi-crust used to silently reload every time the user
 // returned to it after a few minutes in the background. Every reload was
 // preceded by an `sse-client-error` and a pagehide{persisted:false};
 // navigationType was "reload"; localStorage was preserved (bootCount
@@ -35,19 +35,19 @@ describe("vite.config", () => {
     vi.resetModules();
   });
   afterEach(() => {
-    delete process.env.VITE_PI_REMOTE_HMR;
+    delete process.env.VITE_PI_CRUST_HMR;
     vi.resetModules();
   });
 
   it("enables HMR by default to support the self-edit workflow", async () => {
-    delete process.env.VITE_PI_REMOTE_HMR;
+    delete process.env.VITE_PI_CRUST_HMR;
     const value = await loadConfig();
     const server = (value as { server?: { hmr?: unknown } }).server ?? {};
     expect(server.hmr).toBe(true);
   });
 
-  it("disables HMR when VITE_PI_REMOTE_HMR=0 is set (explicit opt-out)", async () => {
-    process.env.VITE_PI_REMOTE_HMR = "0";
+  it("disables HMR when VITE_PI_CRUST_HMR=0 is set (explicit opt-out)", async () => {
+    process.env.VITE_PI_CRUST_HMR = "0";
     const value = await loadConfig();
     const server = (value as { server?: { hmr?: unknown } }).server ?? {};
     expect(server.hmr).toBe(false);

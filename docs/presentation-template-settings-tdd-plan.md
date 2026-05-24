@@ -2,7 +2,7 @@
 
 ## Goal
 
-Keep slide decks as inline conversation artifacts, but let `core.presentations` configure reusable template packs from PRC Settings. The first implementation should add a **Presentations** section in Settings where users can add one or more local template directories, choose a default template pack/theme, validate templates, and reload template metadata without adding a new sidebar activity.
+Keep slide decks as inline conversation artifacts, but let `core.presentations` configure reusable template packs from pi-crust Settings. The first implementation should add a **Presentations** section in Settings where users can add one or more local template directories, choose a default template pack/theme, validate templates, and reload template metadata without adding a new sidebar activity.
 
 ## Proposed user-facing behavior
 

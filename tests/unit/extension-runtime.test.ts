@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createPrcExtensionRuntime } from "../../src/extensions/runtime.js";
-import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-prc-home.js";
+import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
 import { writeLocalExtensionPackage } from "../helpers/local-extension-package.js";
 
 let homes: TempPrcHome[] = [];
@@ -11,7 +11,7 @@ afterEach(async () => {
   await Promise.all(homes.splice(0).map((home) => home.cleanup()));
 });
 
-describe("PRC extension hot reload runtime", () => {
+describe("pi-crust extension hot reload runtime", () => {
   it("reloads changed package code and disposes old contributions", async () => {
     const home = await makeHome();
     const packageDir = await writeReloadablePackage(home, "v1");

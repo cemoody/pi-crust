@@ -7,7 +7,7 @@ import { PathPolicy } from "../../src/server/security/path-policy.js";
 import { SessionRegistry } from "../../src/server/session/session-registry.js";
 
 async function makeRegistry() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-remote-control-test-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-test-"));
   const projectRoot = path.join(root, "projects");
   const projectA = path.join(projectRoot, "a");
   const projectB = path.join(projectRoot, "b");

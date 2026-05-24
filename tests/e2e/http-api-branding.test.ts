@@ -20,10 +20,10 @@ afterEach(async () => {
 
 describe("HTTP API branding", () => {
   it("exposes app name and image icon URL from environment on health", async () => {
-    const previousName = process.env.PI_REMOTE_APP_NAME;
-    const previousIcon = process.env.PI_REMOTE_APP_ICON;
-    process.env.PI_REMOTE_APP_NAME = "Moody Lab";
-    process.env.PI_REMOTE_APP_ICON = "https://example.com/icon.png";
+    const previousName = process.env.PI_CRUST_APP_NAME;
+    const previousIcon = process.env.PI_CRUST_APP_ICON;
+    process.env.PI_CRUST_APP_NAME = "Moody Lab";
+    process.env.PI_CRUST_APP_ICON = "https://example.com/icon.png";
     try {
       const baseUrl = await makeServer();
       await expect(fetchJson(`${baseUrl}/api/health`)).resolves.toMatchObject({
@@ -31,8 +31,8 @@ describe("HTTP API branding", () => {
         appIcon: "https://example.com/icon.png",
       });
     } finally {
-      restoreEnv("PI_REMOTE_APP_NAME", previousName);
-      restoreEnv("PI_REMOTE_APP_ICON", previousIcon);
+      restoreEnv("PI_CRUST_APP_NAME", previousName);
+      restoreEnv("PI_CRUST_APP_ICON", previousIcon);
     }
   });
 

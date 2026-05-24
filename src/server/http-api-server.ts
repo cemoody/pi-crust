@@ -1,3 +1,6 @@
+// Side-effect import: must run BEFORE any env-var reads. Mirrors legacy
+// PI_REMOTE_* env vars to PI_CRUST_* with a one-time deprecation warning.
+import "../shared/env-compat-auto.js";
 import http from "node:http";
 import path from "node:path";
 import os from "node:os";
@@ -6,7 +9,7 @@ import fsp from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
-import { PiRpcAdapter } from "./pi/pirpc-pi-adapter.js";
+import { contentTextAndThinking, PiRpcAdapter, toSessionMessages } from "./pi/pirpc-pi-adapter.js";
 import { MAX_PROMPT_CHARS } from "../shared/limits.js";
 import type { ExtensionUiResponse } from "../shared/protocol.js";
 import type { PromptAttachment, SessionListItem, SessionMessage } from "./pi/types.js";
@@ -19,6 +22,7 @@ import { defaultPrcConfigDir } from "../extensions/bootstrap.js";
 import { serializeExtensions } from "../extensions/metadata.js";
 import { installExtensionPackage, readPrcSettings, removeExtensionPackage, setExtensionEnabled, writePrcSettings, type PrcAppBrandingSettings, type PrcSettings } from "../extensions/packages.js";
 import { createPrcExtensionRuntime, type PrcExtensionRuntime } from "../extensions/runtime.js";
+import { defaultArtifactFileRoots, resolveArtifactFile, streamArtifactFile } from "./artifact-file.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -32,7 +36,7 @@ export interface HttpApiServerOptions {
    */
   readonly clientEventLogPath?: string;
   /**
-   * Short git SHA of the backend; surfaced on /api/health for the WUI's
+   * Short git SHA of the backend; surfaced on /api/health for the pi-crust's
    * help dialog. May be a string (frozen at startup, used by tests and
    * CI builds) or a getter (live, recomputed when .git/HEAD changes —
    * the default for `npm run dev:api`). When omitted the server falls
@@ -40,7 +44,7 @@ export interface HttpApiServerOptions {
    * about the running build.
    */
   readonly gitSha?: string | (() => string);
-  /** Test-first seed for PRC server extensions. Extension routes are mounted
+  /** Test-first seed for pi-crust server extensions. Extension routes are mounted
    * under /api/extensions/:extensionId/* and are intentionally passed in by
    * tests/harnesses until package discovery is wired into the default server.
    */
@@ -93,8 +97,8 @@ function resolveContextGitSha(value: string | (() => string) | undefined): strin
 }
 
 function resolveEnvAppBranding(env: NodeJS.ProcessEnv): { readonly appName: string; readonly appIcon?: string } {
-  const appName = env.PI_REMOTE_APP_NAME?.trim() || "pi remote";
-  const appIcon = env.PI_REMOTE_APP_ICON?.trim();
+  const appName = env.PI_CRUST_APP_NAME?.trim() || "π crust";
+  const appIcon = env.PI_CRUST_APP_ICON?.trim();
   return { appName, ...(appIcon ? { appIcon } : {}) };
 }
 
@@ -247,13 +251,13 @@ function createDefaultRegistry(adapterKind: string, sessionRoot: string, project
 }
 
 async function startDefaultServer(): Promise<void> {
-  const port = Number(process.env.PI_REMOTE_API_PORT ?? 8787);
-  const host = process.env.PI_REMOTE_API_HOST ?? "127.0.0.1";
-  const projectRoot = path.resolve(process.env.PI_REMOTE_PROJECT_ROOT ?? process.env.HOME ?? process.cwd());
-  const sessionRoot = path.resolve(process.env.PI_REMOTE_SESSION_ROOT ?? path.join(os.homedir(), ".pi", "agent", "sessions"));
-  const adapterKind = process.env.PI_REMOTE_USE_MOCK === "1"
+  const port = Number(process.env.PI_CRUST_API_PORT ?? 8787);
+  const host = process.env.PI_CRUST_API_HOST ?? "127.0.0.1";
+  const projectRoot = path.resolve(process.env.PI_CRUST_PROJECT_ROOT ?? process.env.HOME ?? process.cwd());
+  const sessionRoot = path.resolve(process.env.PI_CRUST_SESSION_ROOT ?? path.join(os.homedir(), ".pi", "agent", "sessions"));
+  const adapterKind = process.env.PI_CRUST_USE_MOCK === "1"
     ? "mock"
-    : process.env.PI_REMOTE_ADAPTER === "pi-sdk"
+    : process.env.PI_CRUST_ADAPTER === "pi-sdk"
       ? "pi-sdk"
       : "pirpc";
   const registry = createDefaultRegistry(adapterKind, sessionRoot, projectRoot);
@@ -262,7 +266,7 @@ async function startDefaultServer(): Promise<void> {
     configDir: defaultPrcConfigDir(process.env),
     cwd: projectRoot,
     env: process.env,
-    dataDir: path.resolve(process.env.PI_REMOTE_DATA_DIR ?? path.join(os.homedir(), ".pi-remote-control", "data")),
+    dataDir: path.resolve(process.env.PI_CRUST_DATA_DIR ?? path.join(os.homedir(), ".pi-crust", "data")),
     bundledPackagePaths: [
       path.resolve(process.cwd(), "extensions", "schedule"),
       path.resolve(process.cwd(), "extensions", "branching"),
@@ -274,7 +278,7 @@ async function startDefaultServer(): Promise<void> {
   if (extensionRuntime.current.diagnostics.length > 0) {
     for (const diagnostic of extensionRuntime.current.diagnostics) console.warn(`[extensions] ${diagnostic.extensionId}: ${diagnostic.message}`);
   }
-  const clientEventLogPath = process.env.PI_REMOTE_CLIENT_EVENT_LOG
+  const clientEventLogPath = process.env.PI_CRUST_CLIENT_EVENT_LOG
     ?? path.resolve(process.cwd(), "logs", "client-events.jsonl");
   // Live SHA: recomputed when .git/HEAD changes so /api/health doesn't lie
   // about the build after a `git pull` lands new commits.
@@ -298,18 +302,18 @@ async function startDefaultServer(): Promise<void> {
   }
   server.on("error", (error: NodeJS.ErrnoException) => {
     if (error.code === "EADDRINUSE") {
-      console.error(`pi-remote-control API: port ${port} on ${host} is already in use.`);
+      console.error(`pi-crust API: port ${port} on ${host} is already in use.`);
       console.error(`hint: find the holder with: lsof -ti :${port}    (or: ss -tlnp | grep ${port})`);
       // Exit cleanly so a supervisor loop can back off rather than crash-loop
       // on an unhandled 'error' event. Code 2 is the canonical "bad config"
       // exit code outer loops can react to.
       process.exit(2);
     }
-    console.error(`pi-remote-control API: server error: ${error.message}`);
+    console.error(`pi-crust API: server error: ${error.message}`);
     process.exit(1);
   });
   server.listen(port, host, () => {
-    console.log(`pi-remote-control API listening on http://${host}:${port}`);
+    console.log(`pi-crust API listening on http://${host}:${port}`);
     console.log(`adapter=${adapterKind}`);
     console.log(`projectRoot=${projectRoot}`);
     console.log(`sessionRoot=${sessionRoot}`);
@@ -360,7 +364,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       projectRoot: context.projectRoot,
       sessionRoot: context.sessionRoot,
       defaultCwd: context.defaultCwd ?? process.cwd(),
-      // The user's home directory (server-side). The WUI uses this as the
+      // The user's home directory (server-side). The pi-crust uses this as the
       // default 'Working directory' in the New Session dialog, which is
       // friendlier than seeding it with whatever the API was invoked from.
       homeCwd: os.homedir(),
@@ -484,12 +488,32 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && url.pathname === "/api/sessions") {
     const cwd = url.searchParams.get("cwd") ?? undefined;
-    return sendJson(res, 200, await listSessionCards(context, cwd));
+    return sendJson(res, 200, await dedupedListSessionCards(context, cwd));
   }
 
   if (req.method === "GET" && url.pathname === "/api/sessions/statuses") {
     const cwd = url.searchParams.get("cwd") ?? undefined;
-    return sendJson(res, 200, await listSessionCards(context, cwd));
+    return sendJson(res, 200, await dedupedListSessionCards(context, cwd));
+  }
+
+  // Serve arbitrary on-disk artifact files (images, html, pdf, video) that
+  // live outside the bundled pi-crust static root — e.g. /tmp/foo.png produced by
+  // an agent and referenced by `show_artifact`. The candidate path must
+  // resolve (post-realpath) inside the OS tmpdir, the user's home, the
+  // project root, the session root, or the default cwd. See
+  // src/server/artifact-file.ts for the full policy.
+  if (req.method === "GET" && url.pathname === "/api/artifact-file") {
+    const candidate = url.searchParams.get("path");
+    if (!candidate) return sendJson(res, 400, { error: "path query parameter is required" });
+    const result = await resolveArtifactFile(candidate, {
+      allowedRoots: defaultArtifactFileRoots([
+        context.projectRoot,
+        context.sessionRoot,
+        ...(context.defaultCwd ? [context.defaultCwd] : []),
+      ]),
+    });
+    if (!result.ok) return sendJson(res, result.status, { error: result.error });
+    return streamArtifactFile(result.resolution, res);
   }
 
   if (req.method === "POST" && url.pathname === "/api/sessions") {
@@ -501,13 +525,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     return sendJson(res, 200, toSessionCard(state));
   }
 
-  // Static-UI fallback. When PI_REMOTE_UI_DIR is set (typically by the
-  // `bin/pi-remote-control` launcher pointing at the built Vite output), any
+  // Static-UI fallback. When PI_CRUST_UI_DIR is set (typically by the
+  // `bin/pi-crust` launcher pointing at the built Vite output), any
   // GET that didn't match an /api route falls through to file serving so a
-  // single process can host both the API and the WUI. SPA semantics: unknown
+  // single process can host both the API and the pi-crust. SPA semantics: unknown
   // routes fall back to index.html so client-side routes Just Work.
   if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
-    const uiDir = process.env.PI_REMOTE_UI_DIR;
+    const uiDir = process.env.PI_CRUST_UI_DIR;
     if (uiDir) {
       const served = await tryServeStatic(uiDir, url.pathname, res);
       if (served) return;
@@ -522,7 +546,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   if (req.method === "GET" && action === "events") {
     const session = await getOrOpenSession(context, sessionId);
     // Evict any prior SSE for the same browser tab before sending headers.
-    // The WUI passes its per-tab id (sessionStorage-scoped) as a query param;
+    // The pi-crust passes its per-tab id (sessionStorage-scoped) as a query param;
     // see src/web/api/http-session-api.ts and the repro in
     // tests/playwright/sse-connection-pool.spec.ts.
     const tabSessionId = url.searchParams.get("tabSessionId");
@@ -561,7 +585,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
     // Honor Last-Event-ID for SSE resume so events emitted while the API
     // was down (and now sitting in the registry's per-session ring) are
-    // replayed when the WUI reconnects.
+    // replayed when the pi-crust reconnects.
     const lastEventHeader = req.headers["last-event-id"];
     const lastEventId = Array.isArray(lastEventHeader) ? lastEventHeader[0] : lastEventHeader;
     const fromSeq = lastEventId && /^-?\d+$/.test(lastEventId) ? Number(lastEventId) : null;
@@ -569,7 +593,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const writeEvent = (event: unknown, seq: number) => {
       try {
         const data = JSON.stringify(event);
-        // session_resync gets its own named event type so the WUI can refetch
+        // session_resync gets its own named event type so the pi-crust can refetch
         // state without having to inspect every default-message payload.
         const isResync = typeof event === "object" && event !== null && (event as { type?: unknown }).type === "session_resync";
         if (isResync) {
@@ -609,7 +633,82 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && action === "messages") {
     const session = await getOrOpenSession(context, sessionId);
-    return sendJson(res, 200, toDashboardMessages(await session.handle.getMessages()));
+    const limitRaw = url.searchParams.get("limit");
+    const beforeRaw = url.searchParams.get("before");
+    const limit = limitRaw && /^\d+$/.test(limitRaw) ? Math.min(Number(limitRaw), MAX_MESSAGES_LIMIT) : undefined;
+    const before = beforeRaw && /^-?\d+$/.test(beforeRaw) ? Number(beforeRaw) : undefined;
+    let messages: readonly SessionMessage[];
+    if (limit !== undefined) {
+      // Tail-window query: read only the trailing chunk of the session file
+      // directly so a huge transcript doesn't have to be slurped + parsed in
+      // full. Falls back to the adapter if a tail-read isn't possible (e.g.
+      // session file doesn't exist on disk yet).
+      const tail = await readSessionMessagesTail(session.sessionFile, before === undefined ? { limit } : { limit, before });
+      if (tail === undefined) {
+        messages = (await session.handle.getMessages()).slice(-limit);
+      } else {
+        messages = tail;
+      }
+    } else {
+      messages = await session.handle.getMessages();
+    }
+    return sendJson(res, 200, toDashboardMessages(messages, { sessionId: session.id }));
+  }
+
+  // Lazy fetch of inline image bytes that we strip from /messages payloads
+  // to keep the timeline JSON small. Image URLs are issued by
+  // toDashboardMessages; this route resolves them back to raw bytes.
+  const imageMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/images\/(\d+)$/);
+  if (req.method === "GET" && imageMatch) {
+    const session = await getOrOpenSession(context, decodeURIComponent(imageMatch[1]!));
+    const messageId = decodeURIComponent(imageMatch[2]!);
+    const imageIndex = Number(imageMatch[3]!);
+    const allMessages = await session.handle.getMessages();
+    const message = findMessageById(allMessages, messageId);
+    const image = message?.images?.[imageIndex];
+    if (!image) return sendJson(res, 404, { error: "image not found" });
+    const bytes = Buffer.from(image.data, "base64");
+    res.writeHead(200, {
+      "Content-Type": image.mimeType || "application/octet-stream",
+      "Content-Length": String(bytes.byteLength),
+      "Cache-Control": "private, max-age=300",
+    });
+    res.end(bytes);
+    return;
+  }
+
+  // Lazy fetch of full custom-message details (e.g. a full presentation
+  // deck) that we strip from /messages payloads when the inline JSON
+  // exceeds MAX_INLINE_DETAILS_BYTES.
+  const detailsMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/details$/);
+  if (req.method === "GET" && detailsMatch) {
+    const session = await getOrOpenSession(context, decodeURIComponent(detailsMatch[1]!));
+    const messageId = decodeURIComponent(detailsMatch[2]!);
+    const allMessages = await session.handle.getMessages();
+    const message = findMessageById(allMessages, messageId);
+    if (!message?.details) return sendJson(res, 404, { error: "details not found" });
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "private, max-age=60",
+    });
+    res.end(JSON.stringify(message.details));
+    return;
+  }
+
+  // Lazy fetch of full tool output that we truncate in /messages payloads.
+  const toolOutputMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/tool-output$/);
+  if (req.method === "GET" && toolOutputMatch) {
+    const session = await getOrOpenSession(context, decodeURIComponent(toolOutputMatch[1]!));
+    const messageId = decodeURIComponent(toolOutputMatch[2]!);
+    const allMessages = await session.handle.getMessages();
+    const message = findMessageById(allMessages, messageId);
+    if (!message?.tool) return sendJson(res, 404, { error: "tool output not found" });
+    res.writeHead(200, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "private, max-age=60",
+    });
+    res.end(message.tool.output ?? "");
+    return;
   }
 
   if (req.method === "GET" && (action === "state" || action === undefined)) {
@@ -630,7 +729,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const { promptText, modelAttachments } = await preparePromptAttachments(session.handle, text, attachments);
     await context.registry.prompt(session.id, promptText, modelAttachments);
     const updatedSession = await getOrOpenSession(context, session.id);
-    return sendJson(res, 200, toDashboardMessages(await updatedSession.handle.getMessages()));
+    return sendJson(res, 200, toDashboardMessages(await updatedSession.handle.getMessages(), { sessionId: updatedSession.id }));
   }
 
   if (req.method === "POST" && action === "bash") {
@@ -641,7 +740,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const session = await getOrOpenSession(context, sessionId);
     await context.registry.prompt(session.id, `${body.includeInContext === false ? "Run this hidden shell command for operator context only" : "Run this shell command and consider its output"}: ${body.command}`);
     const updatedSession = await getOrOpenSession(context, session.id);
-    return sendJson(res, 200, toDashboardMessages(await updatedSession.handle.getMessages()));
+    return sendJson(res, 200, toDashboardMessages(await updatedSession.handle.getMessages(), { sessionId: updatedSession.id }));
   }
 
   if (req.method === "POST" && action === "abort") {
@@ -756,10 +855,46 @@ function resolveSessionAlias(context: HttpApiServerContext, sessionId: string): 
   return current;
 }
 
+// /sessions and /statuses fan out to listSessionCards, which is moderately
+// expensive (filesystem walks, per-session head/tail scans, optional hot-
+// session getState() RPCs). When the pi-crust mounts it commonly fires several
+// of these in parallel — sidebar list, status snapshot for the active tab,
+// reconnect after SSE handshake — and they all serialize on the Node event
+// loop. Collapse a burst into one underlying computation per cwd, and reuse
+// the result for a brief TTL so back-to-back polls cost ~0.
+const LIST_SESSIONS_CACHE_TTL_MS = 750;
+interface SessionsCacheEntry {
+  readonly expiresAt: number;
+  readonly cards: Awaited<ReturnType<typeof listSessionCards>>;
+}
+const sessionsCardCache = new Map<string, SessionsCacheEntry>();
+const sessionsCardInflight = new Map<string, Promise<Awaited<ReturnType<typeof listSessionCards>>>>();
+
+async function dedupedListSessionCards(context: HttpApiServerContext, cwd?: string) {
+  const key = cwd ?? "";
+  const now = Date.now();
+  const cached = sessionsCardCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.cards;
+  const inflight = sessionsCardInflight.get(key);
+  if (inflight) return inflight;
+  const pending = listSessionCards(context, cwd)
+    .then((cards) => {
+      sessionsCardCache.set(key, { expiresAt: Date.now() + LIST_SESSIONS_CACHE_TTL_MS, cards });
+      return cards;
+    })
+    .finally(() => { sessionsCardInflight.delete(key); });
+  sessionsCardInflight.set(key, pending);
+  return pending;
+}
+
 async function listSessionCards(context: HttpApiServerContext, cwd?: string) {
   const sessions = await context.registry.listSessions(cwd);
   for (const session of sessions) context.coldSessionFiles.set(session.id, session.sessionFile);
-  return Promise.all(sessions.map((session) => sessionCardWithLiveState(context, session)));
+  const cards = await Promise.all(sessions.map((session) => sessionCardWithLiveState(context, session)));
+  // Persist any updated timeline-metadata entries to disk so the next process
+  // restart can skip re-scanning multi-MB session files on the cold path.
+  await flushDirtyTimelineIndexes();
+  return cards;
 }
 
 async function sessionCardWithLiveState(context: HttpApiServerContext, session: SessionListItem) {
@@ -793,39 +928,205 @@ interface CachedSessionTimelineMetadata {
   readonly metadata: SessionTimelineMetadata;
 }
 
+// Window sizes for head/tail jsonl scans. createdAt sits at the very top of
+// the file (the `type: "session"` record); lastUserActivity is approximated
+// from the trailing window — sufficient for sidebar sort because sessions
+// where the user only typed near the start of a very long transcript would
+// have an old lastUserActivity anyway and sort by createdAt.
+const TIMELINE_HEAD_SCAN_BYTES = 8 * 1024;
+const TIMELINE_TAIL_SCAN_BYTES = 32 * 1024;
+const TIMELINE_INDEX_FILENAME = ".pi-timeline-index.json";
+
 const sessionTimelineMetadataCache = new Map<string, CachedSessionTimelineMetadata>();
+// Track which session-file *directories* we've already loaded the persisted
+// index from. Index files live alongside the jsonl session files so the next
+// fresh server process can pick them up without re-scanning multi-MB files.
+const loadedTimelineIndexDirs = new Set<string>();
+const loadingTimelineIndexes = new Map<string, Promise<void>>();
+const dirtyTimelineIndexDirs = new Set<string>();
 
 async function readSessionTimelineMetadata(sessionFile: string): Promise<SessionTimelineMetadata> {
-  let createdAt: number | null = null;
-  let lastUserActivity: number | null = null;
-  if (!sessionFile) return { createdAt, lastUserActivity };
+  if (!sessionFile) return { createdAt: null, lastUserActivity: null };
+  const dir = path.dirname(sessionFile);
+  await ensureTimelineIndexLoaded(dir);
   try {
     const stat = await fsp.stat(sessionFile);
     const cached = sessionTimelineMetadataCache.get(sessionFile);
     if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.metadata;
-    const content = await fsp.readFile(sessionFile, "utf8");
-    for (const line of content.split("\n")) {
-      if (!line.trim()) continue;
-      let entry: unknown;
-      try { entry = JSON.parse(line); } catch { continue; }
-      if (!isRecord(entry)) continue;
-      if (entry.type === "session" && createdAt === null) {
-        createdAt = coerceTime(entry.timestamp);
-        continue;
-      }
-      if (entry.type !== "message" || !isRecord(entry.message)) continue;
-      if (entry.message.role !== "user") continue;
-      const timestamp = coerceTime(entry.message.timestamp) ?? coerceTime(entry.timestamp);
-      if (timestamp === null) continue;
-      lastUserActivity = Math.max(lastUserActivity ?? 0, timestamp);
+    if (cached && stat.size > cached.size) {
+      // Incremental update: only read the bytes that have been appended since
+      // the last scan. This is the steady-state cost for the active session
+      // (the one being typed into) so it dominates the /statuses budget.
+      const metadata = await scanTimelineDelta(sessionFile, cached.size, stat.size, cached.metadata);
+      sessionTimelineMetadataCache.set(sessionFile, { mtimeMs: stat.mtimeMs, size: stat.size, metadata });
+      dirtyTimelineIndexDirs.add(dir);
+      return metadata;
     }
-    const metadata = { createdAt, lastUserActivity };
+    // Cold (or invalidated) scan: head + tail only, never the whole file.
+    const metadata = await scanTimelineHeadAndTail(sessionFile, stat.size);
     sessionTimelineMetadataCache.set(sessionFile, { mtimeMs: stat.mtimeMs, size: stat.size, metadata });
+    dirtyTimelineIndexDirs.add(dir);
     return metadata;
   } catch {
     // Missing/unreadable historical session files degrade to null metadata.
+    return { createdAt: null, lastUserActivity: null };
   }
-  return { createdAt, lastUserActivity };
+}
+
+async function scanTimelineHeadAndTail(sessionFile: string, fileSize: number): Promise<SessionTimelineMetadata> {
+  if (fileSize === 0) return { createdAt: null, lastUserActivity: null };
+  const fd = await fsp.open(sessionFile, "r");
+  try {
+    let createdAt: number | null = null;
+    let lastUserActivity: number | null = null;
+
+    const headSize = Math.min(TIMELINE_HEAD_SCAN_BYTES, fileSize);
+    const headBuf = Buffer.alloc(headSize);
+    await fd.read(headBuf, 0, headSize, 0);
+    const headHasFullFile = headSize === fileSize;
+    // If the head window doesn't reach EOF the last line may be partial; drop
+    // it so we don't JSON.parse half a record.
+    const headText = headBuf.toString("utf8");
+    const headSplit = headText.split("\n");
+    const headLines = headHasFullFile ? headSplit : headSplit.slice(0, -1);
+    for (const line of headLines) {
+      const parsed = parseTimelineLine(line);
+      if (!parsed) continue;
+      if (parsed.createdAt !== undefined && createdAt === null) createdAt = parsed.createdAt;
+      if (parsed.userActivity !== undefined) {
+        lastUserActivity = Math.max(lastUserActivity ?? 0, parsed.userActivity);
+      }
+    }
+
+    if (!headHasFullFile) {
+      const tailStart = Math.max(headSize, fileSize - TIMELINE_TAIL_SCAN_BYTES);
+      const tailSize = fileSize - tailStart;
+      const tailBuf = Buffer.alloc(tailSize);
+      await fd.read(tailBuf, 0, tailSize, tailStart);
+      const tailText = tailBuf.toString("utf8");
+      const firstNewline = tailText.indexOf("\n");
+      const safeTail = firstNewline >= 0 ? tailText.slice(firstNewline + 1) : tailText;
+      for (const line of safeTail.split("\n")) {
+        const parsed = parseTimelineLine(line);
+        if (!parsed) continue;
+        if (parsed.userActivity !== undefined) {
+          lastUserActivity = Math.max(lastUserActivity ?? 0, parsed.userActivity);
+        }
+      }
+    }
+
+    return { createdAt, lastUserActivity };
+  } finally {
+    await fd.close();
+  }
+}
+
+async function scanTimelineDelta(sessionFile: string, oldSize: number, newSize: number, previous: SessionTimelineMetadata): Promise<SessionTimelineMetadata> {
+  const delta = newSize - oldSize;
+  if (delta <= 0) return previous;
+  const fd = await fsp.open(sessionFile, "r");
+  try {
+    const buf = Buffer.alloc(delta);
+    await fd.read(buf, 0, delta, oldSize);
+    let lastUserActivity = previous.lastUserActivity;
+    // The first byte after `oldSize` may be a continuation of a line that was
+    // partially flushed before. The common case for our append-only sessions
+    // is that we begin exactly at a newline boundary, so the conservative
+    // approach is to just skip any incomplete leading line.
+    const text = buf.toString("utf8");
+    for (const line of text.split("\n")) {
+      const parsed = parseTimelineLine(line);
+      if (!parsed) continue;
+      if (parsed.userActivity !== undefined) {
+        lastUserActivity = Math.max(lastUserActivity ?? 0, parsed.userActivity);
+      }
+    }
+    return { createdAt: previous.createdAt, lastUserActivity };
+  } finally {
+    await fd.close();
+  }
+}
+
+function parseTimelineLine(line: string): { createdAt?: number | null; userActivity?: number } | undefined {
+  if (!line || !line.trim()) return undefined;
+  let entry: unknown;
+  try { entry = JSON.parse(line); } catch { return undefined; }
+  if (!isRecord(entry)) return undefined;
+  if (entry.type === "session") {
+    return { createdAt: coerceTime(entry.timestamp) };
+  }
+  if (entry.type !== "message" || !isRecord(entry.message)) return undefined;
+  if (entry.message.role !== "user") return undefined;
+  const timestamp = coerceTime(entry.message.timestamp) ?? coerceTime(entry.timestamp);
+  if (timestamp === null) return undefined;
+  return { userActivity: timestamp };
+}
+
+async function ensureTimelineIndexLoaded(dir: string): Promise<void> {
+  if (loadedTimelineIndexDirs.has(dir)) return;
+  let pending = loadingTimelineIndexes.get(dir);
+  if (!pending) {
+    pending = loadTimelineIndex(dir).finally(() => {
+      loadingTimelineIndexes.delete(dir);
+      loadedTimelineIndexDirs.add(dir);
+    });
+    loadingTimelineIndexes.set(dir, pending);
+  }
+  await pending;
+}
+
+async function loadTimelineIndex(dir: string): Promise<void> {
+  const indexFile = path.join(dir, TIMELINE_INDEX_FILENAME);
+  let content: string;
+  try { content = await fsp.readFile(indexFile, "utf8"); } catch { return; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(content); } catch { return; }
+  if (!isRecord(parsed)) return;
+  const entries = isRecord(parsed.entries) ? parsed.entries : parsed;
+  if (!isRecord(entries)) return;
+  for (const [basename, value] of Object.entries(entries)) {
+    if (!isRecord(value)) continue;
+    const mtimeMs = typeof value.mtimeMs === "number" ? value.mtimeMs : null;
+    const size = typeof value.size === "number" ? value.size : null;
+    if (mtimeMs === null || size === null) continue;
+    const createdAt = typeof value.createdAt === "number" ? value.createdAt : null;
+    const lastUserActivity = typeof value.lastUserActivity === "number" ? value.lastUserActivity : null;
+    const sessionFile = path.join(dir, basename);
+    // Only adopt the persisted entry when the in-process cache hasn't already
+    // observed a fresher state for that file.
+    if (sessionTimelineMetadataCache.has(sessionFile)) continue;
+    sessionTimelineMetadataCache.set(sessionFile, {
+      mtimeMs,
+      size,
+      metadata: { createdAt, lastUserActivity },
+    });
+  }
+}
+
+async function flushDirtyTimelineIndexes(): Promise<void> {
+  if (dirtyTimelineIndexDirs.size === 0) return;
+  const dirs = [...dirtyTimelineIndexDirs];
+  dirtyTimelineIndexDirs.clear();
+  await Promise.all(dirs.map(async (dir) => {
+    const entries: Record<string, unknown> = {};
+    for (const [sessionFile, cached] of sessionTimelineMetadataCache) {
+      if (path.dirname(sessionFile) !== dir) continue;
+      entries[path.basename(sessionFile)] = {
+        mtimeMs: cached.mtimeMs,
+        size: cached.size,
+        createdAt: cached.metadata.createdAt,
+        lastUserActivity: cached.metadata.lastUserActivity,
+      };
+    }
+    const indexFile = path.join(dir, TIMELINE_INDEX_FILENAME);
+    const tmpFile = `${indexFile}.tmp`;
+    try {
+      await fsp.writeFile(tmpFile, JSON.stringify({ version: 1, entries }), "utf8");
+      await fsp.rename(tmpFile, indexFile);
+    } catch {
+      // Best-effort; we'll try again on the next /statuses call.
+    }
+  }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -883,30 +1184,275 @@ function formatTokens(value: number): string {
   return `${(value / 1_000_000).toFixed(1)}M`;
 }
 
-export function toDashboardMessages(messages: readonly SessionMessage[]) {
-  return messages.map((message, index) => ({
-    id: `${message.timestamp}-${index}`,
-    role: message.role === "assistant"
-      ? "assistant"
-      : message.role === "user"
-        ? "user"
-        : message.role === "tool"
-          ? "tool"
-          : message.role === "summary"
-            ? "summary"
-            : "custom",
-    text: message.content,
-    provider: message.role === "assistant" ? "pi" : undefined,
-    tool: message.tool,
-    images: message.images,
-    timestamp: message.timestamp,
-    ...(message.customType ? { customType: message.customType } : {}),
-    ...(message.details ? { details: message.details } : {}),
-    ...(message.stopReason ? { stopReason: message.stopReason } : {}),
-    ...(message.errorMessage ? { error: message.errorMessage } : {}),
-    ...(message.thinking ? { thinking: message.thinking } : {}),
-    ...(message.summaryKind ? { summaryKind: message.summaryKind } : {}),
+/**
+ * Maximum number of messages a single /messages call is allowed to return.
+ * Acts as a server-side safety net even if a client passes a huge ?limit.
+ */
+export const MAX_MESSAGES_LIMIT = 1000;
+/**
+ * Tool outputs longer than this are truncated in /messages responses; the
+ * full text is fetchable via /messages/:messageId/tool-output. Keeps single
+ * transcript responses small even when an assistant has run cat on a 30 MB
+ * log.
+ */
+export const MAX_INLINE_TOOL_OUTPUT_BYTES = 16 * 1024;
+/**
+ * Custom-message `details` (extension artifacts — e.g. presentation decks
+ * with full slide HTML) over this size are stripped from /messages responses
+ * and replaced with a small stub the pi-crust can lazy-fetch on demand. Caps the
+ * worst single message at this size and stops a deck-heavy session from
+ * shipping tens of MB of inline JSON on every page mount.
+ */
+export const MAX_INLINE_DETAILS_BYTES = 32 * 1024;
+
+export interface ToDashboardMessagesOptions {
+  /** When set, image bytes are stripped from the payload and replaced with a
+   *  URL the pi-crust can fetch on demand. Tool outputs over the inline threshold
+   *  are also truncated and given an `outputUrl` fallback. Without a
+   *  sessionId we can't issue per-message URLs, so we leave the payload as-is
+   *  for unit-test back-compat. */
+  readonly sessionId?: string;
+}
+
+export function toDashboardMessages(messages: readonly SessionMessage[], options: ToDashboardMessagesOptions = {}) {
+  const sessionId = options.sessionId;
+  return messages.map((message, index) => {
+    const id = `${message.timestamp}-${index}`;
+    // Normalize structured content arrays into visible-text + thinking +
+    // images. SessionMessage.content is *typed* as `string`, but the
+    // tail-read fast path in readSessionMessagesTail() returns raw JSONL
+    // records whose content is the on-disk array-of-blocks shape (text /
+    // thinking / toolCall / image). Without this fan-out the pi-crust sees the
+    // array as `text` and the safe-markdown coercion stringifies it into
+    // the bubble — producing literal `[ { "type": "toolCall", ... } ]`
+    // text instead of the expected Markdown body + thinking card + tool
+    // row. Pinned by tests/playwright/structured-content-tool-calls.spec.ts.
+    const normalized = typeof message.content === "string"
+      ? { text: message.content as string, thinking: "", images: [] as readonly { readonly data: string; readonly mimeType: string }[] }
+      : contentTextAndThinking(message.content);
+    // Prefer images extracted from the content array (real pirpc shape)
+    // over message.images, which the adapter only populates on its own
+    // normalization path.
+    const images = normalized.images.length > 0 ? normalized.images : message.images;
+    const thinking = message.thinking ?? (normalized.thinking ? normalized.thinking : undefined);
+    return {
+      id,
+      role: message.role === "assistant"
+        ? "assistant"
+        : message.role === "user"
+          ? "user"
+          : message.role === "tool"
+            ? "tool"
+            : message.role === "summary"
+              ? "summary"
+              : "custom",
+      text: normalized.text,
+      provider: message.role === "assistant" ? "pi" : undefined,
+      tool: message.tool ? stripToolForTransport(message.tool, sessionId, id) : undefined,
+      images: sessionId && images ? stripImagesForTransport(images, sessionId, id) : images,
+      timestamp: message.timestamp,
+      ...(message.customType ? { customType: message.customType } : {}),
+      ...(message.details ? stripDetailsForTransport(message.details, sessionId, id) : {}),
+      ...(message.stopReason ? { stopReason: message.stopReason } : {}),
+      ...(message.errorMessage ? { error: message.errorMessage } : {}),
+      ...(thinking ? { thinking } : {}),
+      ...(message.summaryKind ? { summaryKind: message.summaryKind } : {}),
+    };
+  });
+}
+
+function stripImagesForTransport(images: readonly { readonly data: string; readonly mimeType: string }[], sessionId: string, messageId: string) {
+  return images.map((image, imageIndex) => ({
+    mimeType: image.mimeType,
+    url: `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/images/${imageIndex}`,
   }));
+}
+
+function stripToolForTransport(tool: NonNullable<SessionMessage["tool"]>, sessionId: string | undefined, messageId: string) {
+  const output = tool.output ?? "";
+  if (!sessionId || Buffer.byteLength(output, "utf8") <= MAX_INLINE_TOOL_OUTPUT_BYTES) return tool;
+  // Keep the first/last few KB inline so the UI still shows context without
+  // a second round-trip. The exact midpoint is replaced with a marker that
+  // includes the byte count and a URL to the full payload.
+  const halfWindow = Math.floor(MAX_INLINE_TOOL_OUTPUT_BYTES / 2);
+  const head = output.slice(0, halfWindow);
+  const tail = output.slice(-halfWindow);
+  const fullBytes = Buffer.byteLength(output, "utf8");
+  const outputUrl = `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/tool-output`;
+  const truncated = `${head}\n\n…[${(fullBytes / 1024).toFixed(0)} KB truncated — full output at ${outputUrl}]…\n\n${tail}`;
+  return { ...tool, output: truncated, outputTruncated: true, outputUrl, outputFullBytes: fullBytes };
+}
+
+/**
+ * Strips heavy fields out of a custom-message `details` blob (extension
+ * artifacts: presentation decks, large HTML artifacts, etc.) and replaces
+ * the omitted payload with a stub the pi-crust can fetch lazily via
+ * /api/sessions/:id/messages/:msgId/details.
+ *
+ * Heuristic: serialise details, measure bytes. If under the threshold,
+ * pass through unchanged. If over, return a stub `{ details: {...},
+ * detailsUrl, detailsTruncated, detailsFullBytes }` with as much top-level
+ * metadata as we can salvage cheaply so the pi-crust can show a card preview
+ * without the full payload (title / kind / artifact-group-id all fit in a
+ * few hundred bytes).
+ */
+function stripDetailsForTransport(
+  details: Record<string, unknown>,
+  sessionId: string | undefined,
+  messageId: string,
+): { details: Record<string, unknown>; detailsUrl?: string; detailsTruncated?: boolean; detailsFullBytes?: number } {
+  if (!sessionId) return { details };
+  let serialised: string;
+  try { serialised = JSON.stringify(details); } catch { return { details }; }
+  const fullBytes = Buffer.byteLength(serialised, "utf8");
+  if (fullBytes <= MAX_INLINE_DETAILS_BYTES) return { details };
+  const detailsUrl = `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/details`;
+  // Salvage a shallow preview of the details object: keep small scalar fields
+  // and string fields capped at 256 chars; replace large nested values with
+  // a sentinel. Lets the pi-crust render "presentation: <title>" or similar
+  // without the full deck payload.
+  const preview: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(details)) {
+    if (value === null || value === undefined) { preview[key] = value; continue; }
+    const t = typeof value;
+    if (t === "number" || t === "boolean") { preview[key] = value; continue; }
+    if (t === "string") {
+      const str = value as string;
+      preview[key] = str.length > 256 ? `${str.slice(0, 256)}…[truncated]` : str;
+      continue;
+    }
+    preview[key] = { __omitted: true, kind: Array.isArray(value) ? "array" : "object" };
+  }
+  return {
+    details: preview,
+    detailsUrl,
+    detailsTruncated: true,
+    detailsFullBytes: fullBytes,
+  };
+}
+
+function findMessageById(messages: readonly SessionMessage[], id: string): SessionMessage | undefined {
+  for (let index = 0; index < messages.length; index++) {
+    const candidate = messages[index]!;
+    if (`${candidate.timestamp}-${index}` === id) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * Reads up to `limit` recent SessionMessage entries from the end of a
+ * jsonl-formatted session file without loading the whole file. Returns
+ * undefined when the file can't be opened (caller should fall back to the
+ * adapter). Multi-byte UTF-8 safe: we never decode a chunk until we have a
+ * complete line boundary (newline).
+ */
+async function readSessionMessagesTail(
+  sessionFile: string,
+  options: { readonly limit: number; readonly before?: number },
+): Promise<readonly SessionMessage[] | undefined> {
+  if (!sessionFile) return undefined;
+  let stat: import("node:fs").Stats;
+  try { stat = await fsp.stat(sessionFile); } catch { return undefined; }
+  if (!stat.isFile()) return undefined;
+  // Treat an empty session file as "no on-disk transcript yet" and defer to
+  // the adapter, which may still have in-memory messages (e.g. mock adapter
+  // and fresh sessions whose first prompt hasn't been persisted).
+  if (stat.size === 0) return undefined;
+
+  const TAIL_CHUNK_SIZE = 64 * 1024;
+  const fd = await fsp.open(sessionFile, "r");
+  try {
+    let position = stat.size;
+    let leftover = Buffer.alloc(0);
+    const collected: SessionMessage[] = [];
+    // Track whether we saw ANY parseable jsonl record (message OR session
+    // header). If a non-empty file produces zero such records the file
+    // probably isn't a session jsonl at all (e.g. the mock adapter's
+    // pretty-printed .mock-session.json blobs) — fall back to the adapter
+    // rather than silently returning an empty timeline.
+    let sawSessionShapedRecord = false;
+
+    while (position > 0 && collected.length < options.limit) {
+      const readSize = Math.min(TAIL_CHUNK_SIZE, position);
+      position -= readSize;
+      const chunk = Buffer.alloc(readSize);
+      await fd.read(chunk, 0, readSize, position);
+      const buf = leftover.length === 0 ? chunk : Buffer.concat([chunk, leftover]);
+
+      let parseStart = 0;
+      if (position > 0) {
+        // Bytes before the first newline could be the tail of an earlier
+        // (still-unread) line. Save them for the next iteration and parse
+        // everything after the first newline.
+        const firstNewline = buf.indexOf(0x0a);
+        if (firstNewline === -1) {
+          leftover = buf;
+          continue;
+        }
+        leftover = buf.subarray(0, firstNewline);
+        parseStart = firstNewline + 1;
+      } else {
+        leftover = Buffer.alloc(0);
+      }
+
+      const text = buf.subarray(parseStart).toString("utf8");
+      const lines = text.split("\n");
+      // We collect the *raw* JSONL message bodies in this pass and run
+      // them through toSessionMessages() at the end so the on-disk
+      // pirpc / Anthropic-messages shape (assistant turns with
+      // `content: [...toolCall blocks]` and free-standing
+      // `role: "toolResult"` records) gets fanned out into the same
+      // assistant + role:"tool" + role:"summary" sequence the adapter's
+      // own getMessages() path produces. Without that fan-out,
+      // toDashboardMessages sees `role: "toolResult"`, falls through to
+      // "custom" and the pi-crust renders the result body as a free-standing
+      // "Extension"-labelled bubble instead of merging the output into
+      // the matching tool row. Regression introduced in PR #102 alongside
+      // this tail-read path; pinned by
+      // tests/playwright/structured-content-tool-calls.spec.ts.
+      const fresh: unknown[] = [];
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let entry: unknown;
+        try { entry = JSON.parse(line); } catch { continue; }
+        if (!isRecord(entry)) continue;
+        if (entry.type === "session" || entry.type === "message" || entry.type === "session_info") {
+          sawSessionShapedRecord = true;
+        }
+        if (entry.type !== "message" || !isRecord(entry.message)) continue;
+        // The numeric timestamp lives on the outer wrapper as an ISO
+        // string; the inner message often doesn't carry its own. Coerce
+        // and stamp it onto the message so downstream consumers (the
+        // before-filter here, toSessionMessages, the pi-crust ordering) all
+        // see a consistent number.
+        const innerMessage = entry.message as Record<string, unknown>;
+        let timestamp: number | undefined;
+        if (typeof innerMessage.timestamp === "number") timestamp = innerMessage.timestamp;
+        else if (typeof entry.timestamp === "string") {
+          const parsed = Date.parse(entry.timestamp);
+          if (!Number.isNaN(parsed)) timestamp = parsed;
+        } else if (typeof entry.timestamp === "number") timestamp = entry.timestamp;
+        if (options.before !== undefined && timestamp !== undefined && timestamp >= options.before) continue;
+        fresh.push(timestamp === undefined ? innerMessage : { ...innerMessage, timestamp });
+      }
+      // unshift in collected-but-still-raw form; we flatten once at the
+      // end so toSessionMessages's toolCall/toolResult index works
+      // across the whole window, not per-chunk.
+      collected.unshift(...(fresh as SessionMessage[]));
+    }
+    if (!sawSessionShapedRecord) return undefined;
+    // Run the full raw-JSONL window through toSessionMessages so the
+    // adapter's structured-content fan-out (toolCall blocks -> synthetic
+    // role:"tool" entries, toolResult records merged into the matching
+    // tool entry, thinking blocks split into the assistant's `thinking`
+    // field) applies uniformly. THEN apply the limit, since the fan-out
+    // can change the message count (one assistant turn with N toolCall
+    // blocks expands to 1 assistant + N tool rows).
+    const normalized = toSessionMessages(collected);
+    return normalized.slice(-options.limit);
+  } finally {
+    await fd.close();
+  }
 }
 
 function normalizePromptAttachments(attachments: readonly PromptAttachment[] | undefined): readonly PromptAttachment[] {
@@ -997,7 +1543,7 @@ function parseExtensionUiResponse(value: unknown): ExtensionUiResponse | undefin
 
 function setCors(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 

@@ -1,7 +1,7 @@
 import { describe, it } from "vitest";
 
 // TDD contract for the next implementation step. These are intentionally
-// pending until PRC grows extension-contributed Settings sections and the
+// pending until pi-crust grows extension-contributed Settings sections and the
 // presentations extension wires template-directory configuration through them.
 describe.todo("presentation template settings contribution", () => {
   it("lets core.presentations register a Settings section without adding a sidebar activity");

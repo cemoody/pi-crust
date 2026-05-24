@@ -38,6 +38,7 @@ const VIEWPORT = { width: 1024, height: 768 };
 async function rmrf(p) { try { await fs.rm(p, { recursive: true, force: true }); } catch {} }
 
 function startProcess(cmd, args, env, label) {
+  // no-pgid: one-shot command (recorder utility, never long-lived alongside the api)
   const child = spawn(cmd, args, { env: { ...process.env, ...env }, cwd: repoRoot });
   child.stdout.on("data", (b) => process.stdout.write(`[${label}] ${b}`));
   child.stderr.on("data", (b) => process.stderr.write(`[${label}] ${b}`));
@@ -59,8 +60,9 @@ await fs.mkdir(outDir, { recursive: true });
 
 // 1. Seed.
 await new Promise((resolve, reject) => {
+  // no-pgid: one-shot command (recorder utility, never long-lived alongside the api)
   const c = spawn("node", ["scripts/seed-promo-sessions.mjs"], {
-    env: { ...process.env, PI_REMOTE_PROJECT_ROOT: repoRoot, PI_REMOTE_SESSION_ROOT: sessionRoot },
+    env: { ...process.env, PI_CRUST_PROJECT_ROOT: repoRoot, PI_CRUST_SESSION_ROOT: sessionRoot },
     cwd: repoRoot, stdio: "inherit",
   });
   c.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`seed exit ${code}`)));
@@ -68,13 +70,13 @@ await new Promise((resolve, reject) => {
 
 // 2. API + Vite.
 const apiProc = startProcess("npx", ["tsx", "src/server/http-api-server.ts"], {
-  PI_REMOTE_USE_MOCK: "1",
-  PI_REMOTE_PROJECT_ROOT: repoRoot,
-  PI_REMOTE_SESSION_ROOT: sessionRoot,
-  PI_REMOTE_API_PORT: API_PORT,
+  PI_CRUST_USE_MOCK: "1",
+  PI_CRUST_PROJECT_ROOT: repoRoot,
+  PI_CRUST_SESSION_ROOT: sessionRoot,
+  PI_CRUST_API_PORT: API_PORT,
 }, "api");
 const viteProc = startProcess("npx", ["vite", "--host", "127.0.0.1", "--port", VITE_PORT], {
-  VITE_PI_REMOTE_API_BASE: `http://127.0.0.1:${API_PORT}`,
+  VITE_PI_CRUST_API_BASE: `http://127.0.0.1:${API_PORT}`,
 }, "vite");
 
 const shutdown = () => {
@@ -275,10 +277,12 @@ try {
   const SCALE_W = 720;
 
   await new Promise((resolve, reject) => {
+  // no-pgid: one-shot command (recorder utility, never long-lived alongside the api)
     const c = spawn("ffmpeg", ["-y", "-i", webmPath, "-vf", `fps=14,scale=${SCALE_W}:-1:flags=lanczos,palettegen=stats_mode=diff`, palettePath], { stdio: "inherit" });
     c.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`palettegen ffmpeg exit ${code}`)));
   });
   await new Promise((resolve, reject) => {
+  // no-pgid: one-shot command (recorder utility, never long-lived alongside the api)
     const c = spawn("ffmpeg", ["-y", "-i", webmPath, "-i", palettePath, "-lavfi", `fps=14,scale=${SCALE_W}:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`, "-loop", "0", outGif], { stdio: "inherit" });
     c.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`paletteuse ffmpeg exit ${code}`)));
   });

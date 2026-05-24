@@ -11,7 +11,7 @@ import { SessionRegistry } from "../../src/server/session/session-registry.js";
 import { PROTOCOL_VERSION } from "../../src/shared/version.js";
 
 async function makeServer() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-remote-control-ws-test-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-ws-test-"));
   const projectRoot = path.join(root, "projects");
   const project = path.join(projectRoot, "project");
   const sessionRoot = path.join(root, "sessions");

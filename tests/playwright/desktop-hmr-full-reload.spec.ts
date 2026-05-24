@@ -54,7 +54,7 @@ test('desktop full-reload HMR payload keeps Vite default behavior and reloads th
   await installViteHmrSocketProbe(page);
 
   await page.goto('/');
-  await page.getByRole('button', { name: /^Seeded session\b/ }).click();
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
   await waitForOpenHmrSocket(page);
 
   const bootCountBeforePayload = await page.evaluate((key) => Number(window.sessionStorage.getItem(key) ?? '0'), BOOT_COUNT_KEY);

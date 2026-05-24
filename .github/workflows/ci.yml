@@ -57,7 +57,7 @@ jobs:
         run: npm test -- --reporter=default
 
       - name: build
-        # Verify the production WUI bundle still compiles. Cheap; gives early
+        # Verify the production pi-crust bundle still compiles. Cheap; gives early
         # warning if a runtime import is missing.
         run: npm run build
 
