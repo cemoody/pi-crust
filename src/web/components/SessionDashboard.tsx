@@ -20,6 +20,7 @@ import { ExtensionUiHost } from "./ExtensionUiHost.js";
 import { ExternalWebActivity } from "../extensions/external-web-module.js";
 import type { WebActivityContribution } from "../extensions/types.js";
 import { ExtensionManagementPanel } from "./ExtensionManagementPanel.js";
+import { NotificationsProvider, useNotifications } from "./notifications.js";
 import "./session-dashboard.css";
 import { Icon } from "./Icon.js";
 import { AppBrand, isPlainLeftClick, updateFavicon, imageFaviconDataUrl } from "./app-brand.js";
@@ -62,7 +63,34 @@ export interface SessionDashboardProps {
 
 type SortMode = "recent" | "name" | "cwd";
 
-export function SessionDashboard({ api }: SessionDashboardProps) {
+export function SessionDashboard(props: SessionDashboardProps) {
+  return (
+    <NotificationsProvider>
+      <SessionDashboardInner {...props} />
+    </NotificationsProvider>
+  );
+}
+
+function SessionDashboardInner({ api }: SessionDashboardProps) {
+  const { notify, dismiss } = useNotifications();
+  // Adapters for the legacy setError / setNotice call sites. Errors are
+  // persistent (manual-dismiss) by default; notices auto-dismiss as info
+  // toasts. Passing `null` is treated as "clear the last persistent error".
+  const lastErrorIdRef = useRef<string | null>(null);
+  const setError = useCallback((message: string | null) => {
+    if (message === null) {
+      if (lastErrorIdRef.current) {
+        dismiss(lastErrorIdRef.current);
+        lastErrorIdRef.current = null;
+      }
+      return;
+    }
+    lastErrorIdRef.current = notify({ kind: "error", message, persistent: true });
+  }, [notify, dismiss]);
+  const setNotice = useCallback((message: string | null) => {
+    if (message === null) return;
+    notify({ kind: "info", message });
+  }, [notify]);
   const [sessions, setSessions] = useState<readonly SessionCardData[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => readSessionFromUrl());
   const [defaultCwd, setDefaultCwd] = useState("");
@@ -98,7 +126,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const bumpUserActivity = useCallback((sessionId: string, when: number = Date.now()) => {
     setLastUserActivityById((current) => ({ ...current, [sessionId]: when }));
   }, []);
-  const [error, setError] = useState<string | null>(null);
   const [messagesBySession, setMessagesBySession] = useState<Record<string, TimelineMessage[]>>({});
   // Pagination state for the on-demand "load older messages" flow. The
   // initial transcript fetch is capped to INITIAL_MESSAGES_LIMIT, so for
@@ -112,7 +139,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [extensions, setExtensions] = useState<ExtensionRegistryInfo>({ commands: [], activities: [], routes: [], diagnostics: [] });
   const [extensionSettings, setExtensionSettings] = useState<ExtensionSettingsResponse | null>(null);
 
-  const [notice, setNotice] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
     return window.matchMedia("(max-width: 720px)").matches;
@@ -147,18 +173,16 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   }, [api]);
 
   const reloadExtensions = useCallback(async () => {
-    try {
-      if (api.reloadExtensions) {
-        const result = await api.reloadExtensions();
-        setExtensions(result.extensions);
-        if (api.getExtensionSettings) void refreshExtensionSettings();
-        setNotice(result.applied ? "Extensions reloaded." : "Extension reload failed; previous extensions are still active.");
-      } else {
-        await refreshExtensions();
-        setNotice("Extensions refreshed.");
-      }
-    } catch (caught) {
-      setError(errorMessage(caught));
+    // The ExtensionManagementPanel's `run()` helper surfaces a success
+    // toast (and inline error) on its own. We only need to update local
+    // state here and re-throw so the panel sees the failure.
+    if (api.reloadExtensions) {
+      const result = await api.reloadExtensions();
+      setExtensions(result.extensions);
+      if (api.getExtensionSettings) void refreshExtensionSettings();
+      if (!result.applied) throw new Error("Extension reload failed; previous extensions are still active.");
+    } else {
+      await refreshExtensions();
     }
   }, [api, refreshExtensions, refreshExtensionSettings]);
 
@@ -1072,8 +1096,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
           </div>
         </section>
 
-        {error ? <p role="alert">{error}</p> : null}
-
         <ul className="session-list">
           {visibleSessions.map((session) => (
             <li key={session.id}>
@@ -1204,6 +1226,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 onValueResponse={(id, value) => respondToExtensionUi({ id, value })}
                 onConfirmResponse={(id, confirmed) => respondToExtensionUi({ id, confirmed })}
                 onCancelResponse={(id) => respondToExtensionUi({ id, cancelled: true })}
+                onNotify={(request) => notify({
+                  id: `ext-notify-${request.id}`,
+                  kind: request.notifyType === "error" ? "error" : request.notifyType === "warning" ? "warning" : "info",
+                  message: request.message,
+                })}
               />
               {(messagesBySession[activeSession.id]?.length ?? 0) === 0 ? (
                 <InlineNameInput
@@ -1284,13 +1311,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
               <button type="button" onClick={() => setForkDialogOpen(false)}>Cancel</button>
             </footer>
           </section>
-        </div>
-      ) : null}
-
-      {notice ? (
-        <div role="status" aria-live="polite" className="dashboard-notice">
-          <span>{notice}</span>
-          <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss notice">Dismiss</button>
         </div>
       ) : null}
 

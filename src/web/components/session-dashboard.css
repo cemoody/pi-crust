@@ -967,31 +967,8 @@ a.sidebar-menu-item:visited {
   overflow-wrap: anywhere;
 }
 
-.dashboard-notice {
-  position: fixed;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--black-900);
-  color: var(--gray-050);
-  padding: 8px 12px;
-  border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-2);
-  font-size: 12.5px;
-  z-index: 110;
-}
-
-.dashboard-notice button {
-  height: 22px;
-  padding: 0 10px;
-  border-radius: var(--radius-pill);
-  background: rgba(255,255,255,0.12);
-  color: inherit;
-  font-size: 12px;
-}
+/* `.dashboard-notice` and `.cron-banner-*` were removed when notifications
+ * were unified into the global toast region; see notifications.tsx. */
 
 /* ---------- Mobile (≤720px): sidebar becomes a slide-over drawer ---------- */
 .sidebar-backdrop {

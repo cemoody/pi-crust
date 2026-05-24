@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { copyTextToClipboard } from "../utils/clipboard.js";
+import { useOptionalNotifications } from "./notifications.js";
 import "./tool-card.css";
 
 export interface ToolCardData {
@@ -64,15 +65,21 @@ export function ToolCard({ tool, expanded = tool.status !== "success", onToggle 
 }
 
 function ToolBody({ tool }: { readonly tool: ToolCardData }) {
+  const notifications = useOptionalNotifications();
+  // When toasts are available, the copy result becomes a transient toast
+  // (success: 4s, error: persistent until dismissed). Otherwise fall back
+  // to the inline pill so the component works standalone (and in tests).
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
 
   async function copyOutput(): Promise<void> {
     try {
       await copyTextToClipboard(tool.output);
-      setCopyStatus("copied");
+      if (notifications) notifications.notify({ kind: "success", message: "Copied tool output", durationMs: 1_800 });
+      else setCopyStatus("copied");
     } catch (error) {
       console.warn("Unable to copy tool output to clipboard", error);
-      setCopyStatus("failed");
+      if (notifications) notifications.notify({ kind: "error", message: "Failed to copy tool output" });
+      else setCopyStatus("failed");
     }
   }
 
@@ -81,7 +88,7 @@ function ToolBody({ tool }: { readonly tool: ToolCardData }) {
       <ToolSpecificRenderer tool={tool} />
       <footer>
         <button type="button" onClick={() => void copyOutput()}>Copy output</button>
-        {copyStatus !== "idle" ? (
+        {!notifications && copyStatus !== "idle" ? (
           <span className={copyStatus === "failed" ? "copy-status failed" : "copy-status"} role="status">
             {copyStatus === "failed" ? "copy failed" : "copied"}
           </span>
