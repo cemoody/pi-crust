@@ -131,7 +131,7 @@ describe("PresentationArtifactCard — edit mode", () => {
   it("Edit toggle in the modal rebuilds the iframe with contenteditable=plaintext-only", async () => {
     renderTimeline();
     await act(async () => { await flush(); });
-    fireEvent.click(screen.getByRole("button", { name: "Present deck" }));
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
     const editBtn = await screen.findByRole("button", { name: /^Edit/ });
     fireEvent.click(editBtn);
     const modal = screen.getByTestId("artifact-presentation-modal") as HTMLIFrameElement;
@@ -144,7 +144,7 @@ describe("PresentationArtifactCard — edit mode", () => {
   it("debounces pi-deck-edit messages into a single PATCH (500 ms)", async () => {
     renderTimeline();
     await act(async () => { await flush(); });
-    fireEvent.click(screen.getByRole("button", { name: "Present deck" }));
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Edit/ }));
 
     act(() => {
@@ -172,7 +172,7 @@ describe("PresentationArtifactCard — edit mode", () => {
   it("flushes pending edits when the modal closes", async () => {
     renderTimeline();
     await act(async () => { await flush(); });
-    fireEvent.click(screen.getByRole("button", { name: "Present deck" }));
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Edit/ }));
 
     act(() => {
@@ -193,7 +193,7 @@ describe("PresentationArtifactCard — edit mode", () => {
     nextPatchResponse = { ok: false, status: 400, body: { error: "validation failed" } };
     renderTimeline();
     await act(async () => { await flush(); });
-    fireEvent.click(screen.getByRole("button", { name: "Present deck" }));
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Edit/ }));
 
     act(() => {
@@ -215,7 +215,7 @@ describe("PresentationArtifactCard — edit mode", () => {
   it("ignores messages from other windows (event.source check) and unknown deckIds", async () => {
     renderTimeline();
     await act(async () => { await flush(); });
-    fireEvent.click(screen.getByRole("button", { name: "Present deck" }));
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Edit/ }));
 
     // Edit targeted at a different deck — must be ignored.
@@ -237,7 +237,7 @@ describe("PresentationArtifactCard — edit mode", () => {
     } as never);
     render(<MessageTimeline messages={[messageWithTemplated]} sessionId={SESSION_ID} />);
     await act(async () => { await flush(); });
-    fireEvent.click(screen.getByRole("button", { name: "Present deck" }));
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Edit/ }));
     expect(await screen.findByText(/Edit not supported for templated slides/i)).toBeInTheDocument();
   });

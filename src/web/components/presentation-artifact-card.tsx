@@ -1,6 +1,6 @@
 /**
  * PresentationArtifactCard — renders a `show_presentation` artifact as a
- * preview iframe with a "Present deck" modal, an editable mode, optimistic
+ * preview iframe with a "Full screen" modal, an editable mode, optimistic
  * PATCH edits debounced through `/api/sessions/:id/presentations/:deckId/deck.json`,
  * and a Download HTML button backed by `compileStandalonePresentationHtml`.
  *
@@ -22,6 +22,8 @@ import { TimelineSessionContext } from "./timeline-session-context.js";
 export function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: unknown; readonly title: string }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [presenting, setPresenting] = useState(false);
+  const modalRef = useRef<HTMLDivElement | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const sessionId = useContext(TimelineSessionContext);
   const parsed = useMemo((): { deck?: PresentationDeck; error?: string } => {
@@ -132,7 +134,41 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
   }, [open, editing, deckId, optimistic, persisted, baseDeck]);
 
   // Flush pending edits when closing the modal.
-  const closeModal = () => { void flushNow.current(); setOpen(false); setEditing(false); };
+  const closeModal = () => {
+    void flushNow.current();
+    setOpen(false);
+    setEditing(false);
+    setPresenting(false);
+    if (typeof document !== "undefined" && document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  };
+
+  // Toggle minimal “presentation mode” — hides the toolbar and requests
+  // real browser fullscreen on the modal so the slides own the viewport.
+  const enterPresentationMode = () => {
+    setPresenting(true);
+    const el = modalRef.current;
+    if (el && typeof el.requestFullscreen === "function" && !document.fullscreenElement) {
+      void el.requestFullscreen().catch(() => undefined);
+    }
+  };
+  const exitPresentationMode = () => {
+    setPresenting(false);
+    if (typeof document !== "undefined" && document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  };
+
+  // Sync presentation-mode state if the user exits fullscreen via Esc / browser UI.
+  useEffect(() => {
+    if (!open) return;
+    function onFsChange() {
+      if (!document.fullscreenElement && presenting) setPresenting(false);
+    }
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, [open, presenting]);
 
   // The modal iframe's srcDoc is deliberately *frozen* while editing. If
   // we recompiled it whenever `persisted` updated (which happens after
@@ -224,7 +260,7 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
           <span>{deck.slides.length} slide{deck.slides.length === 1 ? "" : "s"}</span>
         </div>
         <div className="presentation-actions">
-          <button type="button" onClick={() => setOpen(true)}>Present deck</button>
+          <button type="button" onClick={() => setOpen(true)}>Full screen</button>
           {downloadUrl ? (
             <a href={downloadUrl} download={`${slugify(deck.title || title)}.html`}>Download HTML</a>
           ) : (
@@ -250,20 +286,54 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{coerceMarkdownInput(markdown)}</ReactMarkdown>
       </details>
       {open ? (
-        <div className="presentation-modal" role="dialog" aria-modal="true" aria-label={`${deck.title} presentation`}>
-          <div className="presentation-modal-toolbar">
-            <strong>{deck.title}</strong>
+        <div
+          ref={modalRef}
+          className={`presentation-modal${presenting ? " presentation-modal-presenting" : ""}`}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${deck.title} presentation`}
+        >
+          {presenting ? (
             <button
               type="button"
-              onClick={() => setEditing((v) => !v)}
-              aria-pressed={editing}
-              disabled={!sessionId || !deckId}
-              title={!sessionId || !deckId ? "Editing requires a session and a deck id" : undefined}
+              className="presentation-modal-exit"
+              onClick={exitPresentationMode}
+              aria-label="Exit presentation mode"
+              title="Exit presentation mode (Esc)"
             >
-              {editing ? "Editing…" : "Edit"}
+              ×
             </button>
-            <button type="button" onClick={closeModal} aria-label="Close presentation">×</button>
-          </div>
+          ) : (
+            <div className="presentation-modal-toolbar">
+              <strong>{deck.title}</strong>
+              <div className="presentation-modal-toolbar-actions">
+                <button
+                  type="button"
+                  onClick={() => setEditing((v) => !v)}
+                  aria-pressed={editing}
+                  disabled={!sessionId || !deckId}
+                  title={!sessionId || !deckId ? "Editing requires a session and a deck id" : undefined}
+                >
+                  {editing ? "Editing…" : "Edit"}
+                </button>
+                <button
+                  type="button"
+                  onClick={enterPresentationMode}
+                  title="Hide controls and fill the screen"
+                >
+                  Presentation mode
+                </button>
+                <button
+                  type="button"
+                  className="presentation-modal-close"
+                  onClick={closeModal}
+                  aria-label="Close presentation"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          )}
           {editing && deck.slides.some((slide) => typeof slide.html === "string" && slide.html.length > 0) ? (
             <div className="presentation-edit-banner" role="status">
               Edit not supported for templated slides.

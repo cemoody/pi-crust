@@ -688,14 +688,18 @@
 
 .presentation-modal {
   position: fixed;
-  inset: 18px;
+  inset: 0;
   z-index: 1000;
   display: grid;
   grid-template-rows: auto 1fr;
   background: #111;
-  border-radius: 14px;
+  border-radius: 0;
   overflow: hidden;
   box-shadow: 0 24px 80px rgba(0,0,0,.45);
+}
+
+.presentation-modal-presenting {
+  grid-template-rows: 1fr;
 }
 
 .presentation-modal-toolbar {
@@ -708,15 +712,60 @@
   color: white;
 }
 
+.presentation-modal-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .presentation-modal-toolbar button {
-  width: 32px;
   height: 32px;
+  padding: 0 12px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.2);
   background: rgba(255,255,255,.08);
   color: white;
-  font-size: 22px;
+  font-size: 13px;
+  line-height: 1;
   cursor: pointer;
+}
+
+.presentation-modal-toolbar button:hover:not(:disabled) {
+  background: rgba(255,255,255,.16);
+}
+
+.presentation-modal-toolbar button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.presentation-modal-toolbar .presentation-modal-close {
+  width: 32px;
+  padding: 0;
+  font-size: 22px;
+}
+
+.presentation-modal-exit {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(0,0,0,.35);
+  color: white;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  opacity: .35;
+  transition: opacity .15s ease;
+}
+
+.presentation-modal-exit:hover,
+.presentation-modal-exit:focus-visible {
+  opacity: 1;
 }
 
 .presentation-modal iframe {

@@ -16,7 +16,7 @@ test("presentation artifact renders preview and present modal", async ({ page })
   expect(download.suggestedFilename()).toBe("executive-signal-brief.html");
   await page.screenshot({ path: "test-results/presentation-artifact-card.png", fullPage: true });
 
-  await page.getByRole("button", { name: "Present deck" }).click();
+  await page.getByRole("button", { name: "Full screen" }).click();
 
   await expect(page.getByRole("dialog", { name: /Executive Signal Brief presentation/ })).toBeVisible();
   await expect(page.locator('[data-testid="artifact-presentation-modal"]')).toBeVisible();
@@ -44,7 +44,7 @@ test("tool-result presentation artifact renders inline after page reload", async
   await expect(page.locator('[data-testid="artifact-presentation"]').getByText("2 slides")).toBeVisible();
 
   // Spot-check: opening the Present modal still works.
-  await page.getByRole("button", { name: "Present deck" }).click();
+  await page.getByRole("button", { name: "Full screen" }).click();
   await expect(page.getByRole("dialog", { name: /Tool-result Signal Brief presentation/ })).toBeVisible();
   await page.getByRole("button", { name: "Close presentation" }).click();
 });

@@ -35,7 +35,7 @@ describe("presentation artifact rendering", () => {
     expect(screen.getByText("2 slides")).toBeInTheDocument();
     expect(screen.getByTestId("artifact-presentation-preview")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Present deck" }));
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
 
     expect(screen.getByRole("dialog", { name: /Executive Signal Brief presentation/ })).toBeInTheDocument();
     expect(screen.getByTestId("artifact-presentation-modal")).toBeInTheDocument();

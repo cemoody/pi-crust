@@ -61,7 +61,7 @@ test("npx-style fresh install can enable presentation artifact rendering for an 
 
     await page.getByRole("link", { name: /^Presentation artifact session\b/ }).click();
     await expect(page.locator('[data-testid="artifact-presentation"]')).toBeVisible();
-    await expect(page.getByRole("button", { name: "Present deck" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Full screen" })).toBeVisible();
   } finally {
     if (server?.pid) {
       try { process.kill(-server.pid, "SIGTERM"); } catch { server.kill("SIGTERM"); }
