@@ -196,6 +196,15 @@ export interface ExtensionActivityInfo {
   readonly webModuleUrl?: string;
 }
 
+export interface ExtensionSettingsSectionInfo {
+  readonly id: string;
+  readonly title: string;
+  readonly order?: number;
+  readonly description?: string;
+  readonly extensionId: string;
+  readonly webModuleUrl?: string;
+}
+
 export interface ExtensionRouteInfo {
   readonly method: string;
   readonly path: string;
@@ -212,6 +221,11 @@ export interface ExtensionDiagnosticInfo {
 export interface ExtensionRegistryInfo {
   readonly commands: readonly ExtensionCommandInfo[];
   readonly activities: readonly ExtensionActivityInfo[];
+  /**
+   * Settings sections contributed by extensions via `prc.settings.registerSection`.
+   * Optional for backwards compatibility with older /api/extensions payloads.
+   */
+  readonly settings?: readonly ExtensionSettingsSectionInfo[];
   readonly routes: readonly ExtensionRouteInfo[];
   readonly diagnostics: readonly ExtensionDiagnosticInfo[];
 }

@@ -59,9 +59,17 @@ describe("bundled pi-crust extension packages", () => {
     await fs.mkdir(presentationDir, { recursive: true });
     await fs.writeFile(path.join(presentationDir, "deck.html"), "<!doctype html><title>Deck</title>");
 
-    await expect(fetchJson(`${baseUrl}/api/extensions`)).resolves.toMatchObject({
+    const extensionsView = await fetchJson<{ routes: unknown[]; settings: Array<{ extensionId: string; title: string; webModuleUrl?: string }>; activities: Array<{ extensionId: string }> }>(`${baseUrl}/api/extensions`);
+    expect(extensionsView).toMatchObject({
       routes: expect.arrayContaining([{ extensionId: "@cemoody/pi-crust-ext-presentations", method: "GET", path: "/api/sessions/:sessionId/presentations/:file", mount: "api" }]),
     });
+    // The presentations extension must own its Settings UI through registerSection
+    // (with a webModuleUrl) and must NOT add a sidebar activity.
+    const contributedSection = extensionsView.settings.find((s) => s.extensionId === "@cemoody/pi-crust-ext-presentations");
+    expect(contributedSection).toBeDefined();
+    expect(contributedSection!.title).toMatch(/.+/);
+    expect(contributedSection!.webModuleUrl).toMatch(/^\/api\/extensions\/.+\/assets\/.+/);
+    expect(extensionsView.activities.find((a) => a.extensionId === "@cemoody/pi-crust-ext-presentations")).toBeUndefined();
     const response = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(session.id)}/presentations/deck.html`);
 
     expect(response.status).toBe(200);

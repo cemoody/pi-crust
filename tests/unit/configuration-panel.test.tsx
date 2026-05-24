@@ -93,7 +93,7 @@ describe("ConfigurationPanel", () => {
 });
 
 describe("presentation template directories section", () => {
-  it("lists existing dirs and saves additions as JSON", () => {
+  it("is no longer rendered by ConfigurationPanel — the presentations extension owns this UI now", () => {
     const onSaveSetting = vi.fn();
     const handlers = {
       onLogin: vi.fn(), onLogout: vi.fn(), onApiKey: vi.fn(), onModelSelect: vi.fn(), onThinkingSelect: vi.fn(),
@@ -114,12 +114,11 @@ describe("presentation template directories section", () => {
       extensions={[]}
       {...handlers}
     />);
-    const section = screen.getByLabelText("Presentation template directories");
-    expect(section.textContent).toContain("/a/b");
-    fireEvent.click(screen.getByRole("button", { name: "Remove /a/b" }));
-    expect(onSaveSetting).toHaveBeenLastCalledWith("presentations.templateDirs", []);
-    fireEvent.change(screen.getByLabelText("New template directory"), { target: { value: "/x/y" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add directory" }));
-    expect(onSaveSetting).toHaveBeenLastCalledWith("presentations.templateDirs", ["/a/b","/x/y"]);
+    expect(screen.queryByLabelText("Presentation template directories")).toBeNull();
+    expect(screen.queryByLabelText("New template directory")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove /a/b" })).toBeNull();
+    // Legacy dir must not leak out via any other UI surface here.
+    expect(screen.queryByText("/a/b")).toBeNull();
+    expect(onSaveSetting).not.toHaveBeenCalled();
   });
 });
