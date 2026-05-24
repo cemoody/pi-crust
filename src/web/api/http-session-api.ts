@@ -114,22 +114,88 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     // sse-connection-pool.spec.ts for the repro.
     const tab = getTabSessionId();
     const qs = tab ? `?tabSessionId=${encodeURIComponent(tab)}` : "";
-    const source = new EventSource(`${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/events${qs}`);
+    const url = `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/events${qs}`;
+
+    let source: EventSource;
+    let lastMessageAt = Date.now();
+    let silenceWarnedAt = 0;
+    let stopped = false;
+
+    const wireHandlers = () => {
+      source.onmessage = (event) => {
+        lastMessageAt = Date.now();
+        try {
+          onEvent(JSON.parse(event.data));
+        } catch {
+          // ignore malformed payloads
+        }
+      };
+      source.onopen = () => {
+        lastMessageAt = Date.now();
+        recordClientEvent({
+          kind: "sse-client-open",
+          sessionId,
+          tabSessionId: getTabSessionId(),
+        });
+      };
+      source.onerror = () => {
+        recordClientEvent({
+          kind: "sse-client-error",
+          sessionId,
+          readyState: source.readyState,
+          ageMs: Date.now() - openedAt,
+          tabSessionId: getTabSessionId(),
+        });
+      };
+    };
+
+    const openSource = () => {
+      source = new EventSource(url);
+      wireHandlers();
+      lastMessageAt = Date.now();
+    };
+    openSource();
+
+    // Re-establish a stream that the browser tore down. Mobile browsers
+    // (iOS Safari / Android Chrome) suspend networking when a tab is
+    // backgrounded; after ~minutes the EventSource ends up either CLOSED
+    // with no `onerror` delivered, or stuck in OPEN with a dead socket.
+    // Without this, returning to the tab after ~20 minutes leaves the UI
+    // permanently silent until the user reloads. See the
+    // "mobile background reconnect" suite in
+    // tests/unit/http-session-api-telemetry.test.ts.
+    const reconnect = (reason: string) => {
+      if (stopped) return;
+      try { source.close(); } catch { /* ignore */ }
+      recordClientEvent({
+        kind: "sse-client-reconnect",
+        sessionId,
+        reason,
+        ageMs: Date.now() - openedAt,
+        tabSessionId: getTabSessionId(),
+      });
+      openSource();
+    };
 
     // Silence detector. The 2026-05-24 outage was a session whose SSE was
     // OPEN (no error fired) but received zero events because the API's
     // in-memory session handle had silently closed. EventSource never fires
     // 'error' for that — the TCP connection is healthy, the data just
     // doesn't flow. Emit a structured client-side warning so we can detect
-    // the symptom even when the browser API gives us no signal.
-    let lastMessageAt = Date.now();
-    let silenceWarnedAt = 0;
+    // the symptom even when the browser API gives us no signal, then self-
+    // heal by reconnecting.
     const silenceTimer = setInterval(() => {
       // Only count silence while the tab is visible; a backgrounded tab
       // legitimately may not be receiving events because the server doesn't
       // push to it. visibilityState gated so we don't flood the log.
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      if (source.readyState !== EventSource.OPEN) return;
+      if (source.readyState !== EventSource.OPEN) {
+        // Visible tab + non-OPEN stream means the browser killed the SSE.
+        // Recover proactively (covers the case where visibilitychange did
+        // not fire on resume, or fired before readyState updated).
+        reconnect("silence-tick-not-open");
+        return;
+      }
       const idleMs = Date.now() - lastMessageAt;
       if (idleMs >= SSE_SILENCE_THRESHOLD_MS && Date.now() - silenceWarnedAt >= SSE_SILENCE_THRESHOLD_MS) {
         silenceWarnedAt = Date.now();
@@ -143,34 +209,36 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
       }
     }, SSE_SILENCE_CHECK_INTERVAL_MS);
 
-    source.onmessage = (event) => {
-      lastMessageAt = Date.now();
-      try {
-        onEvent(JSON.parse(event.data));
-      } catch {
-        // ignore malformed payloads
+    const onVisibilityChange = () => {
+      if (typeof document === "undefined") return;
+      if (document.visibilityState !== "visible") return;
+      // Mobile suspend signature: the browser closed the underlying socket
+      // while we were hidden. Reconnect immediately so the user sees
+      // streaming resume the instant they return to the tab.
+      if (source.readyState !== EventSource.OPEN) {
+        reconnect("visibility-restored-stream-closed");
+        return;
+      }
+      // "Zombie socket" signature: readyState lies and says OPEN, but no
+      // bytes have flowed for the suspend window. If we were hidden long
+      // enough that any server-pushed event must have been missed, force
+      // a refresh.
+      const idleMs = Date.now() - lastMessageAt;
+      if (idleMs >= SSE_SILENCE_THRESHOLD_MS) {
+        reconnect("visibility-restored-stream-stale");
       }
     };
-    source.onopen = () => {
-      lastMessageAt = Date.now();
-      recordClientEvent({
-        kind: "sse-client-open",
-        sessionId,
-        tabSessionId: getTabSessionId(),
-      });
-    };
-    source.onerror = () => {
-      recordClientEvent({
-        kind: "sse-client-error",
-        sessionId,
-        readyState: source.readyState,
-        ageMs: Date.now() - openedAt,
-        tabSessionId: getTabSessionId(),
-      });
-    };
+    if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+
     return () => {
+      stopped = true;
       clearInterval(silenceTimer);
-      source.close();
+      if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+      try { source.close(); } catch { /* ignore */ }
       recordClientEvent({
         kind: "sse-client-close",
         sessionId,

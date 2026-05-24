@@ -207,3 +207,169 @@ describe("sse-silence detector behavior", () => {
     unsubscribe();
   });
 });
+
+/**
+ * Mobile-browser background-suspend regression.
+ *
+ * Repro: on iOS Safari / Android Chrome, when a tab is sent to the
+ * background for many minutes (the user reports ~20m), the OS suspends
+ * networking and the EventSource is terminated. When the user returns,
+ * the page is still mounted with the same `streamEvents` subscription,
+ * but no new events ever arrive because:
+ *   (a) the EventSource is in readyState=CLOSED (browser gave up),
+ *       and the browser does NOT auto-reconnect after suspend; OR
+ *   (b) the EventSource is technically OPEN but the underlying TCP
+ *       socket is dead (no data, no error fires).
+ *
+ * The expected behavior: the client SHOULD transparently re-establish
+ * the SSE connection so the user sees streaming resume without having
+ * to reload the tab.
+ */
+describe("mobile background reconnect (visibility change)", () => {
+  let visibilityState: "visible" | "hidden";
+  let visibilityListeners: Array<() => void>;
+  let constructedSources: Array<{ url: string; readyState: number; close: Mock; onmessage: ((ev: { data: string }) => void) | null; onopen: (() => void) | null; onerror: (() => void) | null }>;
+  let fetchSpy: Mock;
+
+  beforeEach(() => {
+    visibilityState = "visible";
+    visibilityListeners = [];
+    constructedSources = [];
+
+    vi.stubGlobal("EventSource", class MockEventSource {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      url: string;
+      onmessage: ((ev: { data: string }) => void) | null = null;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      private _state = 1;
+      get readyState() { return this._state; }
+      set readyState(v: number) { this._state = v; }
+      close = vi.fn(() => { this._state = 2; });
+      constructor(url: string) {
+        this.url = url;
+        const self = this;
+        constructedSources.push({
+          get url() { return self.url; },
+          get readyState() { return self.readyState; },
+          set readyState(v: number) { self.readyState = v; },
+          close: self.close,
+          get onmessage() { return self.onmessage; },
+          set onmessage(v) { self.onmessage = v; },
+          get onopen() { return self.onopen; },
+          set onopen(v) { self.onopen = v; },
+          get onerror() { return self.onerror; },
+          set onerror(v) { self.onerror = v; },
+        } as never);
+        setTimeout(() => { this.onopen?.(); }, 0);
+      }
+    });
+
+    fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    vi.stubGlobal("document", {
+      get visibilityState() { return visibilityState; },
+      addEventListener: (event: string, fn: () => void) => {
+        if (event === "visibilitychange") visibilityListeners.push(fn);
+      },
+      removeEventListener: (event: string, fn: () => void) => {
+        if (event === "visibilitychange") {
+          visibilityListeners = visibilityListeners.filter((listener) => listener !== fn);
+        }
+      },
+    });
+    vi.stubGlobal("window", undefined);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  function dispatchVisibilityChange(state: "visible" | "hidden") {
+    visibilityState = state;
+    for (const listener of [...visibilityListeners]) listener();
+  }
+
+  it("reconnects the EventSource when the tab returns from background after the browser closed the stream (the 20-minute mobile bug)", async () => {
+    const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
+    const api = new HttpSessionDashboardApi();
+    const unsubscribe = api.streamEvents("sid-mobile", () => {});
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(constructedSources.length, "initial connect").toBe(1);
+
+    // User backgrounds the tab on their phone.
+    dispatchVisibilityChange("hidden");
+
+    // ~20 minutes elapse. The mobile browser closes the SSE silently:
+    // readyState flips to CLOSED but onerror is NOT delivered to the page
+    // (it was suspended). No silence telemetry fires because the tab is
+    // hidden.
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    constructedSources[0]!.readyState = 2; // CLOSED
+
+    // User taps the tab again.
+    dispatchVisibilityChange("visible");
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(
+      constructedSources.length,
+      "client should have transparently reconnected the SSE so streaming resumes without a page reload",
+    ).toBeGreaterThanOrEqual(2);
+
+    // And the new EventSource should be pointed at the same session.
+    expect(constructedSources[1]!.url).toContain("/api/sessions/sid-mobile/events");
+
+    unsubscribe();
+  });
+
+  it("reconnects when the tab returns from background even if readyState still says OPEN but no data has flowed for a long time", async () => {
+    const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
+    const api = new HttpSessionDashboardApi();
+    const unsubscribe = api.streamEvents("sid-stale", () => {});
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(constructedSources.length).toBe(1);
+
+    dispatchVisibilityChange("hidden");
+    // 20 min in the background, no messages, readyState still OPEN.
+    // (This is the iOS "zombie socket" pattern.)
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    dispatchVisibilityChange("visible");
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(
+      constructedSources.length,
+      "a long-silent stream should be re-established on foreground",
+    ).toBeGreaterThanOrEqual(2);
+
+    unsubscribe();
+  });
+
+  it("does not reconnect on visibilitychange if the stream is healthy (recent messages, OPEN)", async () => {
+    const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
+    const api = new HttpSessionDashboardApi();
+    const unsubscribe = api.streamEvents("sid-healthy", () => {});
+    await vi.advanceTimersByTimeAsync(1);
+
+    // A message arrives, then 5 s of normal idleness, then user briefly
+    // switches tabs and comes right back.
+    constructedSources[0]!.onmessage?.({ data: JSON.stringify({ type: "agent_start" }) });
+    await vi.advanceTimersByTimeAsync(5_000);
+    dispatchVisibilityChange("hidden");
+    await vi.advanceTimersByTimeAsync(2_000);
+    dispatchVisibilityChange("visible");
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(
+      constructedSources.length,
+      "a healthy stream must not be torn down on every quick visibility flip",
+    ).toBe(1);
+
+    unsubscribe();
+  });
+});
+
+
