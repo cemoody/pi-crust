@@ -22,6 +22,7 @@ import { installExtensionPackage, readPrcSettings, removeExtensionPackage, setEx
 import { createPrcExtensionRuntime, type PrcExtensionRuntime } from "../extensions/runtime.js";
 import { defaultArtifactFileRoots, resolveArtifactFile, streamArtifactFile } from "./artifact-file.js";
 import { coerceTimestamp, isRecord } from "../shared/util.js";
+import { lookupSessionMessage } from "./http-api-message-lookup.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -791,17 +792,17 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     return sendJson(res, 200, toDashboardMessages(messages, { sessionId: session.id }));
   }
 
+  // Shared by the three /messages/:msgid/{images,details,tool-output}
+  // routes below: open the session and find one message by id.
+  const lookupContext = { getOrOpenSession: (id: string) => getOrOpenSession(context, id) };
+
   // Lazy fetch of inline image bytes that we strip from /messages payloads
   // to keep the timeline JSON small. Image URLs are issued by
   // toDashboardMessages; this route resolves them back to raw bytes.
   const imageMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/images\/(\d+)$/);
   if (req.method === "GET" && imageMatch) {
-    const session = await getOrOpenSession(context, decodeURIComponent(imageMatch[1]!));
-    const messageId = decodeURIComponent(imageMatch[2]!);
-    const imageIndex = Number(imageMatch[3]!);
-    const allMessages = await session.handle.getMessages();
-    const message = findMessageById(allMessages, messageId);
-    const image = message?.images?.[imageIndex];
+    const message = await lookupSessionMessage(lookupContext, decodeURIComponent(imageMatch[1]!), decodeURIComponent(imageMatch[2]!));
+    const image = message?.images?.[Number(imageMatch[3]!)];
     if (!image) return sendJson(res, 404, { error: "image not found" });
     const bytes = Buffer.from(image.data, "base64");
     res.writeHead(200, {
@@ -818,10 +819,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   // exceeds MAX_INLINE_DETAILS_BYTES.
   const detailsMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/details$/);
   if (req.method === "GET" && detailsMatch) {
-    const session = await getOrOpenSession(context, decodeURIComponent(detailsMatch[1]!));
-    const messageId = decodeURIComponent(detailsMatch[2]!);
-    const allMessages = await session.handle.getMessages();
-    const message = findMessageById(allMessages, messageId);
+    const message = await lookupSessionMessage(lookupContext, decodeURIComponent(detailsMatch[1]!), decodeURIComponent(detailsMatch[2]!));
     if (!message?.details) return sendJson(res, 404, { error: "details not found" });
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
@@ -834,10 +832,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   // Lazy fetch of full tool output that we truncate in /messages payloads.
   const toolOutputMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/tool-output$/);
   if (req.method === "GET" && toolOutputMatch) {
-    const session = await getOrOpenSession(context, decodeURIComponent(toolOutputMatch[1]!));
-    const messageId = decodeURIComponent(toolOutputMatch[2]!);
-    const allMessages = await session.handle.getMessages();
-    const message = findMessageById(allMessages, messageId);
+    const message = await lookupSessionMessage(lookupContext, decodeURIComponent(toolOutputMatch[1]!), decodeURIComponent(toolOutputMatch[2]!));
     if (!message?.tool) return sendJson(res, 404, { error: "tool output not found" });
     res.writeHead(200, {
       "Content-Type": "text/plain; charset=utf-8",
@@ -1448,14 +1443,6 @@ function stripDetailsForTransport(
     detailsTruncated: true,
     detailsFullBytes: fullBytes,
   };
-}
-
-function findMessageById(messages: readonly SessionMessage[], id: string): SessionMessage | undefined {
-  for (let index = 0; index < messages.length; index++) {
-    const candidate = messages[index]!;
-    if (`${candidate.timestamp}-${index}` === id) return candidate;
-  }
-  return undefined;
 }
 
 /**
