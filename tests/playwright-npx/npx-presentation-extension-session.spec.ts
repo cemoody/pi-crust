@@ -83,7 +83,11 @@ async function npmPack(root: string): Promise<string> {
 }
 
 async function copyPresentationsExtension(extensionDir: string): Promise<void> {
-  await fs.cp(path.join(repoRoot, "extensions", "presentations"), extensionDir, { recursive: true });
+  const { createRequire } = await import("node:module");
+  const sourceDir = path.dirname(
+    createRequire(import.meta.url).resolve("@cemoody/pi-crust-ext-presentations/package.json"),
+  );
+  await fs.cp(sourceDir, extensionDir, { recursive: true });
   const pkgPath = path.join(extensionDir, "package.json");
   const pkg = JSON.parse(await fs.readFile(pkgPath, "utf8"));
   pkg.name = "dev.presentations";

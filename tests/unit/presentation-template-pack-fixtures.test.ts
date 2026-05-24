@@ -1,10 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { compileRevealHtml } from "../../src/presentations/reveal.js";
 import { validatePresentationDeck } from "../../src/presentations/schema.js";
 
-const packDir = path.resolve(process.cwd(), "extensions", "presentations", "templates", "builtin");
+const presentationsExtDir = path.dirname(
+  createRequire(import.meta.url).resolve("@cemoody/pi-crust-ext-presentations/package.json"),
+);
+const packDir = path.join(presentationsExtDir, "templates", "builtin");
 
 describe("built-in presentation template pack fixtures", () => {
   it("documents starter layouts and validates example decks", async () => {

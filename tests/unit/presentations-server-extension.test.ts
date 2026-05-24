@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
+
+const presentationsExtDir = path.dirname(
+  createRequire(import.meta.url).resolve("@cemoody/pi-crust-ext-presentations/package.json"),
+);
 import { bootstrapPrcExtensions } from "../../src/extensions/bootstrap.js";
 import { writePrcSettings } from "../../src/extensions/packages.js";
 
@@ -15,13 +20,13 @@ describe("bundled core.presentations server extension", () => {
   it("does not register presentation routes when disabled", async () => {
     const root = await tempRoot("prc-presentations-disabled-");
     const configDir = path.join(root, "config");
-    await writePrcSettings(configDir, { disabledExtensions: ["core.presentations"] });
+    await writePrcSettings(configDir, { disabledExtensions: ["@cemoody/pi-crust-ext-presentations"] });
 
     const result = await bootstrapPrcExtensions({
       configDir,
       cwd: root,
       dataDir: path.join(root, "data"),
-      bundledPackagePaths: [path.resolve(process.cwd(), "extensions", "presentations")],
+      bundledPackagePaths: [presentationsExtDir],
     });
 
     expect(await result.host.serverRoutes.dispatch(ReadableRequest.empty("GET") as never, new URL("http://localhost/api/sessions/s1/presentations/deck.html"))).toBeUndefined();
@@ -39,7 +44,7 @@ describe("bundled core.presentations server extension", () => {
       configDir: path.join(root, "config"),
       cwd: root,
       dataDir: path.join(root, "data"),
-      bundledPackagePaths: [path.resolve(process.cwd(), "extensions", "presentations")],
+      bundledPackagePaths: [presentationsExtDir],
       sessions: { create: async () => ({ id: sessionId, cwd: root }), get: async () => ({ id: sessionId, cwd: root }) },
     });
 
@@ -60,7 +65,7 @@ describe("bundled core.presentations server extension", () => {
 
   it("reports unknown sessions and malformed session state safely", async () => {
     const root = await tempRoot("prc-presentations-session-");
-    const extensionPath = path.resolve(process.cwd(), "extensions", "presentations");
+    const extensionPath = presentationsExtDir;
     const unknown = await bootstrapPrcExtensions({
       configDir: path.join(root, "config-unknown"),
       cwd: root,
@@ -102,7 +107,7 @@ describe("core.presentations template-pack discovery", () => {
       configDir,
       cwd: root,
       dataDir: path.join(root, "data"),
-      bundledPackagePaths: [path.resolve(process.cwd(), "extensions", "presentations")],
+      bundledPackagePaths: [presentationsExtDir],
       env: { ...process.env, PI_CRUST_CONFIG_DIR: configDir },
     });
 

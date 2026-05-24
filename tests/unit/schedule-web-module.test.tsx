@@ -1,8 +1,18 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import * as React from "react";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+
+const scheduleWebUrl = pathToFileURL(
+  path.join(
+    path.dirname(createRequire(import.meta.url).resolve("@cemoody/pi-crust-ext-schedule/package.json")),
+    "web.mjs",
+  ),
+).href;
 
 describe("bundled schedule web module", () => {
   it("can use host navigation after run-now creates a session", async () => {
@@ -17,8 +27,8 @@ describe("bundled schedule web module", () => {
       delete: vi.fn(),
       runNow: vi.fn(async () => ({ job: {}, sessionId: "spawned", sessionFile: "/sessions/spawned.jsonl" })),
     };
-    // @ts-expect-error bundled extension web modules are plain JavaScript assets.
-    const { renderActivity } = await import("../../extensions/schedule/web.mjs") as { renderActivity: (props: { React: typeof React; api: unknown; navigation?: { openSession(sessionId: string): void } }) => React.ReactNode };
+    
+    const { renderActivity } = await import(/* @vite-ignore */ scheduleWebUrl) as { renderActivity: (props: { React: typeof React; api: unknown; navigation?: { openSession(sessionId: string): void } }) => React.ReactNode };
 
     render(<>{renderActivity({ React, api: { cron }, navigation: { openSession } })}</>);
     await screen.findByText("Nightly");
@@ -28,8 +38,8 @@ describe("bundled schedule web module", () => {
   });
 
   it("does not remount and refetch when the host dashboard rerenders", async () => {
-    // @ts-expect-error bundled extension web modules are plain JavaScript assets.
-    const { renderActivity } = await import("../../extensions/schedule/web.mjs") as { renderActivity: (props: { React: typeof React; api: unknown }) => React.ReactNode };
+    
+    const { renderActivity } = await import(/* @vite-ignore */ scheduleWebUrl) as { renderActivity: (props: { React: typeof React; api: unknown }) => React.ReactNode };
     const cron = {
       list: vi.fn(async () => ({ jobs: [], filePath: "/cron.json" })),
       create: vi.fn(),
@@ -57,8 +67,8 @@ describe("bundled schedule web module", () => {
   });
 
   it("can use the generic host request helper instead of a built-in cron client", async () => {
-    // @ts-expect-error bundled extension web modules are plain JavaScript assets.
-    const { renderActivity } = await import("../../extensions/schedule/web.mjs") as { renderActivity: (props: { React: typeof React; api: unknown }) => React.ReactNode };
+    
+    const { renderActivity } = await import(/* @vite-ignore */ scheduleWebUrl) as { renderActivity: (props: { React: typeof React; api: unknown }) => React.ReactNode };
     const request = vi.fn(async (path: string) => {
       expect(path).toBe("/api/cron");
       return { jobs: [], filePath: "/cron.json" };

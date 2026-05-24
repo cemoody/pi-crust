@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
+
+const branchingExtDir = path.dirname(
+  createRequire(import.meta.url).resolve("@cemoody/pi-crust-ext-branching/package.json"),
+);
 import { createPrcExtensionRuntime } from "../../src/extensions/runtime.js";
 import { createHttpApiServer } from "../../src/server/http-api-server.js";
 import { MockPiAdapter } from "../../src/server/pi/mock-pi-adapter.js";
@@ -85,7 +90,7 @@ async function makeServer() {
     configDir: path.join(root, "config"),
     cwd: projectRoot,
     dataDir: path.join(root, "data"),
-    bundledPackagePaths: [path.join(repoRoot, "extensions", "branching")],
+    bundledPackagePaths: [branchingExtDir],
     sessions: createSessionsApi(registry),
   });
   const server = createHttpApiServer({ registry, adapterKind: "test", projectRoot, sessionRoot, defaultCwd: projectRoot, extensionRuntime });

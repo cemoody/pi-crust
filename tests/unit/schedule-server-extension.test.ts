@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+
+const require_ = createRequire(import.meta.url);
+const scheduleExtDir = path.dirname(require_.resolve("@cemoody/pi-crust-ext-schedule/package.json"));
 import { afterEach, describe, expect, it } from "vitest";
 import { bootstrapPrcExtensions } from "../../src/extensions/bootstrap.js";
 import { writePrcSettings } from "../../src/extensions/packages.js";
@@ -17,13 +21,13 @@ describe("bundled core.schedule server extension", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "prc-schedule-disabled-"));
     roots.push(root);
     const configDir = path.join(root, "config");
-    await writePrcSettings(configDir, { disabledExtensions: ["core.schedule"] });
+    await writePrcSettings(configDir, { disabledExtensions: ["@cemoody/pi-crust-ext-schedule"] });
 
     const result = await bootstrapPrcExtensions({
       configDir,
       cwd: root,
       dataDir: path.join(root, "data"),
-      bundledPackagePaths: [path.resolve(process.cwd(), "extensions", "schedule")],
+      bundledPackagePaths: [scheduleExtDir],
     });
 
     expect(result.host.activity.list()).toEqual([]);
@@ -38,7 +42,7 @@ describe("bundled core.schedule server extension", () => {
       configDir: path.join(root, "config"),
       cwd: root,
       dataDir: path.join(root, "data"),
-      bundledPackagePaths: [path.resolve(process.cwd(), "extensions", "schedule")],
+      bundledPackagePaths: [scheduleExtDir],
       sessions: {
         create: async (input) => ({ id: "s1", sessionFile: "/sessions/s1.json", ...input }),
         prompt: async (sessionId, prompt) => { prompts.push({ sessionId, prompt }); },
@@ -70,7 +74,7 @@ describe("bundled core.schedule server extension", () => {
       configDir: path.join(root, "config"),
       cwd: root,
       dataDir: path.join(root, "data"),
-      bundledPackagePaths: [path.resolve(process.cwd(), "extensions", "schedule")],
+      bundledPackagePaths: [scheduleExtDir],
       sessions: {
         create: async (input) => ({ id: "slow-session", sessionFile: "/sessions/slow.json", ...input }),
         prompt: async () => new Promise<void>(() => undefined),
@@ -97,7 +101,7 @@ describe("bundled core.schedule server extension", () => {
   it("claims a due scheduled job only once across concurrent schedulers", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "prc-schedule-claim-"));
     roots.push(root);
-    const { __test } = await import(pathToFileURL(path.resolve(process.cwd(), "extensions", "schedule", "server.mjs")).href) as {
+    const { __test } = await import(pathToFileURL(path.join(scheduleExtDir, "server.mjs")).href) as {
       __test: {
         createStore(filePath: string): {
           filePath: string;

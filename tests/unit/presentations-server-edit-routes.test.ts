@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootstrapPrcExtensions } from "../../src/extensions/bootstrap.js";
 
@@ -16,7 +17,9 @@ async function tempRoot(prefix: string): Promise<string> {
   return root;
 }
 
-const EXTENSION_PATH = path.resolve(process.cwd(), "extensions", "presentations");
+const EXTENSION_PATH = path.dirname(
+  createRequire(import.meta.url).resolve("@cemoody/pi-crust-ext-presentations/package.json"),
+);
 
 const SEED_DECK = {
   id: "exec-brief",

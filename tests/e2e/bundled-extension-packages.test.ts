@@ -2,7 +2,13 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
 import { createPrcExtensionRuntime } from "../../src/extensions/runtime.js";
+
+const require_ = createRequire(import.meta.url);
+function resolveExtDir(slug: string): string {
+  return path.dirname(require_.resolve(`@cemoody/pi-crust-ext-${slug}/package.json`));
+}
 import { createHttpApiServer } from "../../src/server/http-api-server.js";
 import { MockPiAdapter } from "../../src/server/pi/mock-pi-adapter.js";
 import { PathPolicy } from "../../src/server/security/path-policy.js";
@@ -33,7 +39,7 @@ describe("bundled pi-crust extension packages", () => {
     await fs.writeFile(path.join(artifactDir, "plot.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 
     await expect(fetchJson(`${baseUrl}/api/extensions`)).resolves.toMatchObject({
-      routes: expect.arrayContaining([{ extensionId: "core.artifacts", method: "GET", path: "/api/sessions/:sessionId/artifacts/:file", mount: "api" }]),
+      routes: expect.arrayContaining([{ extensionId: "@cemoody/pi-crust-ext-artifacts", method: "GET", path: "/api/sessions/:sessionId/artifacts/:file", mount: "api" }]),
     });
     const response = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(session.id)}/artifacts/plot.png`);
 
@@ -54,7 +60,7 @@ describe("bundled pi-crust extension packages", () => {
     await fs.writeFile(path.join(presentationDir, "deck.html"), "<!doctype html><title>Deck</title>");
 
     await expect(fetchJson(`${baseUrl}/api/extensions`)).resolves.toMatchObject({
-      routes: expect.arrayContaining([{ extensionId: "core.presentations", method: "GET", path: "/api/sessions/:sessionId/presentations/:file", mount: "api" }]),
+      routes: expect.arrayContaining([{ extensionId: "@cemoody/pi-crust-ext-presentations", method: "GET", path: "/api/sessions/:sessionId/presentations/:file", mount: "api" }]),
     });
     const response = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(session.id)}/presentations/deck.html`);
 
@@ -78,13 +84,13 @@ describe("bundled pi-crust extension packages", () => {
 
     await expect(fetchJson(`${baseUrl}/api/extensions`)).resolves.toMatchObject({
       commands: expect.arrayContaining([
-        expect.objectContaining({ extensionId: "core.branching", slashName: "fork" }),
-        expect.objectContaining({ extensionId: "core.branching", slashName: "clone" }),
+        expect.objectContaining({ extensionId: "@cemoody/pi-crust-ext-branching", slashName: "fork" }),
+        expect.objectContaining({ extensionId: "@cemoody/pi-crust-ext-branching", slashName: "clone" }),
       ]),
       routes: expect.arrayContaining([
-        { extensionId: "core.branching", method: "GET", path: "/api/sessions/:sessionId/fork-messages", mount: "api" },
-        { extensionId: "core.branching", method: "POST", path: "/api/sessions/:sessionId/fork", mount: "api" },
-        { extensionId: "core.branching", method: "POST", path: "/api/sessions/:sessionId/clone", mount: "api" },
+        { extensionId: "@cemoody/pi-crust-ext-branching", method: "GET", path: "/api/sessions/:sessionId/fork-messages", mount: "api" },
+        { extensionId: "@cemoody/pi-crust-ext-branching", method: "POST", path: "/api/sessions/:sessionId/fork", mount: "api" },
+        { extensionId: "@cemoody/pi-crust-ext-branching", method: "POST", path: "/api/sessions/:sessionId/clone", mount: "api" },
       ]),
     });
 
@@ -101,7 +107,7 @@ describe("bundled pi-crust extension packages", () => {
     expect(forked.text).toBe("make a plan");
     expect(forked.session.id).not.toBe(session.id);
 
-    const cloned = await fetchJson<{ result: { prcAction: string; session: { id: string } } }>(`${baseUrl}/api/extensions/core.branching/commands/core.branching.clone`, {
+    const cloned = await fetchJson<{ result: { prcAction: string; session: { id: string } } }>(`${baseUrl}/api/extensions/${encodeURIComponent("@cemoody/pi-crust-ext-branching")}/commands/core.branching.clone`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId: session.id }),
@@ -122,7 +128,7 @@ async function startBundledServer(packageNames: readonly string[]): Promise<{ ba
     configDir: home.configDir,
     cwd: home.projectRoot,
     dataDir: home.dataDir,
-    bundledPackagePaths: packageNames.map((name) => path.join(repoRoot, "extensions", name)),
+    bundledPackagePaths: packageNames.map((name) => resolveExtDir(name)),
     sessions: createSessionsApi(registry),
   });
   const server = createHttpApiServer({
