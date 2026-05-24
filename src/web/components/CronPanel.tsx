@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CronApi, CronJobInput, CronJobView } from "../api/session-api.js";
+import { useNotifications } from "./notifications.js";
 import "./cron-panel.css";
 
 export interface CronPanelProps {
@@ -26,10 +27,21 @@ const EMPTY_DRAFT: Omit<EditDraft, "cwd"> = {
 };
 
 export function CronPanel({ api, defaultCwd, onOpenSession }: CronPanelProps) {
+  const { notify, dismiss } = useNotifications();
+  // Errors auto-dismiss like other toasts. We still track the last id so
+  // a successful reload can clear an error toast early (matching the
+  // prior "dismiss banner on next success" behavior).
+  const lastErrorIdRef = useRef<string | null>(null);
+  const setError = useCallback((message: string | null) => {
+    if (message === null) {
+      if (lastErrorIdRef.current) { dismiss(lastErrorIdRef.current); lastErrorIdRef.current = null; }
+      return;
+    }
+    lastErrorIdRef.current = notify({ kind: "error", message });
+  }, [notify, dismiss]);
+  const setNotice = useCallback((message: string) => { notify({ kind: "success", message }); }, [notify]);
   const [jobs, setJobs] = useState<readonly CronJobView[]>([]);
   const [filePath, setFilePath] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -172,8 +184,6 @@ export function CronPanel({ api, defaultCwd, onOpenSession }: CronPanelProps) {
           </div>
         </header>
 
-        {error ? <div className="cron-banner cron-banner-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div> : null}
-        {notice ? <div className="cron-banner cron-banner-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>Dismiss</button></div> : null}
 
         {loading ? (
           <p className="cron-empty">Loading…</p>

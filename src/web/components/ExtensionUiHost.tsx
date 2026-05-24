@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ExtensionUiRequest } from "../../shared/protocol.js";
 import "./extension-ui-host.css";
 
@@ -8,6 +8,13 @@ export interface ExtensionUiHostProps {
   readonly onConfirmResponse: (id: string, confirmed: boolean) => void | Promise<void>;
   readonly onCancelResponse: (id: string) => void | Promise<void>;
   readonly onEditorText?: (text: string) => void;
+  /**
+   * If provided, extension `notify` requests are dispatched here (e.g. to
+   * the global toast region) instead of being rendered inline. The host
+   * still renders inline as a fallback when this prop is omitted so the
+   * component remains usable standalone (and in unit tests).
+   */
+  readonly onNotify?: (request: Extract<ExtensionUiRequest, { method: "notify" }>) => void;
 }
 
 export function ExtensionUiHost(props: ExtensionUiHostProps) {
@@ -17,6 +24,19 @@ export function ExtensionUiHost(props: ExtensionUiHostProps) {
   const widgets = props.requests.filter(isWidgetRequest).filter((request) => request.widgetLines);
   const notifications = props.requests.filter(isNotifyRequest);
   const dialogs = props.requests.filter(isDialogRequest);
+
+  // When onNotify is provided, forward each notify request once. Track
+  // already-forwarded ids so re-renders don't fire duplicate toasts.
+  const forwardedNotifyIds = useRef<Set<string>>(new Set());
+  const onNotify = props.onNotify;
+  useEffect(() => {
+    if (!onNotify) return;
+    for (const request of notifications) {
+      if (forwardedNotifyIds.current.has(request.id)) continue;
+      forwardedNotifyIds.current.add(request.id);
+      onNotify(request);
+    }
+  }, [notifications, onNotify]);
 
   useEffect(() => {
     for (const request of props.requests) {
@@ -33,7 +53,7 @@ export function ExtensionUiHost(props: ExtensionUiHostProps) {
         <Widget key={widget.id} widget={widget} />
       ))}
 
-      {notifications.length ? (
+      {notifications.length && !onNotify ? (
         <div aria-label="Notifications">
           {notifications.map((notification) => <div key={notification.id} role="status">{notification.message}</div>)}
         </div>

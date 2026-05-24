@@ -20,6 +20,7 @@ import { ExtensionUiHost } from "./ExtensionUiHost.js";
 import { ExternalWebActivity } from "../extensions/external-web-module.js";
 import type { WebActivityContribution } from "../extensions/types.js";
 import { ExtensionManagementPanel } from "./ExtensionManagementPanel.js";
+import { NotificationsProvider, useNotifications } from "./notifications.js";
 import "./session-dashboard.css";
 import { Icon } from "./Icon.js";
 import { AppBrand, isPlainLeftClick, updateFavicon, imageFaviconDataUrl } from "./app-brand.js";
@@ -62,7 +63,37 @@ export interface SessionDashboardProps {
 
 type SortMode = "recent" | "name" | "cwd";
 
-export function SessionDashboard({ api }: SessionDashboardProps) {
+export function SessionDashboard(props: SessionDashboardProps) {
+  return (
+    <NotificationsProvider>
+      <SessionDashboardInner {...props} />
+    </NotificationsProvider>
+  );
+}
+
+function SessionDashboardInner({ api }: SessionDashboardProps) {
+  const { notify, dismiss } = useNotifications();
+  // Adapters for the legacy setError / setNotice call sites. Errors are
+  // persistent (manual-dismiss) by default; notices auto-dismiss as info
+  // toasts. Passing `null` is treated as "clear the last persistent error".
+  // Errors auto-dismiss like other toasts (with a longer default duration
+  // so users have time to read them). Callers that need a sticky toast
+  // can opt in via { persistent: true } on the underlying notify().
+  const lastErrorIdRef = useRef<string | null>(null);
+  const setError = useCallback((message: string | null) => {
+    if (message === null) {
+      if (lastErrorIdRef.current) {
+        dismiss(lastErrorIdRef.current);
+        lastErrorIdRef.current = null;
+      }
+      return;
+    }
+    lastErrorIdRef.current = notify({ kind: "error", message });
+  }, [notify, dismiss]);
+  const setNotice = useCallback((message: string | null) => {
+    if (message === null) return;
+    notify({ kind: "info", message });
+  }, [notify]);
   const [sessions, setSessions] = useState<readonly SessionCardData[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => readSessionFromUrl());
   const [defaultCwd, setDefaultCwd] = useState("");
@@ -98,7 +129,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const bumpUserActivity = useCallback((sessionId: string, when: number = Date.now()) => {
     setLastUserActivityById((current) => ({ ...current, [sessionId]: when }));
   }, []);
-  const [error, setError] = useState<string | null>(null);
   const [messagesBySession, setMessagesBySession] = useState<Record<string, TimelineMessage[]>>({});
   // Pagination state for the on-demand "load older messages" flow. The
   // initial transcript fetch is capped to INITIAL_MESSAGES_LIMIT, so for
@@ -112,7 +142,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [extensions, setExtensions] = useState<ExtensionRegistryInfo>({ commands: [], activities: [], routes: [], diagnostics: [] });
   const [extensionSettings, setExtensionSettings] = useState<ExtensionSettingsResponse | null>(null);
 
-  const [notice, setNotice] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
     return window.matchMedia("(max-width: 720px)").matches;
@@ -124,7 +153,14 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   const [deletePending, setDeletePending] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement | null>(null);
-  const [promptErrorBySession, setPromptErrorBySession] = useState<Record<string, string | null>>({});
+  // Per-session prompt error helper. Surfaces as a red toast keyed by the
+  // session id so re-submitting on the same session replaces in place,
+  // and clearing the error (success path) dismisses the toast.
+  const setPromptError = useCallback((sessionId: string, message: string | null) => {
+    const toastId = `prompt-error-${sessionId}`;
+    if (message === null) { dismiss(toastId); return; }
+    notify({ id: toastId, kind: "error", message: `Prompt failed. ${message}` });
+  }, [notify, dismiss]);
   const [extensionUiBySession, setExtensionUiBySession] = useState<Record<string, ExtensionUiRequest[]>>({});
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
   const [forkMessages, setForkMessages] = useState<readonly BranchMessageOption[]>([]);
@@ -147,18 +183,16 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   }, [api]);
 
   const reloadExtensions = useCallback(async () => {
-    try {
-      if (api.reloadExtensions) {
-        const result = await api.reloadExtensions();
-        setExtensions(result.extensions);
-        if (api.getExtensionSettings) void refreshExtensionSettings();
-        setNotice(result.applied ? "Extensions reloaded." : "Extension reload failed; previous extensions are still active.");
-      } else {
-        await refreshExtensions();
-        setNotice("Extensions refreshed.");
-      }
-    } catch (caught) {
-      setError(errorMessage(caught));
+    // The ExtensionManagementPanel's `run()` helper surfaces a success
+    // toast (and inline error) on its own. We only need to update local
+    // state here and re-throw so the panel sees the failure.
+    if (api.reloadExtensions) {
+      const result = await api.reloadExtensions();
+      setExtensions(result.extensions);
+      if (api.getExtensionSettings) void refreshExtensionSettings();
+      if (!result.applied) throw new Error("Extension reload failed; previous extensions are still active.");
+    } else {
+      await refreshExtensions();
     }
   }, [api, refreshExtensions, refreshExtensionSettings]);
 
@@ -414,6 +448,16 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       }
       if (event.type === "message_end" || event.type === "tool_execution_end") {
         scheduleRefresh();
+        return;
+      }
+      if (event.type === "stream_reconnected") {
+        // The SSE was re-established after a mobile-tab background suspend.
+        // Server-side events that fired while we were disconnected are gone
+        // — do a full refetch so the transcript catches up. Without this
+        // the UI shows whatever frame was last received before suspend
+        // (e.g. a stale "idle" header) even though new messages exist.
+        void refreshAll({ preserveLastActivity: true });
+        return;
       }
     };
 
@@ -657,13 +701,10 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     // resolves.
     bumpUserActivity(sessionId, now);
     if (text.length > MAX_PROMPT_CHARS) {
-      setPromptErrorBySession((current) => ({
-        ...current,
-        [sessionId]: `Message is ${text.length.toLocaleString()} characters. The limit is ${MAX_PROMPT_CHARS.toLocaleString()}. Use the paperclip (or paste an image) instead of pasting image data as text.`,
-      }));
+      setPromptError(sessionId, `Message is ${text.length.toLocaleString()} characters. The limit is ${MAX_PROMPT_CHARS.toLocaleString()}. Use the paperclip (or paste an image) instead of pasting image data as text.`);
       return;
     }
-    setPromptErrorBySession((current) => ({ ...current, [sessionId]: null }));
+    setPromptError(sessionId, null);
     appendMessage(sessionId, {
       id: `user-pending-${now}`,
       role: "user",
@@ -681,7 +722,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
         setMessagesBySession((current) => ({ ...current, [sessionId]: messages.map(toTimelineMessage) }));
       }
     } catch (caught) {
-      setPromptErrorBySession((current) => ({ ...current, [sessionId]: errorMessage(caught) }));
+      setPromptError(sessionId, errorMessage(caught));
     } finally {
       setSessions((current) => current.map((session) => session.id === sessionId ? { ...session, status: "idle" } : session));
     }
@@ -906,7 +947,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     const sessionId = activeSession.id;
     const now = Date.now();
     bumpUserActivity(sessionId, now);
-    setPromptErrorBySession((current) => ({ ...current, [sessionId]: null }));
+    setPromptError(sessionId, null);
     appendMessage(sessionId, {
       id: `bash-${now}`,
       role: "custom",
@@ -918,7 +959,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
       const messages = await api.bash(sessionId, command, includeInContext);
       setMessagesBySession((current) => ({ ...current, [sessionId]: messages.map(toTimelineMessage) }));
     } catch (caught) {
-      setPromptErrorBySession((current) => ({ ...current, [sessionId]: errorMessage(caught) }));
+      setPromptError(sessionId, errorMessage(caught));
     }
   }
 
@@ -1005,7 +1046,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                   setView(isActive ? "sessions" : activityView);
                 }}
               >
-                {activity.extensionId === "core.schedule" ? <CronGlyph /> : <ExtensionGlyph />}
+                {activity.id === "core.schedule.activity" || activity.extensionId === "core.schedule" || activity.extensionId === "@cemoody/pi-crust-ext-schedule" ? <CronGlyph /> : <ExtensionGlyph />}
                 {activity.title}
               </a>
             );
@@ -1061,8 +1102,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             ) : null}
           </div>
         </section>
-
-        {error ? <p role="alert">{error}</p> : null}
 
         <ul className="session-list">
           {visibleSessions.map((session) => (
@@ -1194,6 +1233,11 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                 onValueResponse={(id, value) => respondToExtensionUi({ id, value })}
                 onConfirmResponse={(id, confirmed) => respondToExtensionUi({ id, confirmed })}
                 onCancelResponse={(id) => respondToExtensionUi({ id, cancelled: true })}
+                onNotify={(request) => notify({
+                  id: `ext-notify-${request.id}`,
+                  kind: request.notifyType === "error" ? "error" : request.notifyType === "warning" ? "warning" : "info",
+                  message: request.message,
+                })}
               />
               {(messagesBySession[activeSession.id]?.length ?? 0) === 0 ? (
                 <InlineNameInput
@@ -1202,16 +1246,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                   onCommit={(next) => void commitRename(next)}
                 />
               ) : null}
-              {promptErrorBySession[activeSession.id] ? (
-                <div className="prompt-error-banner" role="alert" aria-label="Prompt error">
-                  <div className="prompt-error-text">
-                    <strong>Prompt failed.</strong> <span>{promptErrorBySession[activeSession.id]}</span>
-                  </div>
-                  <div className="prompt-error-actions">
-                    <button type="button" onClick={() => setPromptErrorBySession((current) => ({ ...current, [activeSession.id]: null }))}>Dismiss</button>
-                  </div>
-                </div>
-              ) : null}
+
               <PromptComposer
                 sessionId={activeSession.id}
                 isStreaming={activeSession.status === "streaming"}
@@ -1274,13 +1309,6 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
               <button type="button" onClick={() => setForkDialogOpen(false)}>Cancel</button>
             </footer>
           </section>
-        </div>
-      ) : null}
-
-      {notice ? (
-        <div role="status" aria-live="polite" className="dashboard-notice">
-          <span>{notice}</span>
-          <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss notice">Dismiss</button>
         </div>
       ) : null}
 

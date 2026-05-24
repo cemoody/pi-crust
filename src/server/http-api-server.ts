@@ -1531,16 +1531,33 @@ async function readSessionMessagesTail(
         let entry: unknown;
         try { entry = JSON.parse(line); } catch { continue; }
         if (!isRecord(entry)) continue;
-        if (entry.type === "session" || entry.type === "message" || entry.type === "session_info") {
+        if (entry.type === "session" || entry.type === "message" || entry.type === "session_info" || entry.type === "custom_message") {
           sawSessionShapedRecord = true;
         }
-        if (entry.type !== "message" || !isRecord(entry.message)) continue;
         // The numeric timestamp lives on the outer wrapper as an ISO
         // string; the inner message often doesn't carry its own. Coerce
         // and stamp it onto the message so downstream consumers (the
         // before-filter here, toSessionMessages, the pi-crust ordering) all
         // see a consistent number.
-        const innerMessage = entry.message as Record<string, unknown>;
+        let innerMessage: Record<string, unknown> | undefined;
+        if (entry.type === "message" && isRecord(entry.message)) {
+          innerMessage = entry.message as Record<string, unknown>;
+        } else if (entry.type === "custom_message" && typeof entry.customType === "string") {
+          // `type: "custom_message"` entries -- e.g. the artifact
+          // records the @cemoody/pi-artifact `display(...)` tool writes
+          // -- store their message body flat on the OUTER record (no
+          // nested `.message` field). Strip the wrapper-only fields so
+          // toSessionMessages sees the same shape it does for the
+          // adapter's in-memory getMessages() path (which DOES emit
+          // these via its `role === "custom" || customType.length > 0`
+          // branch). Without this branch the tail-read fast path
+          // silently drops every artifact custom-message on reload,
+          // which means MessageTimeline's ArtifactView has nothing to
+          // render and the user sees only the bare `display` tool card.
+          const { type: _wrapperType, id: _wrapperId, parentId: _wrapperParent, display: _wrapperDisplay, timestamp: _wrapperTimestamp, ...rest } = entry as Record<string, unknown>;
+          innerMessage = { role: "custom", ...rest };
+        }
+        if (!innerMessage) continue;
         let timestamp: number | undefined;
         if (typeof innerMessage.timestamp === "number") timestamp = innerMessage.timestamp;
         else if (typeof entry.timestamp === "string") {

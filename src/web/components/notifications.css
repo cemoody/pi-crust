@@ -1,0 +1,75 @@
+/* Unified notification (toast) region. See notifications.tsx for rationale. */
+
+.notifications-region {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.notification {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.10);
+  font-size: 14px;
+  line-height: 1.35;
+  animation: notification-slide-in 160ms ease-out;
+}
+
+@keyframes notification-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.notification-message {
+  flex: 1;
+  word-break: break-word;
+}
+
+.notification-dismiss {
+  flex: 0 0 auto;
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.notification-dismiss:hover { background: var(--gray-080); color: var(--text-primary); }
+.notification-dismiss:focus-visible { outline: 2px solid var(--blue-focus); outline-offset: 1px; }
+
+/* Kind-specific accents — use the existing palette tokens so dark/brand
+ * theming keeps working. */
+.notification-info    { border-left: 4px solid var(--blue-accent); }
+.notification-success { border-left: 4px solid var(--green-500); }
+.notification-warning { border-left: 4px solid var(--gold-600); background: var(--gold-100); }
+.notification-error   { border-left: 4px solid var(--red-500);   background: var(--red-100); color: var(--red-600); }
+
+.notification-error .notification-dismiss { color: var(--red-600); }
+.notification-warning .notification-dismiss { color: var(--gold-700); }
+
+/* Mobile: span the bottom of the screen so toasts don't crowd the editor. */
+@media (max-width: 720px) {
+  .notifications-region {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    max-width: none;
+  }
+}

@@ -38,7 +38,10 @@ test('default copy puts only the last assistant text on the clipboard', async ({
   const footer = page.getByLabel('Turn actions').first();
   await expect(footer).toBeVisible();
   await footer.getByRole('button', { name: 'Copy assistant response' }).click();
-  await expect(footer.getByText('copied', { exact: true })).toBeVisible();
+  // Copy feedback is surfaced via the unified notification region (see
+  // src/web/components/notifications.tsx) instead of the legacy inline
+  // `turn-copied` pill that used to live inside the turn footer.
+  await expect(page.getByLabel('Notifications').getByText('Copied reply')).toBeVisible();
 
   const clipboard = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboard).not.toMatch(/^\*\*You:/);
@@ -54,7 +57,7 @@ test('overflow menu can copy the entire turn as markdown', async ({ page, contex
   const footer = page.getByLabel('Turn actions').first();
   await footer.getByRole('button', { name: 'More copy options' }).click();
   await footer.getByRole('menuitem', { name: /Copy entire turn as markdown/ }).click();
-  await expect(footer.getByText('copied turn')).toBeVisible();
+  await expect(page.getByLabel('Notifications').getByText('Copied turn')).toBeVisible();
 
   const clipboard = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboard).toContain('**You:**');

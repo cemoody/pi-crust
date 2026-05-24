@@ -4,6 +4,7 @@ import { errorMessage, optional } from "../../shared/util.js";
 import { downscaleImageIfNeeded } from "../utils/image-downscale.js";
 import "./prompt-composer.css";
 import { Icon } from "./Icon.js";
+import { useOptionalNotifications } from "./notifications.js";
 import {
   attachmentId,
   clipboardFiles,
@@ -46,7 +47,26 @@ export function PromptComposer(props: PromptComposerProps) {
   const [draft, setDraft] = useState(() => storageGet(storageKey) ?? "");
   const [history, setHistory] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
-  const [pasteWarning, setPasteWarning] = useState<string | null>(null);
+  // Paste warnings are surfaced through the global toast system when
+  // available, falling back to inline state if the composer is rendered
+  // outside a NotificationsProvider (e.g. unit tests).
+  const notifications = useOptionalNotifications();
+  const [pasteWarningLocal, setPasteWarningLocal] = useState<string | null>(null);
+  const pasteWarningIdRef = useRef<string | null>(null);
+  const setPasteWarning = (message: string | null) => {
+    if (notifications) {
+      if (pasteWarningIdRef.current) {
+        notifications.dismiss(pasteWarningIdRef.current);
+        pasteWarningIdRef.current = null;
+      }
+      if (message) {
+        pasteWarningIdRef.current = notifications.notify({ kind: "warning", message });
+      }
+      return;
+    }
+    setPasteWarningLocal(message);
+  };
+  const pasteWarning = notifications ? null : pasteWarningLocal;
 
   // Monotonic generation counter for attachment state. Bumped every time
   // the local attachments list is cleared (on submit or session change).
@@ -62,10 +82,12 @@ export function PromptComposer(props: PromptComposerProps) {
   }
 
   useEffect(() => {
-    if (!pasteWarning) return;
-    const t = setTimeout(() => setPasteWarning(null), 6_000);
+    // Auto-dismiss only matters for the fallback inline render — the toast
+    // system has its own auto-dismiss for warning notifications.
+    if (!pasteWarningLocal) return;
+    const t = setTimeout(() => setPasteWarningLocal(null), 6_000);
     return () => clearTimeout(t);
-  }, [pasteWarning]);
+  }, [pasteWarningLocal]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLElement | null>(null);

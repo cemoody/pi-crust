@@ -12,7 +12,7 @@ async function openDeck(page: Page) {
 }
 
 async function openModal(page: Page) {
-  await page.getByRole("button", { name: "Present deck" }).click();
+  await page.getByRole("button", { name: "Full screen" }).click();
   await expect(page.getByRole("dialog", { name: new RegExp(`${DECK_TITLE} presentation`) })).toBeVisible();
 }
 

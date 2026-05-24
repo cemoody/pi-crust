@@ -8,6 +8,7 @@ import "./message-timeline.css";
 import { Icon } from "./Icon.js";
 import { TimelineSessionContext } from "./timeline-session-context.js";
 import { PresentationArtifactCard } from "./presentation-artifact-card.js";
+import { useOptionalNotifications } from "./notifications.js";
 
 // Lazy-loaded so vega/vega-lite (~600KB gzipped) is only fetched once a chart
 // actually appears in the timeline. The placeholder shell is rendered
@@ -357,6 +358,10 @@ function groupTurns(messages: readonly TimelineMessage[]): TurnGroup[] {
 }
 
 function TurnFooter({ turn }: { readonly turn: TurnGroup }) {
+  const notifications = useOptionalNotifications();
+  // Same fallback pattern as ToolCard: prefer a transient toast when a
+  // provider is mounted; otherwise keep the inline pill so the timeline
+  // is usable standalone.
   const [copied, setCopied] = useState<"" | "reply" | "turn" | "failed">("");
   const [now, setNow] = useState(() => Date.now());
   const [menuOpen, setMenuOpen] = useState(false);
@@ -387,13 +392,22 @@ function TurnFooter({ turn }: { readonly turn: TurnGroup }) {
   const replyText = lastAssistantTextOf(turn);
   const canCopyReply = replyText.length > 0;
 
+  function reportCopy(label: "reply" | "turn", ok: boolean) {
+    if (notifications) {
+      if (ok) notifications.notify({ kind: "success", message: label === "turn" ? "Copied turn" : "Copied reply", durationMs: 1_800 });
+      else notifications.notify({ kind: "error", message: "Copy failed" });
+      return;
+    }
+    setCopied(ok ? label : "failed");
+  }
+
   async function copyReply() {
     if (!canCopyReply) return;
-    setCopied(await copyText(replyText) ? "reply" : "failed");
+    reportCopy("reply", await copyText(replyText));
   }
 
   async function copyEntireTurn() {
-    setCopied(await copyText(turnToMarkdown(turn)) ? "turn" : "failed");
+    reportCopy("turn", await copyText(turnToMarkdown(turn)));
     setMenuOpen(false);
   }
 
@@ -426,7 +440,7 @@ function TurnFooter({ turn }: { readonly turn: TurnGroup }) {
           </div>
         ) : null}
       </div>
-      {copied ? (
+      {!notifications && copied ? (
         <span className={copied === "failed" ? "turn-copy-failed" : "turn-copied"} role="status">
           {copied === "failed" ? "copy failed" : copied === "turn" ? "copied turn" : "copied"}
         </span>

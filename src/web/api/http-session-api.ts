@@ -175,6 +175,13 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
         tabSessionId: getTabSessionId(),
       });
       openSource();
+      // Notify the host so it can refetch /messages and pick up everything
+      // that happened on the server while the tab was suspended. Without
+      // this the SSE resumes mid-flight and the transcript stays stuck on
+      // the last pre-suspend frame (e.g. shows "idle" with no streaming).
+      try {
+        onEvent({ type: "stream_reconnected", reason });
+      } catch { /* host listener must never break the stream */ }
     };
 
     // Silence detector. The 2026-05-24 outage was a session whose SSE was
@@ -209,14 +216,13 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
       }
     }, SSE_SILENCE_CHECK_INTERVAL_MS);
 
-    const onVisibilityChange = () => {
-      if (typeof document === "undefined") return;
-      if (document.visibilityState !== "visible") return;
+    const maybeReconnectOnResume = (reason: string) => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       // Mobile suspend signature: the browser closed the underlying socket
       // while we were hidden. Reconnect immediately so the user sees
       // streaming resume the instant they return to the tab.
       if (source.readyState !== EventSource.OPEN) {
-        reconnect("visibility-restored-stream-closed");
+        reconnect(`${reason}-stream-closed`);
         return;
       }
       // "Zombie socket" signature: readyState lies and says OPEN, but no
@@ -225,11 +231,29 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
       // a refresh.
       const idleMs = Date.now() - lastMessageAt;
       if (idleMs >= SSE_SILENCE_THRESHOLD_MS) {
-        reconnect("visibility-restored-stream-stale");
+        reconnect(`${reason}-stream-stale`);
       }
     };
+    const onVisibilityChange = () => maybeReconnectOnResume("visibility-restored");
+    // iOS Safari restores tabs from the back-forward cache without firing
+    // visibilitychange and without resuming JS timers. The reliable signal
+    // is `pageshow` with event.persisted=true. We also accept a non-
+    // persisted pageshow / window focus / online as cheap belt-and-braces
+    // for browsers that vary; all of these defer to maybeReconnectOnResume
+    // which is idempotent and only acts when the socket actually looks dead.
+    const onPageShow = (event?: unknown) => {
+      const persisted = !!(event && typeof event === "object" && (event as { persisted?: boolean }).persisted);
+      maybeReconnectOnResume(persisted ? "pageshow-bfcache" : "pageshow");
+    };
+    const onWindowFocus = () => maybeReconnectOnResume("window-focus");
+    const onOnline = () => maybeReconnectOnResume("network-online");
     if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
       document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+    if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+      window.addEventListener("pageshow", onPageShow);
+      window.addEventListener("focus", onWindowFocus);
+      window.addEventListener("online", onOnline);
     }
 
     return () => {
@@ -237,6 +261,11 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
       clearInterval(silenceTimer);
       if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
         document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+      if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+        window.removeEventListener("pageshow", onPageShow);
+        window.removeEventListener("focus", onWindowFocus);
+        window.removeEventListener("online", onOnline);
       }
       try { source.close(); } catch { /* ignore */ }
       recordClientEvent({

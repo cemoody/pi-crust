@@ -228,12 +228,14 @@ describe("sse-silence detector behavior", () => {
 describe("mobile background reconnect (visibility change)", () => {
   let visibilityState: "visible" | "hidden";
   let visibilityListeners: Array<() => void>;
+  let windowListeners: Record<string, Array<(ev?: unknown) => void>>;
   let constructedSources: Array<{ url: string; readyState: number; close: Mock; onmessage: ((ev: { data: string }) => void) | null; onopen: (() => void) | null; onerror: (() => void) | null }>;
   let fetchSpy: Mock;
 
   beforeEach(() => {
     visibilityState = "visible";
     visibilityListeners = [];
+    windowListeners = {};
     constructedSources = [];
 
     vi.stubGlobal("EventSource", class MockEventSource {
@@ -281,7 +283,15 @@ describe("mobile background reconnect (visibility change)", () => {
         }
       },
     });
-    vi.stubGlobal("window", undefined);
+    vi.stubGlobal("window", {
+      sessionStorage: { getItem: () => null, setItem: () => {} },
+      addEventListener: (event: string, fn: (ev?: unknown) => void) => {
+        (windowListeners[event] ??= []).push(fn);
+      },
+      removeEventListener: (event: string, fn: (ev?: unknown) => void) => {
+        windowListeners[event] = (windowListeners[event] ?? []).filter((listener) => listener !== fn);
+      },
+    });
     vi.useFakeTimers();
   });
 
@@ -290,6 +300,10 @@ describe("mobile background reconnect (visibility change)", () => {
   function dispatchVisibilityChange(state: "visible" | "hidden") {
     visibilityState = state;
     for (const listener of [...visibilityListeners]) listener();
+  }
+
+  function dispatchWindowEvent(name: string, ev: unknown = {}) {
+    for (const listener of [...(windowListeners[name] ?? [])]) listener(ev);
   }
 
   it("reconnects the EventSource when the tab returns from background after the browser closed the stream (the 20-minute mobile bug)", async () => {
@@ -344,6 +358,63 @@ describe("mobile background reconnect (visibility change)", () => {
       constructedSources.length,
       "a long-silent stream should be re-established on foreground",
     ).toBeGreaterThanOrEqual(2);
+
+    unsubscribe();
+  });
+
+  it("reconnects on iOS Safari BFCache restore (`pageshow` with persisted=true) \u2014 a returning tab where visibilitychange did NOT fire", async () => {
+    // Repro of the 11:31-screenshot bug: user returns to a long-suspended tab
+    // on iOS Safari. The page is restored from the back-forward cache; JS
+    // timers and visibilitychange may not deliver, but `pageshow` with
+    // event.persisted=true is guaranteed to fire on BFCache restore.
+    const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
+    const api = new HttpSessionDashboardApi();
+    const unsubscribe = api.streamEvents("sid-bfcache", () => {});
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(constructedSources.length).toBe(1);
+
+    // Simulate BFCache: socket is dead, but no visibilitychange ever fires.
+    constructedSources[0]!.readyState = 2; // CLOSED
+
+    dispatchWindowEvent("pageshow", { persisted: true });
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(
+      constructedSources.length,
+      "a BFCache restore must reconnect the SSE so the page does not stay frozen on idle",
+    ).toBeGreaterThanOrEqual(2);
+
+    unsubscribe();
+  });
+
+  it("delivers a synthetic `stream_reconnected` event after reconnecting so the host can catch up on missed messages", async () => {
+    // Reconnecting the SSE is not sufficient: events that fired on the
+    // server while the tab was suspended are gone. The host UI must be
+    // told to refetch /messages, otherwise the transcript shows stale
+    // content (e.g. "idle" with no resumed streaming). The contract: every
+    // successful reconnect surfaces a single `stream_reconnected` event
+    // through the same onEvent callback so existing event-routing code in
+    // SessionDashboard can hook it.
+    const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
+    const events: unknown[] = [];
+    const api = new HttpSessionDashboardApi();
+    const unsubscribe = api.streamEvents("sid-catchup", (ev) => { events.push(ev); });
+    await vi.advanceTimersByTimeAsync(1);
+
+    dispatchVisibilityChange("hidden");
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    constructedSources[0]!.readyState = 2;
+    dispatchVisibilityChange("visible");
+    await vi.advanceTimersByTimeAsync(2);
+
+    const reconnectEvents = events.filter((ev): ev is { type: string } =>
+      typeof ev === "object" && ev !== null && (ev as { type?: unknown }).type === "stream_reconnected",
+    );
+    expect(
+      reconnectEvents.length,
+      `expected exactly one stream_reconnected event so the host can refetch missed messages. Got: ${JSON.stringify(events)}`,
+    ).toBe(1);
 
     unsubscribe();
   });
