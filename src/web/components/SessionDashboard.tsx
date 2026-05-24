@@ -100,6 +100,12 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
   }, []);
   const [error, setError] = useState<string | null>(null);
   const [messagesBySession, setMessagesBySession] = useState<Record<string, TimelineMessage[]>>({});
+  // Pagination state for the on-demand "load older messages" flow. The
+  // initial transcript fetch is capped to INITIAL_MESSAGES_LIMIT, so for
+  // any session longer than that we set hasMoreOlder=true and let the
+  // MessageTimeline trigger paginate-on-scroll-up via loadOlderMessages.
+  const [hasMoreOlderBySession, setHasMoreOlderBySession] = useState<Record<string, boolean>>({});
+  const [loadingOlderBySession, setLoadingOlderBySession] = useState<Record<string, boolean>>({});
   const [steeringBySession, setSteeringBySession] = useState<Record<string, string[]>>({});
   const [followUpBySession, setFollowUpBySession] = useState<Record<string, string[]>>({});
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -344,7 +350,15 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
           api.getSession ? api.getSession(activeSessionId) : Promise.resolve(null),
         ]);
         if (cancelled) return;
-        setMessagesBySession((current) => ({ ...current, [activeSessionId]: messages.map(toTimelineMessage) }));
+        const timelineMessages = messages.map(toTimelineMessage);
+        setMessagesBySession((current) => ({ ...current, [activeSessionId]: timelineMessages }));
+        // If we hit the limit, more (older) messages probably exist; arm
+        // the load-older affordance. Falls back to false otherwise so we
+        // don't show the loader on short transcripts.
+        setHasMoreOlderBySession((current) => ({
+          ...current,
+          [activeSessionId]: messages.length >= INITIAL_MESSAGES_LIMIT,
+        }));
         if (refreshed) applyRefreshedSession(refreshed, options);
       } catch (caught) {
         if (!cancelled) setError(errorMessage(caught));
@@ -476,6 +490,55 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
     [extensions.commands],
   );
   const hasExtensionSlashCommand = useCallback((name: string) => extensions.commands.some((command) => command.slashName === name), [extensions.commands]);
+
+  // Fetch a page of older messages for the given session and prepend them
+  // to the in-memory timeline. Wired to MessageTimeline's onLoadOlder so
+  // scrolling near the top of a long transcript transparently pulls more
+  // history. Uses `before:` = oldest currently-loaded timestamp as the
+  // cursor and de-dupes by message id so re-fires (e.g. rapid scroll
+  // gestures, React StrictMode double-invocation) are safe.
+  const loadOlderMessages = useCallback(async (sessionId: string) => {
+    const existing = messagesBySession[sessionId];
+    if (!existing || existing.length === 0) return;
+    if (loadingOlderBySession[sessionId]) return;
+    if (hasMoreOlderBySession[sessionId] === false) return;
+    // The oldest currently-rendered timestamp becomes our `before:` cursor.
+    // Messages without a timestamp are skipped for the purposes of finding
+    // a cursor; if none of the loaded messages have a timestamp we can't
+    // page further (the server tail-read needs a numeric boundary).
+    let oldestTs: number | undefined;
+    for (const m of existing) {
+      if (typeof m.timestamp === "number" && (oldestTs === undefined || m.timestamp < oldestTs)) {
+        oldestTs = m.timestamp;
+      }
+    }
+    if (oldestTs === undefined) {
+      setHasMoreOlderBySession((current) => ({ ...current, [sessionId]: false }));
+      return;
+    }
+    setLoadingOlderBySession((current) => ({ ...current, [sessionId]: true }));
+    try {
+      const older = await api.getMessages(sessionId, { limit: INITIAL_MESSAGES_LIMIT, before: oldestTs });
+      const olderTimeline = older.map(toTimelineMessage);
+      setMessagesBySession((current) => {
+        const present = current[sessionId] ?? [];
+        const known = new Set(present.map((m) => m.id));
+        const fresh = olderTimeline.filter((m) => !known.has(m.id));
+        if (fresh.length === 0) return current;
+        return { ...current, [sessionId]: [...fresh, ...present] };
+      });
+      // If the server returned fewer than we asked for we've reached the
+      // start of the transcript — stop triggering future fetches.
+      setHasMoreOlderBySession((current) => ({
+        ...current,
+        [sessionId]: older.length >= INITIAL_MESSAGES_LIMIT,
+      }));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setLoadingOlderBySession((current) => ({ ...current, [sessionId]: false }));
+    }
+  }, [api, messagesBySession, hasMoreOlderBySession, loadingOlderBySession]);
   const commandSuggestions = useMemo(
     () => unique([
       "model", "settings", "session", "new", "clear",
@@ -1121,6 +1184,9 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
                   streaming={activeSession.status === "streaming"}
                   enabledArtifactMimes={enabledArtifactMimes}
                   sessionId={activeSession.id}
+                  hasMoreOlder={hasMoreOlderBySession[activeSession.id] ?? false}
+                  loadingOlder={loadingOlderBySession[activeSession.id] ?? false}
+                  onLoadOlder={() => { void loadOlderMessages(activeSession.id); }}
                 />
               </SessionContentErrorBoundary>
               <ExtensionUiHost

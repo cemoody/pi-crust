@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { coerceMarkdownInput } from "../utils/safe-markdown.js";
 import remarkGfm from "remark-gfm";
@@ -100,6 +100,19 @@ export interface MessageTimelineProps {
    *  `/api/sessions/:sessionId/presentations/:file` and inline them as
    *  data: URIs, producing a fully self-contained, CDN-shippable file. */
   readonly sessionId?: string;
+  /** Whether more (older) messages exist on the server. When true and the
+   *  user scrolls near the top of the timeline, `onLoadOlder` is invoked.
+   *  Used to paginate long transcripts that exceed the initial-fetch cap. */
+  readonly hasMoreOlder?: boolean;
+  /** Whether an older-page fetch is in flight. While true the timeline
+   *  shows a small loading indicator at the top and won't trigger more
+   *  fetches. */
+  readonly loadingOlder?: boolean;
+  /** Called when the user scrolls near the top and more history is
+   *  available. The parent is responsible for fetching + prepending the
+   *  older messages; the timeline preserves the visual scroll position
+   *  across that prepend. */
+  readonly onLoadOlder?: () => void;
 }
 
 /** Context for child artifact cards that need the active session id (e.g.
@@ -112,13 +125,32 @@ export interface MessageTimelineProps {
 // "pinned" — new content should auto-scroll. Generous because content can
 // grow between scroll events while streaming.
 const SCROLL_PIN_THRESHOLD_PX = 80;
+// Pixels: if the user scrolls within this many pixels of the top and there
+// is more history available, fire onLoadOlder. Generous so a fast scroll-up
+// gesture reliably triggers a fetch before the user runs out of content.
+const SCROLL_LOAD_OLDER_THRESHOLD_PX = 200;
 
-export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false, enabledArtifactMimes, sessionId }: MessageTimelineProps) {
+export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false, enabledArtifactMimes, sessionId, hasMoreOlder = false, loadingOlder = false, onLoadOlder }: MessageTimelineProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
   const [pinned, setPinned] = useState(true);
   const pinnedRef = useRef(true);
+  // When we ask the parent to load older messages we snapshot
+  // `scrollHeight - scrollTop` so that, after the new (taller) DOM lands,
+  // we can restore the same visual offset from the bottom. Without this,
+  // a prepend would yank the user back to the top of the new content and
+  // make pagination feel like an unwanted jump.
+  const restoreDistanceFromBottomRef = useRef<number | null>(null);
+  // Latest values exposed to the scroll handler (which is registered once
+  // for the lifetime of the component, so closure captures of these props
+  // would go stale).
+  const onLoadOlderRef = useRef(onLoadOlder);
+  const hasMoreOlderRef = useRef(hasMoreOlder);
+  const loadingOlderRef = useRef(loadingOlder);
+  useEffect(() => { onLoadOlderRef.current = onLoadOlder; }, [onLoadOlder]);
+  useEffect(() => { hasMoreOlderRef.current = hasMoreOlder; }, [hasMoreOlder]);
+  useEffect(() => { loadingOlderRef.current = loadingOlder; }, [loadingOlder]);
 
   useEffect(() => { pinnedRef.current = pinned; }, [pinned]);
 
@@ -155,6 +187,10 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
 
   // Watch the user's scroll position. If they come back near the bottom we
   // re-pin; if they leave, we unpin and surface the jump-to-latest button.
+  // We also use this same listener to lazily fetch *older* messages when
+  // the user scrolls near the top of the timeline — the initial transcript
+  // fetch is capped at INITIAL_MESSAGES_LIMIT entries, so without this hook
+  // long sessions would only ever render their tail.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -162,10 +198,38 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       const nextPinned = distance <= SCROLL_PIN_THRESHOLD_PX;
       if (nextPinned !== pinnedRef.current) setPinned(nextPinned);
+      // Top-edge lazy load. Only fires when more is known to exist and a
+      // fetch isn't already running.
+      if (
+        el.scrollTop <= SCROLL_LOAD_OLDER_THRESHOLD_PX &&
+        hasMoreOlderRef.current &&
+        !loadingOlderRef.current &&
+        onLoadOlderRef.current
+      ) {
+        // Snapshot distance-from-bottom *before* the prepend so the
+        // useLayoutEffect below can restore the same visual offset once
+        // the new DOM has been measured.
+        restoreDistanceFromBottomRef.current = el.scrollHeight - el.scrollTop;
+        onLoadOlderRef.current();
+      }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
+
+  // After an older-page fetch lands and the DOM has grown taller, restore
+  // the user's previous visual position by aligning `scrollTop` so that
+  // `scrollHeight - scrollTop` matches the snapshot we took just before
+  // requesting more history. Synchronous (useLayoutEffect) so the user
+  // never sees an intermediate frame where the scroll position jumped.
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    const saved = restoreDistanceFromBottomRef.current;
+    if (!el || saved == null) return;
+    if (loadingOlder) return; // wait until the fetch completes
+    el.scrollTop = el.scrollHeight - saved;
+    restoreDistanceFromBottomRef.current = null;
+  }, [messages, loadingOlder]);
 
   const turns = groupTurns(messages);
 
@@ -181,6 +245,16 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
       data-pinned={pinned ? "true" : "false"}
     >
       <div className="message-timeline-inner" ref={innerRef}>
+        {hasMoreOlder || loadingOlder ? (
+          <div
+            className="message-timeline-older-loader"
+            data-testid="timeline-older-loader"
+            role="status"
+            aria-live="polite"
+          >
+            {loadingOlder ? "Loading earlier messages…" : "Scroll up to load earlier messages"}
+          </div>
+        ) : null}
         {turns.map((turn, turnIndex) => {
           const isLatest = turnIndex === turns.length - 1;
           const showFooter = !isLatest || !streaming;

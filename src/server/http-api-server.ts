@@ -782,7 +782,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       // session file doesn't exist on disk yet).
       const tail = await readSessionMessagesTail(session.sessionFile, before === undefined ? { limit } : { limit, before });
       if (tail === undefined) {
-        messages = (await session.handle.getMessages()).slice(-limit);
+        // Fallback for adapters / files that the tail-reader can't parse
+        // (e.g. the mock adapter's pretty-printed JSON blobs). Apply the
+        // same `before:` cursor semantics the tail-reader implements so
+        // pagination works uniformly regardless of which code path serves
+        // the request.
+        let all = await session.handle.getMessages();
+        if (before !== undefined) {
+          all = all.filter((m) => typeof m.timestamp !== "number" || m.timestamp < before);
+        }
+        messages = all.slice(-limit);
       } else {
         messages = tail;
       }
