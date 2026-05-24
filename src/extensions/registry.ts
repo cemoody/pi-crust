@@ -98,41 +98,47 @@ export class CommandRegistry {
   }
 }
 
-export class ActivityRegistry {
-  private readonly views = new Map<string, RegisteredActivityView>();
+/**
+ * Generic ordered-by-(order,title) registry, shared by the activity-view and
+ * settings-section hosts. Both contributions are { id, title, order? } and
+ * exactly de-duplicated by id, so the storage + list/get behavior is
+ * identical; only the user-facing register method name differs (registerView
+ * vs. register), which is provided by the small wrapper classes below.
+ */
+class IdSortedRegistry<
+  TContribution extends { readonly id: string; readonly title: string; readonly order?: number },
+  TStored extends TContribution & { readonly extensionId: string },
+> {
+  private readonly items = new Map<string, TStored>();
+  constructor(private readonly kind: string) {}
 
-  registerView(extensionId: string, view: PrcActivityViewContribution): Disposable {
-    if (this.views.has(view.id)) throw new Error(`Activity view already registered: ${view.id}`);
-    const registered: RegisteredActivityView = { ...view, extensionId };
-    this.views.set(view.id, registered);
-    return { dispose: () => { this.views.delete(view.id); } };
+  protected put(extensionId: string, contribution: TContribution): Disposable {
+    if (this.items.has(contribution.id)) throw new Error(`${this.kind} already registered: ${contribution.id}`);
+    const stored = { ...contribution, extensionId } as TStored;
+    this.items.set(contribution.id, stored);
+    return { dispose: () => { this.items.delete(contribution.id); } };
   }
 
-  list(): RegisteredActivityView[] {
-    return [...this.views.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.title.localeCompare(b.title));
+  list(): TStored[] {
+    return [...this.items.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.title.localeCompare(b.title));
   }
 
-  get(id: string): RegisteredActivityView | undefined {
-    return this.views.get(id);
+  get(id: string): TStored | undefined {
+    return this.items.get(id);
   }
 }
 
-export class SettingsRegistry {
-  private readonly sections = new Map<string, RegisteredSettingsSection>();
+export class ActivityRegistry extends IdSortedRegistry<PrcActivityViewContribution, RegisteredActivityView> {
+  constructor() { super("Activity view"); }
+  registerView(extensionId: string, view: PrcActivityViewContribution): Disposable {
+    return this.put(extensionId, view);
+  }
+}
 
+export class SettingsRegistry extends IdSortedRegistry<PrcSettingsSectionContribution, RegisteredSettingsSection> {
+  constructor() { super("Settings section"); }
   register(extensionId: string, section: PrcSettingsSectionContribution): Disposable {
-    if (this.sections.has(section.id)) throw new Error(`Settings section already registered: ${section.id}`);
-    const registered: RegisteredSettingsSection = { ...section, extensionId };
-    this.sections.set(section.id, registered);
-    return { dispose: () => { this.sections.delete(section.id); } };
-  }
-
-  list(): RegisteredSettingsSection[] {
-    return [...this.sections.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.title.localeCompare(b.title));
-  }
-
-  get(id: string): RegisteredSettingsSection | undefined {
-    return this.sections.get(id);
+    return this.put(extensionId, section);
   }
 }
 
