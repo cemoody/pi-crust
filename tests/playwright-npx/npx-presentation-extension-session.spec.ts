@@ -55,8 +55,8 @@ test("npx-style fresh install can enable presentation artifact rendering for an 
 
     await page.getByRole("link", { name: "Settings" }).click();
     await page.getByLabel("Extension package source").fill(extensionDir);
-    await page.getByRole("button", { name: "Install" }).click();
-    await expect(page.getByText("Extension installed and reloaded.")).toBeVisible();
+    await page.getByRole("button", { name: "Add package" }).click();
+    await expect(page.getByText("Package installed and extensions reloaded.")).toBeVisible();
     await expect(page.getByText("dev.presentations")).toBeVisible();
 
     await page.getByRole("link", { name: /^Presentation artifact session\b/ }).click();

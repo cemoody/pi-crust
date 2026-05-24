@@ -47,7 +47,7 @@ export function ExtensionManagementPanel(props: ExtensionManagementPanelProps) {
 
   const saveBranding = async () => {
     if (!props.onSaveBranding) return;
-    const appName = appNameDraft.trim() || "pi remote";
+    const appName = appNameDraft.trim() || "π crust";
     const appIconUrl = appIconUrlDraft.trim();
     await props.onSaveBranding({ appName, ...(appIconUrl ? { appIconUrl } : {}) });
   };
@@ -76,7 +76,7 @@ export function ExtensionManagementPanel(props: ExtensionManagementPanelProps) {
             </label>
             <div className="branding-preview" aria-label="Branding preview">
               {appIconUrlDraft.trim() ? <img className="branding-icon-preview" src={appIconUrlDraft.trim()} alt="" /> : <span className="branding-icon-empty">No icon</span>}
-              <strong>{appNameDraft.trim() || "pi remote"}</strong>
+              <strong>{appNameDraft.trim() || "π crust"}</strong>
             </div>
             <button type="button" disabled={!props.onSaveBranding || busy !== null} onClick={() => void run("branding", saveBranding, "Branding saved.")}>{busy === "branding" ? "Saving…" : "Save branding"}</button>
           </div>

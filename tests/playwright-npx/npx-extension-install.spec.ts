@@ -53,7 +53,7 @@ test("npx-style fresh install can install, render, and hot reload an extension U
     await page.getByRole("link", { name: "Settings" }).click();
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     await page.getByLabel("Extension package source").fill(extensionDir);
-    await page.getByRole("button", { name: "Install" }).click();
+    await page.getByRole("button", { name: "Add package" }).click();
     await expect(page.getByRole("link", { name: "Schedule" })).toBeVisible();
 
     await page.getByRole("link", { name: "Schedule" }).click();
