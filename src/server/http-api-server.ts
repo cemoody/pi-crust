@@ -11,7 +11,7 @@ import { contentTextAndThinking, PiRpcAdapter, toSessionMessages } from "./pi/pi
 import { MAX_PROMPT_CHARS } from "../shared/limits.js";
 import type { ExtensionUiResponse } from "../shared/protocol.js";
 import type { PromptAttachment, SessionListItem, SessionMessage } from "./pi/types.js";
-import { PathPolicy } from "./security/path-policy.js";
+import { PathPolicy, isPathWithinRoot } from "./security/path-policy.js";
 import { resolveGitSha, createLiveGitSha } from "./git-sha.js";
 import { SessionRegistry } from "./session/session-registry.js";
 import { WorkerRegistry } from "./session/worker-registry.js";
@@ -230,12 +230,6 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
   });
 }
 
-function isWithinPath(candidate: string, root: string): boolean {
-  const resolvedCandidate = path.resolve(candidate);
-  const resolvedRoot = path.resolve(root);
-  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`);
-}
-
 function createDefaultRegistry(adapterKind: string, sessionRoot: string, projectRoot: string): SessionRegistry {
   const workerRegistry = new WorkerRegistry();
   return new SessionRegistry({
@@ -260,7 +254,7 @@ async function startDefaultServer(): Promise<void> {
       ? "pi-sdk"
       : "pirpc";
   const registry = createDefaultRegistry(adapterKind, sessionRoot, projectRoot);
-  const serverDefaultCwd = isWithinPath(process.cwd(), projectRoot) ? process.cwd() : projectRoot;
+  const serverDefaultCwd = isPathWithinRoot(process.cwd(), projectRoot) ? process.cwd() : projectRoot;
   const extensionRuntime = await createPrcExtensionRuntime({
     configDir: defaultPrcConfigDir(process.env),
     cwd: projectRoot,
