@@ -21,7 +21,7 @@ import { expect, test } from '@playwright/test';
 test('long session: scrolling up loads earlier messages until the first message is reachable', async ({ page }) => {
   await page.goto('/');
 
-  await page.getByRole('link', { name: /^Long session\b/ }).click();
+  await page.getByRole('link', { name: /^Long pagination session\b/ }).click();
 
   // Tail rendered fine.
   await expect(page.getByText(/LAST-MESSAGE-MARKER-ω/)).toBeVisible();
@@ -62,7 +62,7 @@ test('long session: scrolling up loads earlier messages until the first message 
  */
 test('long session: initial render is the tail only and exposes a load-older affordance', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('link', { name: /^Long session\b/ }).click();
+  await page.getByRole('link', { name: /^Long pagination session\b/ }).click();
 
   await expect(page.getByText(/LAST-MESSAGE-MARKER-ω/)).toBeVisible();
   // First marker is NOT in the DOM yet — it lives ~800 messages older than

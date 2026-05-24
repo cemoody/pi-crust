@@ -640,3 +640,39 @@ await fs.writeFile(shapeExtrasFile, JSON.stringify({
   lastActivity: Date.now(),
 }, null, 2) + '\n');
 console.log(`seeded ${shapeExtrasFile}`);
+
+// Seventh seeded session: a deliberately long transcript used by
+// long-session-pagination.spec.ts to exercise the timeline's on-demand
+// "load older messages" pagination. 1000 messages (500 user/assistant
+// pairs) — well over the 200-message INITIAL_MESSAGES_LIMIT cap — with
+// unique FIRST-MESSAGE-MARKER-α / LAST-MESSAGE-MARKER-ω sentinels at the
+// extremes so the spec can verify the very first message is reachable
+// only after scrolling up enough times to trigger pagination.
+const longSessionId = 'seeded-session-long';
+const longSessionFile = path.join(root, '0000000000007_seeded-session-long.mock-session.json');
+const LONG_TURNS = 500;
+const longMessages = [];
+const longBaseTs = 1700000007000;
+for (let i = 0; i < LONG_TURNS; i++) {
+  const userTag = i === 0 ? 'FIRST-MESSAGE-MARKER-α' : `turn-${i}-user`;
+  longMessages.push({
+    role: 'user',
+    content: `${userTag}: user message number ${i}`,
+    timestamp: longBaseTs + i * 2,
+  });
+  const assistantTag = i === LONG_TURNS - 1 ? 'LAST-MESSAGE-MARKER-ω' : `turn-${i}-assistant`;
+  longMessages.push({
+    role: 'assistant',
+    content: `${assistantTag}: assistant reply number ${i}`,
+    timestamp: longBaseTs + i * 2 + 1,
+  });
+}
+await fs.writeFile(longSessionFile, JSON.stringify({
+  id: longSessionId,
+  cwd,
+  sessionFile: longSessionFile,
+  sessionName: 'Long pagination session',
+  messages: longMessages,
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${longSessionFile}`);
