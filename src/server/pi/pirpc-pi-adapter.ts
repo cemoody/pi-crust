@@ -502,6 +502,16 @@ class SupervisedRpcProcess {
   private detached = false;
   private lastSeq = 0;
 
+  // Reconnect state. socketPath is captured at construction so a transient
+  // socket close (e.g. supervisor's currentClient eviction, kernel-side
+  // half-close, etc.) can be transparently recovered by request() before it
+  // gives up. reopening is a singleton promise to deduplicate concurrent
+  // reopen attempts that hit at the same time.
+  private socketPath: string | null = null;
+  private reopening: Promise<boolean> | null = null;
+  private reopenAttempts = 0;
+  private static readonly RECONNECT_MAX_ATTEMPTS_PER_REQUEST = 1;
+
   // Observability: track close lifecycle + last request so the structured
   // unexpected-close log is actionable. See logUnexpectedClose() below.
   readonly openedAt: number = Date.now();
@@ -544,6 +554,8 @@ class SupervisedRpcProcess {
     const ready = await waitForReadyFile(readyPath, 15_000);
     const socket = await connectSocket(ready.socketPath);
     const process_ = new SupervisedRpcProcess(socket);
+    process_.socketPath = ready.socketPath;
+    process_.observabilityContext.socketPath = ready.socketPath;
     await process_.handshake(null);
     // Best-effort cleanup of the transient ready file.
     fs.unlink(readyPath).catch(() => {});
@@ -553,6 +565,8 @@ class SupervisedRpcProcess {
   static async connect(options: SupervisedConnectOptions): Promise<SupervisedRpcProcess> {
     const socket = await connectSocket(options.socketPath);
     const process_ = new SupervisedRpcProcess(socket);
+    process_.socketPath = options.socketPath;
+    process_.observabilityContext.socketPath = options.socketPath;
     await process_.handshake(options.resumeFromSeq);
     return process_;
   }
@@ -564,6 +578,10 @@ class SupervisedRpcProcess {
 
   send(payload: Record<string, unknown>): void {
     if (this.closed) {
+      // We deliberately do NOT auto-reopen for fire-and-forget send() because
+      // there's no response correlation to wait on — the caller wouldn't know
+      // if their payload made it. request() is the user-facing path that
+      // matters; send() is rare (only used by respondToExtensionUi today).
       logRejectedHandleClosed(this, typeof payload?.type === "string" ? payload.type : "<send>");
       throw new Error("Pi RPC supervisor connection is closed");
     }
@@ -572,8 +590,19 @@ class SupervisedRpcProcess {
 
   async request(type: string, payload: Record<string, unknown> = {}): Promise<unknown> {
     if (this.closed) {
-      logRejectedHandleClosed(this, type);
-      throw new Error("Pi RPC supervisor connection is closed");
+      // Auto-reconnect once per request before giving up. This is the FIX for
+      // the 2026-05-24 silent-disconnect outage: the supervisor's UDS socket
+      // can be evicted out from under us (e.g. currentClient eviction by an
+      // openSession spawn-probe) without the supervisor process dying. In
+      // that case the supervisor is still happily listening on its socket,
+      // we just need to re-open ours. PR-A/B/C added the telemetry; this is
+      // the actual fix.
+      const reopened = await this.tryReopen(type);
+      if (!reopened) {
+        logRejectedHandleClosed(this, type);
+        throw new Error("Pi RPC supervisor connection is closed");
+      }
+      // Successfully reopened. Fall through and issue the request below.
     }
     this.lastRequestType = type;
     const id = `pirpc-${this.nextId++}`;
@@ -587,6 +616,11 @@ class SupervisedRpcProcess {
       });
     });
     if (!response.success) throw new Error(response.error ?? `${type} failed`);
+    // A successful round-trip proves the connection is healthy enough to
+    // allow another reconnect attempt next time something breaks. Without
+    // this, a single retry would burn the budget forever after the first
+    // successful reopen.
+    this.reopenAttempts = 0;
     return response.data;
   }
 
@@ -652,10 +686,18 @@ class SupervisedRpcProcess {
   private emitInternal(event: "frame" | "close", ...args: unknown[]) { this.internal.emit(event, ...args); }
 
   private attachSocketHandlers(): void {
-    this.socket.setEncoding("utf8");
-    this.socket.on("data", (chunk: string) => this.receive(chunk));
-    this.socket.on("error", (error) => this.failAll(error));
-    this.socket.on("close", () => {
+    // IMPORTANT: capture the socket reference at handler registration time.
+    // After a reopen, this.socket will point at a NEW socket, but the OLD
+    // socket will still fire its 'close' event as it tears down. The captured
+    // ref lets us no-op for those stale close events instead of marking the
+    // freshly-reopened connection as closed.
+    const sock = this.socket;
+    sock.setEncoding("utf8");
+    sock.on("data", (chunk: string) => { if (sock === this.socket) this.receive(chunk); });
+    sock.on("error", (error) => { if (sock === this.socket) this.failAll(error); });
+    sock.on("close", () => {
+      // Stale: another socket has taken over (via reopen). Ignore.
+      if (sock !== this.socket) return;
       const wasAlreadyClosed = this.closed;
       this.closed = true;
       if (this.closedAt === null) this.closedAt = Date.now();
@@ -668,6 +710,66 @@ class SupervisedRpcProcess {
       this.emitInternal("close");
       this.failAll(new Error("Pi RPC supervisor connection closed"));
     });
+  }
+
+  /**
+   * Try to recover a closed handle by opening a fresh socket to the same
+   * supervisor and re-running the hello/ack handshake with resumeFromSeq
+   * set to our lastSeq (so the supervisor replays any events we missed
+   * while disconnected). Returns true on success, false on failure.
+   *
+   * Idempotent / deduped: concurrent callers awaiting the same reopen
+   * share the underlying promise. Intentional closes (dispose / detach)
+   * are NEVER reopened.
+   */
+  private async tryReopen(requestType: string): Promise<boolean> {
+    if (this.disposeRequested || this.detached) return false;
+    if (!this.socketPath) return false; // can't reconnect without knowing where
+    if (!this.closed) return true; // already healthy
+    if (this.reopenAttempts >= SupervisedRpcProcess.RECONNECT_MAX_ATTEMPTS_PER_REQUEST) {
+      // Per-handle cap so we don't spin in a tight loop against a permanently
+      // broken supervisor. Reset on each successful request (see below).
+      return false;
+    }
+    if (this.reopening) return this.reopening;
+
+    this.reopenAttempts += 1;
+    const ctx = this.observabilityContext;
+    const resumeFromSeq = this.lastSeq;
+    logReopenAttempt(this, requestType);
+
+    this.reopening = (async () => {
+      try {
+        const newSocket = await connectSocket(this.socketPath!);
+        // Replace the socket FIRST so the old socket's close handler no-ops.
+        const oldSocket = this.socket;
+        this.socket = newSocket;
+        // Clear closed flags so the new socket's handshake & subsequent
+        // request can write through. Note: failAll() ran when the old socket
+        // closed, so this.pending is already empty.
+        this.closed = false;
+        this.closedAt = null;
+        this.buffer = "";
+        this.attachSocketHandlers();
+        // Tear down the old socket now that it can't affect us.
+        try { oldSocket.destroy(); } catch { /* ignore */ }
+
+        // Re-run the hello handshake. The supervisor's currentClient is
+        // replaced by this new connection; resumeFromSeq tells it to backfill
+        // missed ring events to our event listeners.
+        await this.handshake(resumeFromSeq);
+        logReopenSucceeded(this, requestType, resumeFromSeq);
+        return true;
+      } catch (err) {
+        this.closed = true;
+        if (this.closedAt === null) this.closedAt = Date.now();
+        logReopenFailed(this, requestType, err);
+        return false;
+      } finally {
+        this.reopening = null;
+      }
+    })();
+    return this.reopening;
   }
 
   private async closeSocket(): Promise<void> {
@@ -1407,6 +1509,46 @@ function logUnexpectedClose(rpc: SupervisedRpcProcess): void {
   // Use console.warn so it lands on stderr separately from regular console.log
   // output; one line per event keeps it grep-friendly.
   console.warn(JSON.stringify(payload));
+}
+
+function logReopenAttempt(rpc: SupervisedRpcProcess, requestType: string): void {
+  const ctx = rpc.observabilityContext;
+  console.warn(JSON.stringify({
+    level: "warn",
+    event: "pirpc.handle.reopen_attempt",
+    ts: new Date().toISOString(),
+    sessionId: ctx.sessionId,
+    supervisorPid: ctx.supervisorPid,
+    socketPath: ctx.socketPath,
+    requestType,
+  }));
+}
+
+function logReopenSucceeded(rpc: SupervisedRpcProcess, requestType: string, resumeFromSeq: number): void {
+  const ctx = rpc.observabilityContext;
+  console.warn(JSON.stringify({
+    level: "info",
+    event: "pirpc.handle.reopen_succeeded",
+    ts: new Date().toISOString(),
+    sessionId: ctx.sessionId,
+    supervisorPid: ctx.supervisorPid,
+    requestType,
+    resumeFromSeq,
+  }));
+}
+
+function logReopenFailed(rpc: SupervisedRpcProcess, requestType: string, err: unknown): void {
+  const ctx = rpc.observabilityContext;
+  console.error(JSON.stringify({
+    level: "error",
+    event: "pirpc.handle.reopen_failed",
+    ts: new Date().toISOString(),
+    sessionId: ctx.sessionId,
+    supervisorPid: ctx.supervisorPid,
+    socketPath: ctx.socketPath,
+    requestType,
+    error: err instanceof Error ? err.message : String(err),
+  }));
 }
 
 function logRejectedHandleClosed(rpc: SupervisedRpcProcess, requestType: string): void {
