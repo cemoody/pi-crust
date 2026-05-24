@@ -28,16 +28,16 @@ const EMPTY_DRAFT: Omit<EditDraft, "cwd"> = {
 
 export function CronPanel({ api, defaultCwd, onOpenSession }: CronPanelProps) {
   const { notify, dismiss } = useNotifications();
-  // Errors from the cron panel are persistent toasts; we track the last
-  // id so a successful reload can clear it (matching the prior "dismiss
-  // banner on next success" behavior).
+  // Errors auto-dismiss like other toasts. We still track the last id so
+  // a successful reload can clear an error toast early (matching the
+  // prior "dismiss banner on next success" behavior).
   const lastErrorIdRef = useRef<string | null>(null);
   const setError = useCallback((message: string | null) => {
     if (message === null) {
       if (lastErrorIdRef.current) { dismiss(lastErrorIdRef.current); lastErrorIdRef.current = null; }
       return;
     }
-    lastErrorIdRef.current = notify({ kind: "error", message, persistent: true });
+    lastErrorIdRef.current = notify({ kind: "error", message });
   }, [notify, dismiss]);
   const setNotice = useCallback((message: string) => { notify({ kind: "success", message }); }, [notify]);
   const [jobs, setJobs] = useState<readonly CronJobView[]>([]);

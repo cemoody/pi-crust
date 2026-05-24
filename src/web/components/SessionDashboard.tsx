@@ -76,6 +76,9 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   // Adapters for the legacy setError / setNotice call sites. Errors are
   // persistent (manual-dismiss) by default; notices auto-dismiss as info
   // toasts. Passing `null` is treated as "clear the last persistent error".
+  // Errors auto-dismiss like other toasts (with a longer default duration
+  // so users have time to read them). Callers that need a sticky toast
+  // can opt in via { persistent: true } on the underlying notify().
   const lastErrorIdRef = useRef<string | null>(null);
   const setError = useCallback((message: string | null) => {
     if (message === null) {
@@ -85,7 +88,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       }
       return;
     }
-    lastErrorIdRef.current = notify({ kind: "error", message, persistent: true });
+    lastErrorIdRef.current = notify({ kind: "error", message });
   }, [notify, dismiss]);
   const setNotice = useCallback((message: string | null) => {
     if (message === null) return;
@@ -150,7 +153,14 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   const [deletePending, setDeletePending] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement | null>(null);
-  const [promptErrorBySession, setPromptErrorBySession] = useState<Record<string, string | null>>({});
+  // Per-session prompt error helper. Surfaces as a red toast keyed by the
+  // session id so re-submitting on the same session replaces in place,
+  // and clearing the error (success path) dismisses the toast.
+  const setPromptError = useCallback((sessionId: string, message: string | null) => {
+    const toastId = `prompt-error-${sessionId}`;
+    if (message === null) { dismiss(toastId); return; }
+    notify({ id: toastId, kind: "error", message: `Prompt failed. ${message}` });
+  }, [notify, dismiss]);
   const [extensionUiBySession, setExtensionUiBySession] = useState<Record<string, ExtensionUiRequest[]>>({});
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
   const [forkMessages, setForkMessages] = useState<readonly BranchMessageOption[]>([]);
@@ -691,13 +701,10 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     // resolves.
     bumpUserActivity(sessionId, now);
     if (text.length > MAX_PROMPT_CHARS) {
-      setPromptErrorBySession((current) => ({
-        ...current,
-        [sessionId]: `Message is ${text.length.toLocaleString()} characters. The limit is ${MAX_PROMPT_CHARS.toLocaleString()}. Use the paperclip (or paste an image) instead of pasting image data as text.`,
-      }));
+      setPromptError(sessionId, `Message is ${text.length.toLocaleString()} characters. The limit is ${MAX_PROMPT_CHARS.toLocaleString()}. Use the paperclip (or paste an image) instead of pasting image data as text.`);
       return;
     }
-    setPromptErrorBySession((current) => ({ ...current, [sessionId]: null }));
+    setPromptError(sessionId, null);
     appendMessage(sessionId, {
       id: `user-pending-${now}`,
       role: "user",
@@ -715,7 +722,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
         setMessagesBySession((current) => ({ ...current, [sessionId]: messages.map(toTimelineMessage) }));
       }
     } catch (caught) {
-      setPromptErrorBySession((current) => ({ ...current, [sessionId]: errorMessage(caught) }));
+      setPromptError(sessionId, errorMessage(caught));
     } finally {
       setSessions((current) => current.map((session) => session.id === sessionId ? { ...session, status: "idle" } : session));
     }
@@ -940,7 +947,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     const sessionId = activeSession.id;
     const now = Date.now();
     bumpUserActivity(sessionId, now);
-    setPromptErrorBySession((current) => ({ ...current, [sessionId]: null }));
+    setPromptError(sessionId, null);
     appendMessage(sessionId, {
       id: `bash-${now}`,
       role: "custom",
@@ -952,7 +959,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       const messages = await api.bash(sessionId, command, includeInContext);
       setMessagesBySession((current) => ({ ...current, [sessionId]: messages.map(toTimelineMessage) }));
     } catch (caught) {
-      setPromptErrorBySession((current) => ({ ...current, [sessionId]: errorMessage(caught) }));
+      setPromptError(sessionId, errorMessage(caught));
     }
   }
 
@@ -1239,16 +1246,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
                   onCommit={(next) => void commitRename(next)}
                 />
               ) : null}
-              {promptErrorBySession[activeSession.id] ? (
-                <div className="prompt-error-banner" role="alert" aria-label="Prompt error">
-                  <div className="prompt-error-text">
-                    <strong>Prompt failed.</strong> <span>{promptErrorBySession[activeSession.id]}</span>
-                  </div>
-                  <div className="prompt-error-actions">
-                    <button type="button" onClick={() => setPromptErrorBySession((current) => ({ ...current, [activeSession.id]: null }))}>Dismiss</button>
-                  </div>
-                </div>
-              ) : null}
+
               <PromptComposer
                 sessionId={activeSession.id}
                 isStreaming={activeSession.status === "streaming"}

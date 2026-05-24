@@ -35,12 +35,21 @@ describe("NotificationsProvider", () => {
     expect(screen.queryByText("Saved")).toBeNull();
   });
 
-  it("does not auto-dismiss error toasts by default", () => {
+  it("auto-dismisses error toasts after the 8s default", () => {
     const api = renderHarness();
     act(() => { api.notify({ kind: "error", message: "Boom" }); });
-    act(() => { vi.advanceTimersByTime(60_000); });
-    expect(screen.getByText("Boom")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Boom");
+    act(() => { vi.advanceTimersByTime(7_999); });
+    expect(screen.getByText("Boom")).toBeInTheDocument();
+    act(() => { vi.advanceTimersByTime(2); });
+    expect(screen.queryByText("Boom")).toBeNull();
+  });
+
+  it("keeps error toasts open when persistent: true is set", () => {
+    const api = renderHarness();
+    act(() => { api.notify({ kind: "error", message: "Sticky", persistent: true }); });
+    act(() => { vi.advanceTimersByTime(60_000); });
+    expect(screen.getByText("Sticky")).toBeInTheDocument();
   });
 
   it("auto-dismisses warning toasts after 6s", () => {

@@ -1008,7 +1008,9 @@ describe("SessionDashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     expect(promptCalls).toBe(0);
-    expect(screen.getByRole("alert", { name: "Prompt error" })).toHaveTextContent(/limit is 32,000/);
+    // Prompt errors are surfaced via the unified notification region
+    // (see notifications.tsx) rather than the legacy inline banner.
+    expect(screen.getByLabelText("Notifications")).toHaveTextContent(/Prompt failed\..*limit is 32,000/);
   });
 
   it("does not render the legacy schedule fallback when core.schedule is disabled", async () => {

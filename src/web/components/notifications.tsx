@@ -11,9 +11,11 @@
  * auto-dismiss behavior, and accessibility roles.
  *
  * This module centralizes all *floating* informational notifications into
- * a single toast region that auto-dismisses by default. Errors are
- * persistent (manual-dismiss) by default because auto-dismissing errors
- * is the most common user complaint about toast systems.
+ * a single toast region. Every kind auto-dismisses by default, including
+ * errors — pi-crust's design choice is a uniform toast UX with a longer
+ * timeout for errors so users still have time to read them. Callers that
+ * need a sticky toast can opt in via `persistent: true` or
+ * `durationMs: Infinity`.
  *
  * Inline field-level alerts (e.g. form validation, fork-dialog errors)
  * are intentionally NOT moved here — they belong next to the failing
@@ -58,12 +60,14 @@ interface NotificationsContextValue {
 
 const NotificationsContext = createContext<NotificationsContextValue | null>(null);
 
-/** Default auto-dismiss in ms by kind. `error` defaults to "manual" (Infinity). */
+/** Default auto-dismiss in ms by kind. Errors stay longer than the rest
+ *  so users have time to read them, but they still auto-dismiss for a
+ *  consistent toast experience. Pass `persistent: true` to opt out. */
 const DEFAULT_DURATION_MS: Record<NotificationKind, number> = {
   info: 4_000,
   success: 4_000,
   warning: 6_000,
-  error: Number.POSITIVE_INFINITY,
+  error: 8_000,
 };
 
 let notificationCounter = 0;
