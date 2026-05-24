@@ -1038,6 +1038,7 @@ export function SessionDashboard({ api }: SessionDashboardProps) {
             settings={extensionSettings}
             currentAppName={appName}
             {...(appIcon ? { currentAppIcon: appIcon } : {})}
+            api={api}
             onReload={reloadExtensions}
             onNotice={setNotice}
             {...(api.setAppBranding ? { onSaveBranding: async (branding) => {
