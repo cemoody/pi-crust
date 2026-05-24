@@ -82,10 +82,42 @@ interface HttpApiServerContext extends HttpApiServerOptions {
 
 const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
 
-/** Append-only JSON-lines logger used for client telemetry. Lazy-creates the file. */
+/**
+ * Append-only JSON-lines logger used for client telemetry. Lazy-creates the
+ * file. Also maintains an in-memory rolling ring of the most recent events
+ * so /api/client-event/stats can answer "what's been happening in the last
+ * 5 minutes?" without re-reading the (potentially huge) jsonl from disk.
+ *
+ * The ring is purely additive observability — it never replaces or alters
+ * the on-disk log, and a full ring drops the OLDEST events (so the most
+ * recent N are always available for the stats query the dashboard polls).
+ */
 interface ClientEventLog {
   append(payload: Record<string, unknown>): Promise<void>;
+  stats(windowMs: number): ClientEventStats;
 }
+
+export interface ClientEventStats {
+  /** The window the stats were computed over, in ms. */
+  windowMs: number;
+  /** Total events in window. */
+  total: number;
+  /** Number of events the in-memory ring has dropped due to capacity. */
+  bufferDropped: number;
+  /** Histogram of event 'kind' values. */
+  byKind: Record<string, number>;
+  /** Histogram of status codes for 'api-error' events (PR-B). */
+  byApiErrorStatus: Record<string, number>;
+  /** Top 5 sessionIds by event count (a single very-broken session is a leading indicator). */
+  topSessions: Array<{ sessionId: string; count: number }>;
+  /** Top 5 api-error paths by count. */
+  topApiErrorPaths: Array<{ path: string; count: number }>;
+}
+
+// Max events kept in memory for /stats. ~5 KB per event * 4096 = ~20 MB max.
+// More than enough for a 5-minute window on a busy box; older events fall off
+// into the on-disk jsonl which remains the source of truth for deep dives.
+export const CLIENT_EVENT_RING_CAPACITY = 4096;
 
 function resolveContextGitSha(value: string | (() => string) | undefined): string {
   if (typeof value === "function") {
@@ -218,8 +250,18 @@ function createExtensionSessionApi(registry: SessionRegistry) {
 
 function createClientEventLog(filePath: string): ClientEventLog {
   let queue: Promise<void> = Promise.resolve();
+  // In-memory ring of (serverTs, payload) pairs. Used by stats() only;
+  // does not affect the on-disk log. Pre-allocated array + head index so
+  // additions are O(1) and don't generate GC churn under load.
+  const ring: Array<{ ts: number; payload: Record<string, unknown> } | undefined> = new Array(CLIENT_EVENT_RING_CAPACITY);
+  let ringHead = 0; // next slot to write
+  let totalAppended = 0;
   return {
     append(payload) {
+      const ts = typeof payload.serverTs === "number" ? payload.serverTs : Date.now();
+      ring[ringHead] = { ts, payload };
+      ringHead = (ringHead + 1) % CLIENT_EVENT_RING_CAPACITY;
+      totalAppended += 1;
       queue = queue.then(async () => {
         try {
           await fsp.mkdir(path.dirname(filePath), { recursive: true });
@@ -230,7 +272,55 @@ function createClientEventLog(filePath: string): ClientEventLog {
       });
       return queue;
     },
+    stats(windowMs: number): ClientEventStats {
+      return summarizeClientEventRing(ring, windowMs, totalAppended);
+    },
   };
+}
+
+/**
+ * Pure-function aggregation over the ring. Exported (via the in-test
+ * factory below) so tests can pin the histogram shape without spinning up
+ * a real HTTP server.
+ */
+export function summarizeClientEventRing(
+  ring: ReadonlyArray<{ ts: number; payload: Record<string, unknown> } | undefined>,
+  windowMs: number,
+  totalAppended: number,
+): ClientEventStats {
+  const cutoff = Date.now() - windowMs;
+  const byKind: Record<string, number> = {};
+  const byApiErrorStatus: Record<string, number> = {};
+  const sessionCounts = new Map<string, number>();
+  const pathCounts = new Map<string, number>();
+  let total = 0;
+  for (const slot of ring) {
+    if (!slot) continue;
+    if (slot.ts < cutoff) continue;
+    total += 1;
+    const kind = typeof slot.payload.kind === "string" ? slot.payload.kind : "<unknown>";
+    byKind[kind] = (byKind[kind] ?? 0) + 1;
+    const sid = typeof slot.payload.sessionId === "string" ? slot.payload.sessionId : null;
+    if (sid) sessionCounts.set(sid, (sessionCounts.get(sid) ?? 0) + 1);
+    if (kind === "api-error") {
+      const status = String(slot.payload.status ?? "unknown");
+      byApiErrorStatus[status] = (byApiErrorStatus[status] ?? 0) + 1;
+      const p = typeof slot.payload.path === "string" ? slot.payload.path : null;
+      if (p) pathCounts.set(p, (pathCounts.get(p) ?? 0) + 1);
+    }
+  }
+  const topSessions = [...sessionCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([sessionId, count]) => ({ sessionId, count }));
+  const topApiErrorPaths = [...pathCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([p, count]) => ({ path: p, count }));
+  // bufferDropped tells operators if their window covers the buffer (i.e. is
+  // their stats query missing data because the ring overwrote it?).
+  const bufferDropped = Math.max(0, totalAppended - CLIENT_EVENT_RING_CAPACITY);
+  return { windowMs, total, bufferDropped, byKind, byApiErrorStatus, topSessions, topApiErrorPaths };
 }
 
 export function createHttpApiServer(options: HttpApiServerOptions): http.Server {
@@ -391,6 +481,27 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "POST" && url.pathname === "/api/client-event") {
     return handleClientEvent(req, res, context);
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/client-event/stats") {
+    // Aggregated histogram over the most recent client telemetry events,
+    // computed from an in-memory ring buffer. Lets an operator (or the
+    // dashboard) see "how many api-errors / sse-silences in last 5 minutes?"
+    // without grepping /home/coder/.../client-events.jsonl. The defaults
+    // target the dashboard's polling cadence; max is capped to avoid CPU
+    // pegging on a pathological query.
+    const requestedMs = Number(url.searchParams.get("windowMs") ?? 5 * 60_000);
+    const windowMs = Math.max(1_000, Math.min(60 * 60_000, Number.isFinite(requestedMs) ? requestedMs : 5 * 60_000));
+    const stats = context.clientEventLog?.stats(windowMs) ?? {
+      windowMs,
+      total: 0,
+      bufferDropped: 0,
+      byKind: {},
+      byApiErrorStatus: {},
+      topSessions: [],
+      topApiErrorPaths: [],
+    };
+    return sendJson(res, 200, stats);
   }
 
   if (req.method === "GET" && url.pathname === "/api/extensions") {
