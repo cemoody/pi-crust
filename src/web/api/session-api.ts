@@ -74,6 +74,9 @@ export interface DashboardArtifact {
   readonly markdown?: string;
   readonly data?: unknown;
   readonly alt?: string;
+  readonly artifactUrl?: string;
+  readonly artifactTruncated?: boolean;
+  readonly artifactFullBytes?: number;
 }
 
 export interface DashboardToolDetails {

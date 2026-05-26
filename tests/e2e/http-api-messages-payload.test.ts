@@ -187,7 +187,17 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
     // preview/stub for the tool row instead of shipping megabytes of deck JSON.
     expect(body).not.toContain(bigDeckHtml);
     expect(body.length).toBeLessThan(200_000);
-    expect(body).toContain("artifactTruncated");
+    const messages = JSON.parse(body) as Array<{ tool?: { artifact?: { artifactTruncated?: boolean; artifactUrl?: string } } }>;
+    const artifact = messages[0]?.tool?.artifact;
+    expect(artifact).toMatchObject({ artifactTruncated: true });
+    expect(artifact?.artifactUrl).toMatch(/\/api\/sessions\/payload-session\/messages\/1-0\/artifact$/);
+
+    // The full deck is still available for inline rendering; it is just loaded
+    // separately after the timeline shell renders.
+    const artifactResponse = await fetch(`${baseUrl}${artifact!.artifactUrl}`);
+    expect(artifactResponse.ok).toBe(true);
+    const fullArtifact = await artifactResponse.json() as { data?: unknown };
+    expect(JSON.stringify(fullArtifact)).toContain(bigDeckHtml);
   });
 
   it("does not inline multi-megabyte custom-message details payloads", async () => {

@@ -56,6 +56,9 @@ export interface TimelineArtifact {
   readonly markdown?: string;
   readonly data?: unknown;
   readonly alt?: string;
+  readonly artifactUrl?: string;
+  readonly artifactTruncated?: boolean;
+  readonly artifactFullBytes?: number;
 }
 
 export interface TimelineToolDetails {
@@ -638,6 +641,9 @@ function formatToolInput(tool: TimelineToolDetails): string {
 
 function ArtifactPreview({ artifact }: { readonly artifact: TimelineArtifact }) {
   const title = artifact.title ?? `${artifact.kind} artifact`;
+  if (artifact.artifactUrl && artifact.artifactTruncated) {
+    return <LazyToolArtifactPreview artifact={artifact} title={title} />;
+  }
   if (artifact.kind === "image") {
     const src = artifact.url ?? artifact.path;
     return src ? (
@@ -667,6 +673,47 @@ function ArtifactPreview({ artifact }: { readonly artifact: TimelineArtifact }) 
     return <PresentationArtifactCard deckInput={artifact.data} title={title} />;
   }
   return <ArtifactFallback artifact={artifact} />;
+}
+
+function LazyToolArtifactPreview({ artifact, title }: { readonly artifact: TimelineArtifact; readonly title: string }) {
+  const [loaded, setLoaded] = useState<TimelineArtifact | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!artifact.artifactUrl) return;
+    let cancelled = false;
+    const url = `${import.meta.env.VITE_PI_CRUST_API_BASE ?? ""}${artifact.artifactUrl}`;
+    (async () => {
+      try {
+        setError(null);
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Artifact fetch failed (${response.status})`);
+        const value = await response.json() as TimelineArtifact;
+        if (!cancelled) setLoaded(value);
+      } catch (caught) {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [artifact.artifactUrl]);
+
+  if (loaded) return <ArtifactPreview artifact={loaded} />;
+  if (error) {
+    return (
+      <section className="artifact-preview artifact-data" role="alert" aria-label={`${title} failed to load`}>
+        <strong>{title}</strong>
+        <p>Could not load full artifact: {error}</p>
+        <ArtifactFallback artifact={artifact} />
+      </section>
+    );
+  }
+  const size = typeof artifact.artifactFullBytes === "number" ? ` (${(artifact.artifactFullBytes / 1024 / 1024).toFixed(1)} MB)` : "";
+  return (
+    <section className="artifact-preview artifact-data" aria-label={`${title} loading`}>
+      <strong>{title}</strong>
+      <p>Loading artifact{size}…</p>
+    </section>
+  );
 }
 
 function ArtifactFallback({ artifact }: { readonly artifact: TimelineArtifact }) {

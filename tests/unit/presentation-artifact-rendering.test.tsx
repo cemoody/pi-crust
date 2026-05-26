@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MessageTimeline } from "../../src/web/components/MessageTimeline.js";
 import { PRESENTATION_MIME } from "../../src/presentations/schema.js";
 
@@ -26,6 +26,10 @@ const presentationMessage = {
   },
 };
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("presentation artifact rendering", () => {
   it("renders a deck card with preview and present modal from multi-MIME artifacts", () => {
     render(<MessageTimeline messages={[presentationMessage]} />);
@@ -39,6 +43,52 @@ describe("presentation artifact rendering", () => {
 
     expect(screen.getByRole("dialog", { name: /Executive Signal Brief presentation/ })).toBeInTheDocument();
     expect(screen.getByTestId("artifact-presentation-modal")).toBeInTheDocument();
+  });
+
+  it("lazy-loads a truncated presentation tool artifact and renders it inline", async () => {
+    const fullArtifact = {
+      version: 1,
+      kind: "presentation",
+      title: "Lazy Tool Deck",
+      data: {
+        title: "Lazy Tool Deck",
+        slides: [
+          { title: "Lazy Tool Deck", subtitle: "Loaded after timeline bootstrap" },
+          { title: "Details", bullets: ["Fetched separately", "Rendered inline"] },
+        ],
+      },
+    };
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => fullArtifact,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MessageTimeline messages={[{
+      id: "m-tool",
+      role: "tool" as const,
+      text: "Displayed presentation deck",
+      tool: {
+        id: "tool-1",
+        name: "show_presentation",
+        args: {},
+        status: "success" as const,
+        output: "Displayed presentation deck",
+        artifact: {
+          kind: "presentation",
+          title: "Lazy Tool Deck",
+          artifactTruncated: true,
+          artifactFullBytes: 11_000_000,
+          artifactUrl: "/api/sessions/s1/messages/m-tool/artifact",
+          data: { __omitted: true },
+        },
+      },
+    }]} />);
+
+    expect(screen.getByText(/Loading artifact \(10\.5 MB\)/)).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sessions/s1/messages/m-tool/artifact"));
+    expect(await screen.findByText("2 slides")).toBeInTheDocument();
+    expect(screen.getByTestId("artifact-presentation-preview")).toBeInTheDocument();
   });
 
   it("falls back when the presentation renderer MIME is not enabled", () => {

@@ -675,7 +675,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     }
   }
 
-  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/((?:messages(?:\/[^/]+\/(?:images\/\d+|details|tool-output))?)|prompt|bash|abort|rename|delete|model|state|events|extension-ui-response))?$/);
+  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/((?:messages(?:\/[^/]+\/(?:images\/\d+|details|tool-output|artifact))?)|prompt|bash|abort|rename|delete|model|state|events|extension-ui-response))?$/);
   if (!match) return sendJson(res, 404, { error: "not found" });
   const sessionId = decodeURIComponent(match[1]!);
   const action = match[2] ?? "state";
@@ -801,7 +801,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     return sendJson(res, 200, toDashboardMessages(messages, { sessionId: session.id }));
   }
 
-  // Shared by the three /messages/:msgid/{images,details,tool-output}
+  // Shared by the /messages/:msgid/{images,details,tool-output,artifact}
   // routes below: open the session and find one message by id.
   const lookupContext = { getOrOpenSession: (id: string) => getOrOpenSession(context, id) };
 
@@ -848,6 +848,22 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       "Cache-Control": "private, max-age=60",
     });
     res.end(message.tool.output ?? "");
+    return;
+  }
+
+  // Lazy fetch of full tool artifacts (slides, rich HTML, large JSON specs)
+  // that we strip from /messages payloads. Unlike the timeline bootstrap
+  // response, this endpoint intentionally returns the full artifact so the UI
+  // can render the card inline after the initial page becomes interactive.
+  const toolArtifactMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/artifact$/);
+  if (req.method === "GET" && toolArtifactMatch) {
+    const message = await lookupSessionMessage(lookupContext, decodeURIComponent(toolArtifactMatch[1]!), decodeURIComponent(toolArtifactMatch[2]!));
+    if (!message?.tool?.artifact) return sendJson(res, 404, { error: "tool artifact not found" });
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "private, max-age=60",
+    });
+    res.end(JSON.stringify(message.tool.artifact));
     return;
   }
 
@@ -1434,7 +1450,7 @@ function messageImageAt(message: SessionMessage | undefined, imageIndex: number)
 
 function stripToolForTransport(tool: NonNullable<SessionMessage["tool"]>, sessionId: string | undefined, messageId: string) {
   const output = tool.output ?? "";
-  const artifact = stripToolArtifactForTransport(tool.artifact);
+  const artifact = stripToolArtifactForTransport(tool.artifact, sessionId, messageId);
   const toolWithArtifact = artifact === tool.artifact ? tool : { ...tool, artifact };
   if (!sessionId || Buffer.byteLength(output, "utf8") <= MAX_INLINE_TOOL_OUTPUT_BYTES) return toolWithArtifact;
   // Keep the first/last few KB inline so the UI still shows context without
@@ -1449,7 +1465,7 @@ function stripToolForTransport(tool: NonNullable<SessionMessage["tool"]>, sessio
   return { ...toolWithArtifact, output: truncated, outputTruncated: true, outputUrl, outputFullBytes: fullBytes };
 }
 
-function stripToolArtifactForTransport(artifact: unknown): unknown {
+function stripToolArtifactForTransport(artifact: unknown, sessionId: string | undefined, messageId: string): unknown {
   if (!artifact || typeof artifact !== "object") return artifact;
   let serialised: string;
   try { serialised = JSON.stringify(artifact); } catch { return artifact; }
@@ -1460,6 +1476,7 @@ function stripToolArtifactForTransport(artifact: unknown): unknown {
   const preview: Record<string, unknown> = {
     artifactTruncated: true,
     artifactFullBytes: fullBytes,
+    ...(sessionId ? { artifactUrl: `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/artifact` } : {}),
   };
   for (const key of ["version", "kind", "title", "path", "url", "mimeType", "alt"] as const) {
     const value = source[key];
