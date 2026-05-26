@@ -56,6 +56,20 @@ describe("html passthrough slides", () => {
     expect(html).toContain("data-template=\"team-grid\"");
   });
 
+  // Regression: PR #169 bumped the base `.slide` rule to `.deck > .slide`,
+  // raising its specificity from (0,1,0) to (0,2,0). Per-template overrides
+  // like `.slide-title { background: var(--bg); padding: 0 }` then had lower
+  // specificity and stopped winning, so the built-in title slide rendered
+  // with the radial-gradient + 5vw padding from the base rule — visible to
+  // the user as a peach gradient on the title slide. Each per-template
+  // override must also be scoped to `.deck > .slide-foo` so its specificity
+  // matches the base.
+  it("per-template overrides (.slide-title, etc.) match the base rule specificity", () => {
+    const html = compileRevealHtml({ title: "T", slides: [{ title: "x" }] });
+    expect(html).toMatch(/\.deck>\.slide-title\{background:var\(--bg\);padding:0\}/);
+    expect(html).not.toMatch(/(?<![>.\-])\.slide-title\{background:var\(--bg\);padding:0\}/);
+  });
+
   // Regression: BrainCo (and other template packs) ship layout HTML that
   // contains its OWN `<div class="slide">` inside the passthrough payload.
   // Before scoping, the deck's `.slide` selector matched both pi-crust's
