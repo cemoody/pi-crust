@@ -68,10 +68,12 @@ describe("presentation artifact rendering", () => {
 
     // Before the fix this throws synchronously out of compileRevealHtml and
     // blanks the whole React tree. After the fix it renders a localized
-    // alert card with the error message and a fallback outline.
+    // alert card with the error message (either at the coercion step — the
+    // schema validator rejects unsafe asset paths up-front — or at the
+    // compile step if it gets that far) and never crashes the tree.
     expect(() => render(<MessageTimeline messages={[unsafeMessage]} />)).not.toThrow();
     expect(screen.getByTestId("artifact-presentation")).toHaveAttribute("role", "alert");
-    expect(screen.getByText(/Could not render presentation preview/)).toBeInTheDocument();
+    expect(screen.getByText(/Unsafe presentation asset path|image\.src is unsafe/)).toBeInTheDocument();
   });
 
   // TDD characterization tests added to pin down behavior before extracting

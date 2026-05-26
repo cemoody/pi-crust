@@ -82,7 +82,14 @@ export function validatePresentationDeck(value: unknown): PresentationValidation
   const errors: string[] = [];
   if (!isRecord(value)) return { ok: false, errors: ["deck must be an object"] };
   if (!nonEmptyString(value.title)) errors.push("title is required");
-  if (isRecord(value.logo) && !nonEmptyString(value.logo.src)) errors.push("logo.src is required");
+  if (isRecord(value.logo)) {
+    if (!nonEmptyString(value.logo.src)) {
+      errors.push("logo.src is required");
+    } else {
+      const unsafe = describeUnsafeAssetPath(value.logo.src);
+      if (unsafe) errors.push(`logo.src ${unsafe}`);
+    }
+  }
   if (!Array.isArray(value.slides) || value.slides.length === 0) {
     errors.push("slides must be a non-empty array");
   } else {
@@ -127,6 +134,9 @@ function validateSlide(value: unknown, index: number, errors: string[]) {
       errors.push(`slides[${index}].image must be an object like { src: "path-or-url", alt? } — got ${describeType(value.image)}`);
     } else if (!nonEmptyString(value.image.src)) {
       errors.push(`slides[${index}].image.src is required and must be a non-empty string (got ${describeType(value.image.src)})`);
+    } else {
+      const unsafe = describeUnsafeAssetPath(value.image.src);
+      if (unsafe) errors.push(`slides[${index}].image.src ${unsafe}`);
     }
   }
   if (value.slots !== undefined && !isRecord(value.slots)) {
@@ -141,6 +151,26 @@ function describeType(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
   return typeof value;
+}
+
+// Mirror of the runtime rule in src/presentations/assets.ts so the LLM gets
+// an actionable validation error at tool-call time instead of a render-time
+// 'Unsafe presentation asset path' card it can't see. Returns a remediation
+// fragment ('is unsafe (...): ...') or undefined when the path is fine.
+const ASSET_DATA_URI_PATTERN = /^data:/i;
+const ASSET_REMOTE_URL_PATTERN = /^https?:\/\//i;
+const ASSET_ABSOLUTE_OR_SCHEME_PATTERN = /^(?:[a-z][a-z0-9+.-]*:|\/)/i;
+export function describeUnsafeAssetPath(src: string): string | undefined {
+  if (ASSET_DATA_URI_PATTERN.test(src)) return undefined;
+  if (ASSET_REMOTE_URL_PATTERN.test(src)) return undefined;
+  const hint = `must be one of: an https:// URL, a data: URI, or a path RELATIVE to the session's .pi/presentations/<deckId>/ directory (no leading slash, no ".."). Save the file into that directory first (e.g. with the file-writing tool) and pass just the filename, e.g. "chart.png".`;
+  if (ASSET_ABSOLUTE_OR_SCHEME_PATTERN.test(src)) {
+    return `is unsafe (${JSON.stringify(src)} is an absolute path or non-http(s) scheme): ${hint}`;
+  }
+  if (src.split(/[\\/]+/).some((part) => part === "..")) {
+    return `is unsafe (${JSON.stringify(src)} contains ".." path traversal): ${hint}`;
+  }
+  return undefined;
 }
 
 export function isPresentationDeck(value: unknown): value is PresentationDeck {

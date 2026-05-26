@@ -98,6 +98,7 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
       "Prefer structured deck data over raw HTML so Pi Remote Control can provide preview, present, download, and fallback outline behavior.",
       "Keep each slide concise: one main title, short bullets, optional stats/images, and speaker notes only when useful.",
       "If a brand template pack is configured (e.g. brainco), set templatePack on the deck and use layout + slots per slide instead of generic title/bullets fields. Layout keys and slot names are pack-specific.",
+      "Image src must be an https:// URL, a data: URI, or a path RELATIVE to the session's .pi/presentations/<deckId>/ directory (no leading slash, no '..'). To use a local file, first write it into that directory and pass just the filename (e.g. 'chart.png').",
     ],
     parameters: Type.Object({
       title: Type.String({ description: "Deck title." }),

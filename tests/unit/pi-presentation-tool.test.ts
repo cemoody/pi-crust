@@ -60,6 +60,34 @@ describe("Pi presentation tool extension", () => {
       slides: [{ title: "x", image: { alt: "oops" } }],
     })).rejects.toThrow(/slides\[0\]\.image\.src is required/);
 
+    // Absolute filesystem path — the exact compile-time 'Unsafe presentation
+    // asset path' failure from a real bug report. Must be caught up-front so
+    // the LLM sees it.
+    await expect(tool.execute("call-abs-path", {
+      title: "Coastal",
+      slides: [
+        { title: "Cover" },
+        { title: "Landfalls", image: { src: "/home/coder/adhoc/bz_coastal/slide_02_landfalls.png" } },
+      ],
+    })).rejects.toThrow(/slides\[1\]\.image\.src is unsafe.*absolute path.*\.pi\/presentations/s);
+
+    // Parent-directory traversal is also unsafe.
+    await expect(tool.execute("call-dotdot", {
+      title: "Traversal",
+      slides: [{ title: "x", image: { src: "../../../etc/passwd" } }],
+    })).rejects.toThrow(/slides\[0\]\.image\.src is unsafe.*path traversal/);
+
+    // https:// and data: URIs and bare relative filenames must still pass.
+    await expect(tool.execute("call-ok", {
+      title: "OK",
+      slides: [
+        { title: "a", image: { src: "https://example.com/x.png" } },
+        { title: "b", image: { src: "data:image/png;base64,AAA" } },
+        { title: "c", image: { src: "chart.png" } },
+        { title: "d", image: { src: "sub/chart.png" } },
+      ],
+    })).resolves.toBeTruthy();
+
     // The error message should include the shape hint so the model knows what
     // to send next time.
     try {

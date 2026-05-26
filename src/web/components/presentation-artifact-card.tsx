@@ -254,7 +254,7 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
 
   if (!deck) {
     return (
-      <section className="artifact-preview artifact-data" role="alert">
+      <section className="artifact-preview artifact-data" data-testid="artifact-presentation" role="alert" aria-label={title}>
         <strong>Invalid presentation</strong>
         <pre>{parsed.error}</pre>
       </section>
