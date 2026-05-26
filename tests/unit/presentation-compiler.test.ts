@@ -55,6 +55,32 @@ describe("html passthrough slides", () => {
     expect(html).toContain("<div class=\"brainco-team\">Team</div>");
     expect(html).toContain("data-template=\"team-grid\"");
   });
+
+  // Regression: BrainCo (and other template packs) ship layout HTML that
+  // contains its OWN `<div class="slide">` inside the passthrough payload.
+  // Before scoping, the deck's `.slide` selector matched both pi-crust's
+  // outer <section class="slide"> AND the inner brainco <div class="slide">,
+  // so a 7-slide pack deck reported 14 slides and rendered every page
+  // empty (the inner divs hit the global `.slide { display: none }` rule).
+  // The compiled CSS + nav JS must scope to direct `.deck > .slide`.
+  it("scopes .slide CSS + nav to .deck > .slide so passthrough HTML can use its own .slide class", () => {
+    const deck = {
+      title: "Brand deck",
+      slides: [
+        { html: "<div class=\"slide brainco-cover\"><h1>One</h1></div>" },
+        { html: "<div class=\"slide brainco-bullets\"><h1>Two</h1></div>" },
+      ],
+    } as const;
+    const html = compileRevealHtml(deck);
+    // CSS rule must target direct children only, never the bare `.slide`.
+    expect(html).toMatch(/\.deck>\.slide\{position:absolute/);
+    expect(html).toMatch(/\.deck>\.slide\.active\{display:block\}/);
+    expect(html).not.toMatch(/(?<![>.\-])\.slide\{position:absolute/);
+    // Deck-navigator JS must use the same scoped selector so inner
+    // .slide divs from passthrough HTML aren't counted.
+    expect(html).toContain("querySelectorAll('.deck>.slide')");
+    expect(html).not.toContain("querySelectorAll('.slide')");
+  });
 });
 
 describe("templatePack-aware compile", () => {
