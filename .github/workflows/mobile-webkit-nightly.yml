@@ -1,0 +1,56 @@
+name: mobile-webkit-nightly
+
+on:
+  schedule:
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-webkit-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  npm_config_fund: "false"
+  npm_config_audit: "false"
+
+jobs:
+  mobile-webkit:
+    name: mobile WebKit smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: resolve playwright version
+        id: pw
+        run: echo "version=$(node -p \"require('@playwright/test/package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: cache playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: install WebKit + deps
+        run: npx playwright install --with-deps webkit
+
+      - name: playwright mobile WebKit suite
+        run: npx playwright test --config=playwright.mobile-webkit.config.ts --reporter=list
+
+      - name: upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-webkit-failure-artifacts
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
