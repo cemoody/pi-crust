@@ -15,6 +15,7 @@ import remarkGfm from "remark-gfm";
 import { coerceMarkdownInput } from "../utils/safe-markdown.js";
 import { coercePresentationDeck, presentationFallbackMarkdown, type PresentationDeck } from "../../presentations/schema.js";
 import { compileRevealHtml } from "../../presentations/reveal.js";
+import { withAbsolutePresentationAssetUrls } from "../../presentations/absolute-asset-urls.js";
 import { compileStandalonePresentationHtml } from "../../presentations/standalone.js";
 import { applyDeckPatch, type DeckPatchOp } from "../../presentations/patch.js";
 import { TimelineSessionContext } from "./timeline-session-context.js";
@@ -211,17 +212,31 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
   const compiled = useMemo((): { html: string; previewHtml: string; markdown: string; error?: string } => {
     if (!stableDeck || !modalDeck) return { html: "", previewHtml: "", markdown: "" };
     try {
+      // Rewrite every bare `image.src` (and `<img src>` inside passthrough
+      // HTML) to an absolute API URL pointing at the per-session asset
+      // route. The preview/modal iframes use srcDoc, which means relative
+      // URLs have no usable base — a bare `chart.png` resolves against
+      // `about:srcdoc` and shows as a broken-image icon even when the
+      // file was correctly auto-copied (#168). The standalone download
+      // path doesn't need this because it inlines assets as data: URIs.
+      const apiBase = (import.meta as ImportMeta).env?.VITE_PI_CRUST_API_BASE ?? "";
+      const absStable = sessionId
+        ? withAbsolutePresentationAssetUrls(stableDeck, { apiBase, sessionId })
+        : stableDeck;
+      const absModal = sessionId
+        ? withAbsolutePresentationAssetUrls(modalDeck, { apiBase, sessionId })
+        : modalDeck;
       return {
         // In-page Present modal stays synchronous — we don't need asset
         // inlining for an iframe that runs inside the same origin.
-        html: compileRevealHtml(modalDeck, editing ? { editable: true } : {}),
-        previewHtml: compileRevealHtml(stableDeck, { startSlide: 0, title: `${stableDeck.title} preview` }),
+        html: compileRevealHtml(absModal, editing ? { editable: true } : {}),
+        previewHtml: compileRevealHtml(absStable, { startSlide: 0, title: `${stableDeck.title} preview` }),
         markdown: presentationFallbackMarkdown(stableDeck),
       };
     } catch (error) {
       return { html: "", previewHtml: "", markdown: presentationFallbackMarkdown(stableDeck), error: error instanceof Error ? error.message : String(error) };
     }
-  }, [stableDeck, modalDeck, editing]);
+  }, [stableDeck, modalDeck, editing, sessionId]);
   const { html, previewHtml, markdown } = compiled;
   const compileError = compiled.error;
 
