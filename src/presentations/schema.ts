@@ -106,12 +106,41 @@ function validateSlide(value: unknown, index: number, errors: string[]) {
     || (Array.isArray(value.bullets) && value.bullets.length > 0)
     || (Array.isArray(value.columns) && value.columns.length > 0)
     || (Array.isArray(value.stats) && value.stats.length > 0)
-    || isRecord(value.image);
-  if (!hasContent) errors.push(`slides[${index}] must contain visible content`);
-  if (value.bullets !== undefined && !Array.isArray(value.bullets)) errors.push(`slides[${index}].bullets must be an array`);
-  if (value.columns !== undefined && !Array.isArray(value.columns)) errors.push(`slides[${index}].columns must be an array`);
-  if (value.stats !== undefined && !Array.isArray(value.stats)) errors.push(`slides[${index}].stats must be an array`);
-  if (isRecord(value.image) && !nonEmptyString(value.image.src)) errors.push(`slides[${index}].image.src is required`);
+    || isRecord(value.image)
+    || nonEmptyString(value.layout);
+  if (!hasContent) {
+    errors.push(`slides[${index}] must contain visible content (set at least one of: title, subtitle, body, quote, bullets, stats, columns, image, html, or layout)`);
+  }
+  if (value.bullets !== undefined && !Array.isArray(value.bullets)) {
+    errors.push(`slides[${index}].bullets must be an array of strings or { text, detail? } objects`);
+  }
+  if (value.columns !== undefined && !Array.isArray(value.columns)) {
+    errors.push(`slides[${index}].columns must be an array of { title?, body?, bullets? } objects`);
+  }
+  if (value.stats !== undefined && !Array.isArray(value.stats)) {
+    errors.push(`slides[${index}].stats must be an array of { value, label? } objects`);
+  }
+  if (value.image !== undefined) {
+    if (typeof value.image === "string") {
+      errors.push(`slides[${index}].image must be an object like { src: "path-or-url", alt? } — got a string. Did you mean { src: ${JSON.stringify(value.image)} }?`);
+    } else if (!isRecord(value.image)) {
+      errors.push(`slides[${index}].image must be an object like { src: "path-or-url", alt? } — got ${describeType(value.image)}`);
+    } else if (!nonEmptyString(value.image.src)) {
+      errors.push(`slides[${index}].image.src is required and must be a non-empty string (got ${describeType(value.image.src)})`);
+    }
+  }
+  if (value.slots !== undefined && !isRecord(value.slots)) {
+    errors.push(`slides[${index}].slots must be an object mapping slot name → string/number/null`);
+  }
+  if (value.template !== undefined && !nonEmptyString(value.template)) {
+    errors.push(`slides[${index}].template must be a non-empty string when set`);
+  }
+}
+
+function describeType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
 }
 
 export function isPresentationDeck(value: unknown): value is PresentationDeck {

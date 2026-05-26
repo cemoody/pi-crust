@@ -59,7 +59,7 @@ describe("presentation artifact rendering", () => {
           spec: {
             title: "Brainco Signals",
             slides: [
-              { title: "Cover", image: "/tmp/brainco_signals.png" },
+              { title: "Cover", image: { src: "/tmp/brainco_signals.png" } },
             ],
           },
         }],

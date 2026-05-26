@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import { defaultArtifactFileRoots, encodeArtifactFilePath, resolveArtifactFile } from "../../artifact-file.js";
 
 import { optional } from "../../../shared/util.js";
+import { validatePresentationDeck } from "../../../presentations/schema.js";
 const ARTIFACT_DETAIL_KEY = "piRemoteControlArtifact";
 const ARTIFACT_SCHEMA_VERSION = 1;
 
@@ -144,6 +145,32 @@ export default function piRemoteArtifacts(pi: ExtensionAPI) {
         ...optional({ templatePack: params.templatePack }),
         slides,
       };
+      // Validate the assembled deck before returning success. Without this
+      // check, structural errors (e.g. `image` passed as a string, missing
+      // `image.src`, bullets as a non-array, etc.) only surface in the web
+      // client as an "Invalid presentation" card — the model thinks the call
+      // succeeded and has no signal to self-correct. Throwing here turns the
+      // tool call into a normal error the LLM can read and fix on the next
+      // turn. The message lists every concrete error plus a one-line shape
+      // hint so the model knows what valid input looks like.
+      const validation = validatePresentationDeck(deck);
+      if (!validation.ok) {
+        const errors = validation.errors.map((e) => `  - ${e}`).join("\n");
+        throw new Error(
+          `show_presentation rejected the deck because it has ${validation.errors.length} validation error${validation.errors.length === 1 ? "" : "s"}:\n${errors}\n\n` +
+          `Expected slide shape (all fields optional unless noted): {\n` +
+          `  template?: "title" | "bullets" | "stats" | "quote" | "columns" | "image" | string,\n` +
+          `  title?: string, subtitle?: string, eyebrow?: string, body?: string,\n` +
+          `  quote?: string, attribution?: string,\n` +
+          `  bullets?: (string | { text: string, detail?: string })[],\n` +
+          `  stats?: { value: string, label?: string }[],\n` +
+          `  columns?: { title?: string, body?: string, bullets?: ... }[],\n` +
+          `  image?: { src: string, alt?: string },   // object, not a string\n` +
+          `  notes?: string, fragments?: string[],\n` +
+          `  layout?: string, slots?: Record<string, string | number | null>\n` +
+          `}\nFix the listed fields and call show_presentation again.`,
+        );
+      }
       return {
         content: [{ type: "text", text: `Displayed presentation deck: ${params.title} (${params.slides.length} slide${params.slides.length === 1 ? "" : "s"}).` }],
         details: {
