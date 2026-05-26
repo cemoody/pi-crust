@@ -153,6 +153,43 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
     expect(body.length).toBeLessThan(200_000);
   });
 
+  it("does not inline multi-megabyte tool artifact payloads", async () => {
+    // Reproduces a slow-loading real session opened via ?session=...: the
+    // tail-window contained two show_presentation tool calls whose
+    // tool.artifact.data decks were ~11 MB each. Even with ?limit=200, the
+    // /messages response was ~23 MB and the browser appeared to load forever.
+    const bigDeckHtml = "P".repeat(2_500_000); // 2.5 MB
+    const { baseUrl, sessionId } = await startWithMessages([
+      {
+        role: "tool",
+        content: "Displayed presentation deck: Big deck",
+        timestamp: 1,
+        tool: {
+          id: "tool-presentation-1",
+          name: "show_presentation",
+          args: { title: "Big deck" },
+          status: "success",
+          output: "Displayed presentation deck: Big deck",
+          artifact: {
+            kind: "presentation",
+            title: "Big deck",
+            data: { title: "Big deck", slides: [{ title: "slide 1", html: bigDeckHtml }] },
+          },
+        },
+      },
+    ] as readonly SessionMessage[]);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`);
+    expect(response.ok).toBe(true);
+    const body = await response.text();
+
+    // The deck must not be embedded in the timeline payload. Keep a small
+    // preview/stub for the tool row instead of shipping megabytes of deck JSON.
+    expect(body).not.toContain(bigDeckHtml);
+    expect(body.length).toBeLessThan(200_000);
+    expect(body).toContain("artifactTruncated");
+  });
+
   it("does not inline multi-megabyte custom-message details payloads", async () => {
     // Reproduces the autotime-series-2 hot path: a `show_presentation`
     // artifact ends up as a `custom` message with a `details` object that

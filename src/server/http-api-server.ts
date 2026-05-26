@@ -1349,6 +1349,14 @@ export const MAX_INLINE_TOOL_OUTPUT_BYTES = 16 * 1024;
  * shipping tens of MB of inline JSON on every page mount.
  */
 export const MAX_INLINE_DETAILS_BYTES = 32 * 1024;
+/**
+ * Tool artifacts are previews attached directly to tool-call rows. Some tools
+ * (notably show_presentation) can embed full slide decks/HTML in
+ * tool.artifact.data; that duplicates the custom artifact message and can make
+ * a small tail-windowed /messages request tens of MB. Keep only a small preview
+ * inline and omit heavyweight artifact bodies from the timeline payload.
+ */
+export const MAX_INLINE_TOOL_ARTIFACT_BYTES = 32 * 1024;
 
 export interface ToDashboardMessagesOptions {
   /** When set, image bytes are stripped from the payload and replaced with a
@@ -1426,7 +1434,9 @@ function messageImageAt(message: SessionMessage | undefined, imageIndex: number)
 
 function stripToolForTransport(tool: NonNullable<SessionMessage["tool"]>, sessionId: string | undefined, messageId: string) {
   const output = tool.output ?? "";
-  if (!sessionId || Buffer.byteLength(output, "utf8") <= MAX_INLINE_TOOL_OUTPUT_BYTES) return tool;
+  const artifact = stripToolArtifactForTransport(tool.artifact);
+  const toolWithArtifact = artifact === tool.artifact ? tool : { ...tool, artifact };
+  if (!sessionId || Buffer.byteLength(output, "utf8") <= MAX_INLINE_TOOL_OUTPUT_BYTES) return toolWithArtifact;
   // Keep the first/last few KB inline so the UI still shows context without
   // a second round-trip. The exact midpoint is replaced with a marker that
   // includes the byte count and a URL to the full payload.
@@ -1436,7 +1446,35 @@ function stripToolForTransport(tool: NonNullable<SessionMessage["tool"]>, sessio
   const fullBytes = Buffer.byteLength(output, "utf8");
   const outputUrl = `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/tool-output`;
   const truncated = `${head}\n\n…[${(fullBytes / 1024).toFixed(0)} KB truncated — full output at ${outputUrl}]…\n\n${tail}`;
-  return { ...tool, output: truncated, outputTruncated: true, outputUrl, outputFullBytes: fullBytes };
+  return { ...toolWithArtifact, output: truncated, outputTruncated: true, outputUrl, outputFullBytes: fullBytes };
+}
+
+function stripToolArtifactForTransport(artifact: unknown): unknown {
+  if (!artifact || typeof artifact !== "object") return artifact;
+  let serialised: string;
+  try { serialised = JSON.stringify(artifact); } catch { return artifact; }
+  const fullBytes = Buffer.byteLength(serialised, "utf8");
+  if (fullBytes <= MAX_INLINE_TOOL_ARTIFACT_BYTES) return artifact;
+
+  const source = artifact as Record<string, unknown>;
+  const preview: Record<string, unknown> = {
+    artifactTruncated: true,
+    artifactFullBytes: fullBytes,
+  };
+  for (const key of ["version", "kind", "title", "path", "url", "mimeType", "alt"] as const) {
+    const value = source[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") preview[key] = value;
+  }
+  // Preserve small textual previews when available, but never inline the large
+  // body fields (`data`, `html`, `markdown`) that caused multi-MB timelines.
+  for (const key of ["html", "markdown"] as const) {
+    const value = source[key];
+    if (typeof value === "string" && Buffer.byteLength(value, "utf8") <= MAX_INLINE_TOOL_ARTIFACT_BYTES) preview[key] = value;
+  }
+  if (source.data !== undefined) preview.data = { __omitted: true };
+  if (source.html !== undefined && preview.html === undefined) preview.html = "…[truncated]";
+  if (source.markdown !== undefined && preview.markdown === undefined) preview.markdown = "…[truncated]";
+  return preview;
 }
 
 /**
