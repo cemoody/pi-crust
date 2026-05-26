@@ -136,6 +136,36 @@ describe("SessionDashboard", () => {
     expect(decodeURIComponent(faviconHref)).toContain("https://example.com/logo-wide.png");
   });
 
+  it("reuses the dashboard's server git SHA when opening shortcut help", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected /api/health"));
+    const api = {
+      ...makeApi(),
+      getServerInfo: vi.fn(async () => ({
+        gitSha: "serverfeed123",
+        adapter: "test",
+        projectRoot: "/tmp/project",
+        sessionRoot: "/tmp/sessions",
+        defaultCwd: "/tmp/project",
+        appName: "π crust",
+      })),
+    } satisfies SessionDashboardApi;
+    try {
+      render(<SessionDashboard api={api} />);
+      await waitFor(() => expect(api.getServerInfo).toHaveBeenCalledOnce());
+
+      fireEvent.keyDown(document.body, { key: "?" });
+
+      await waitFor(() => {
+        const codes = Array.from(document.querySelectorAll(".shortcut-help-shas code"));
+        expect(codes).toHaveLength(2);
+        expect(codes.every((code) => code.textContent === "serverfeed123")).toBe(true);
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("shows a loading state on the New session button while the session is being created", async () => {
     const createSessionDeferred = deferredPromise<SessionCardData>();
     const api: SessionDashboardApi = {

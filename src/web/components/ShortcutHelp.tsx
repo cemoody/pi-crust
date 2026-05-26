@@ -19,11 +19,22 @@ const SHORTCUTS: readonly Shortcut[] = [
 
 export interface ShortcutHelpProps {
   /**
+   * Backend identity already loaded by the parent dashboard. When present we
+   * use it synchronously instead of opening another `/api/health` request from
+   * the help dialog; that request can sit behind the browser's per-origin SSE
+   * connection pool when many pi-crust tabs are open.
+   */
+  readonly backendInfo?: { readonly gitSha?: string };
+  /**
    * Source of the backend's git SHA (and any other server-identity info we
    * might want to show later). Default impl hits `/api/health`; tests inject
    * a mock.
    */
   readonly fetchBackendInfo?: () => Promise<{ readonly gitSha?: string }>;
+}
+
+function normalizeGitSha(value: string | undefined): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function readFrontendGitSha(): string | null {
@@ -61,8 +72,9 @@ async function defaultFetchBackendInfo(): Promise<{ readonly gitSha?: string }> 
 
 export function ShortcutHelp(props: ShortcutHelpProps = {}) {
   const fetchBackendInfo = props.fetchBackendInfo ?? defaultFetchBackendInfo;
+  const providedBackendSha = normalizeGitSha(props.backendInfo?.gitSha);
   const [open, setOpen] = useState(false);
-  const [backendSha, setBackendSha] = useState<string>("…");
+  const [backendSha, setBackendSha] = useState<string>(() => providedBackendSha ?? "…");
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -81,23 +93,30 @@ export function ShortcutHelp(props: ShortcutHelpProps = {}) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
-  // Lazily fetch the backend SHA the first time the dialog opens. We don't
-  // want to hit /api/health on every page load just for help-dialog text.
   useEffect(() => {
+    if (providedBackendSha) setBackendSha(providedBackendSha);
+  }, [providedBackendSha]);
+
+  // Lazily fetch the backend SHA the first time the dialog opens, but only if
+  // the parent dashboard has not already loaded it. We don't want to hit
+  // /api/health on every page load just for help-dialog text, and we also
+  // don't want the help modal to start a request that can queue behind six
+  // long-lived EventSource connections in the browser pool.
+  useEffect(() => {
+    if (providedBackendSha) return;
     if (!open) return;
     if (backendSha !== "…") return;
     let cancelled = false;
     void fetchBackendInfo()
       .then((info) => {
         if (cancelled) return;
-        const sha = typeof info.gitSha === "string" && info.gitSha.trim() ? info.gitSha : "unknown";
-        setBackendSha(sha);
+        setBackendSha(normalizeGitSha(info.gitSha) ?? "unknown");
       })
       .catch(() => {
         if (!cancelled) setBackendSha("unknown");
       });
     return () => { cancelled = true; };
-  }, [open, fetchBackendInfo, backendSha]);
+  }, [open, fetchBackendInfo, backendSha, providedBackendSha]);
 
   if (!open) return null;
 

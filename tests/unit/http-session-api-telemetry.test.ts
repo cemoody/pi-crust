@@ -425,25 +425,46 @@ describe("mobile background reconnect (visibility change)", () => {
     unsubscribe();
   });
 
-  it("does not reconnect on visibilitychange if the stream is healthy (recent messages, OPEN)", async () => {
+  it("does not open SSE until visible when a background tab initializes the dashboard", async () => {
+    visibilityState = "hidden";
     const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
     const api = new HttpSessionDashboardApi();
-    const unsubscribe = api.streamEvents("sid-healthy", () => {});
+    const unsubscribe = api.streamEvents("sid-initially-hidden", () => {});
     await vi.advanceTimersByTimeAsync(1);
 
-    // A message arrives, then 5 s of normal idleness, then user briefly
-    // switches tabs and comes right back.
-    constructedSources[0]!.onmessage?.({ data: JSON.stringify({ type: "agent_start" }) });
-    await vi.advanceTimersByTimeAsync(5_000);
-    dispatchVisibilityChange("hidden");
-    await vi.advanceTimersByTimeAsync(2_000);
+    expect(constructedSources.length).toBe(0);
+
     dispatchVisibilityChange("visible");
     await vi.advanceTimersByTimeAsync(1);
 
+    expect(constructedSources.length).toBe(1);
+
+    unsubscribe();
+  });
+
+  it("closes SSE while hidden and reconnects on visibility restore so background tabs do not starve normal API requests", async () => {
+    const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
+    const events: unknown[] = [];
+    const api = new HttpSessionDashboardApi();
+    const unsubscribe = api.streamEvents("sid-hidden", (ev) => { events.push(ev); });
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(constructedSources.length, "initial connect").toBe(1);
+    constructedSources[0]!.onmessage?.({ data: JSON.stringify({ type: "agent_start" }) });
+
+    dispatchVisibilityChange("hidden");
+    await vi.advanceTimersByTimeAsync(1);
+
     expect(
-      constructedSources.length,
-      "a healthy stream must not be torn down on every quick visibility flip",
-    ).toBe(1);
+      constructedSources[0]!.close,
+      "a hidden tab must release its long-lived HTTP/1.1 connection",
+    ).toHaveBeenCalledOnce();
+
+    dispatchVisibilityChange("visible");
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(constructedSources.length, "visible tab reconnects for live updates").toBe(2);
+    expect(events).toContainEqual({ type: "stream_reconnected", reason: "visibility-restored-stream-closed" });
 
     unsubscribe();
   });

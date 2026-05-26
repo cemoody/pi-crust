@@ -117,6 +117,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   const [projectRoot, setProjectRoot] = useState("");
   const [appName, setAppName] = useState("π crust");
   const [appIcon, setAppIcon] = useState<string | undefined>(undefined);
+  const [backendGitSha, setBackendGitSha] = useState<string | undefined>(undefined);
   // The user's home directory (server-side). Preferred as the New Session
   // dialog default; falls back to defaultCwd when the API doesn't expose it.
   const [homeCwd, setHomeCwd] = useState<string>("");
@@ -284,6 +285,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
               setProjectRoot(info.projectRoot ?? "");
               setAppName(info.appName || "π crust");
               setAppIcon(info.appIcon);
+              setBackendGitSha(info.gitSha);
             }
           } catch {
             // Optional capability; ignore.
@@ -1357,7 +1359,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
         </div>
       ) : null}
 
-      <ShortcutHelp />
+      <ShortcutHelp {...(backendGitSha ? { backendInfo: { gitSha: backendGitSha } } : {})} />
 
       <ModelPicker
         open={modelPickerOpen}
