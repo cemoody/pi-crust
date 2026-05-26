@@ -53,6 +53,17 @@ describe("ShortcutHelp", () => {
     expect(dts.map((el) => el.textContent)).toEqual(["frontend", "backend"]);
   });
 
+  it("uses already-loaded backend info instead of starting another /api/health fetch", () => {
+    const fetchBackend = vi.fn(async () => ({ gitSha: "should-not-fetch" }));
+    render(<ShortcutHelp backendInfo={{ gitSha: "cachedbeef12" }} fetchBackendInfo={fetchBackend} />);
+
+    fireEvent.keyDown(document.body, { key: "?" });
+
+    expect(screen.getByText(/frontendsh4f3/)).toBeInTheDocument();
+    expect(screen.getByText(/cachedbeef12/)).toBeInTheDocument();
+    expect(fetchBackend).not.toHaveBeenCalled();
+  });
+
   it("degrades to 'unknown' when the backend fetch fails", async () => {
     const fetchBackend = vi.fn(async () => { throw new Error("down"); });
     render(<ShortcutHelp fetchBackendInfo={fetchBackend} />);

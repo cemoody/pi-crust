@@ -116,13 +116,13 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     const qs = tab ? `?tabSessionId=${encodeURIComponent(tab)}` : "";
     const url = `${API_BASE}/api/sessions/${encodeURIComponent(sessionId)}/events${qs}`;
 
-    let source: EventSource;
+    let source: EventSource | null = null;
     let lastMessageAt = Date.now();
     let silenceWarnedAt = 0;
     let stopped = false;
 
-    const wireHandlers = () => {
-      source.onmessage = (event) => {
+    const wireHandlers = (currentSource: EventSource) => {
+      currentSource.onmessage = (event) => {
         lastMessageAt = Date.now();
         try {
           onEvent(JSON.parse(event.data));
@@ -130,7 +130,7 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
           // ignore malformed payloads
         }
       };
-      source.onopen = () => {
+      currentSource.onopen = () => {
         lastMessageAt = Date.now();
         recordClientEvent({
           kind: "sse-client-open",
@@ -138,23 +138,39 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
           tabSessionId: getTabSessionId(),
         });
       };
-      source.onerror = () => {
+      currentSource.onerror = () => {
         recordClientEvent({
           kind: "sse-client-error",
           sessionId,
-          readyState: source.readyState,
+          readyState: currentSource.readyState,
           ageMs: Date.now() - openedAt,
           tabSessionId: getTabSessionId(),
         });
       };
     };
 
+    const isVisible = () => typeof document === "undefined" || document.visibilityState === "visible";
+
     const openSource = () => {
       source = new EventSource(url);
-      wireHandlers();
+      wireHandlers(source);
       lastMessageAt = Date.now();
     };
-    openSource();
+    if (isVisible()) openSource();
+
+    const closeSource = (reason: string) => {
+      const currentSource = source;
+      if (!currentSource) return;
+      source = null;
+      try { currentSource.close(); } catch { /* ignore */ }
+      recordClientEvent({
+        kind: "sse-client-pause",
+        sessionId,
+        reason,
+        ageMs: Date.now() - openedAt,
+        tabSessionId: getTabSessionId(),
+      });
+    };
 
     // Re-establish a stream that the browser tore down. Mobile browsers
     // (iOS Safari / Android Chrome) suspend networking when a tab is
@@ -166,7 +182,7 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     // tests/unit/http-session-api-telemetry.test.ts.
     const reconnect = (reason: string) => {
       if (stopped) return;
-      try { source.close(); } catch { /* ignore */ }
+      closeSource(reason);
       recordClientEvent({
         kind: "sse-client-reconnect",
         sessionId,
@@ -193,13 +209,14 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     // heal by reconnecting.
     const silenceTimer = setInterval(() => {
       // Only count silence while the tab is visible; a backgrounded tab
-      // legitimately may not be receiving events because the server doesn't
-      // push to it. visibilityState gated so we don't flood the log.
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      if (source.readyState !== EventSource.OPEN) {
-        // Visible tab + non-OPEN stream means the browser killed the SSE.
-        // Recover proactively (covers the case where visibilitychange did
-        // not fire on resume, or fired before readyState updated).
+      // intentionally has no SSE connection, so it should not log silence or
+      // reopen a stream that would consume the browser's per-origin pool.
+      if (!isVisible()) return;
+      if (!source || source.readyState !== EventSource.OPEN) {
+        // Visible tab + no open stream means either we intentionally paused it
+        // while hidden, or the browser killed it. Recover proactively (covers
+        // the case where visibilitychange did not fire on resume, or fired
+        // before readyState updated).
         reconnect("silence-tick-not-open");
         return;
       }
@@ -218,11 +235,13 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     }, SSE_SILENCE_CHECK_INTERVAL_MS);
 
     const maybeReconnectOnResume = (reason: string) => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (!isVisible()) return;
       // Mobile suspend signature: the browser closed the underlying socket
-      // while we were hidden. Reconnect immediately so the user sees
-      // streaming resume the instant they return to the tab.
-      if (source.readyState !== EventSource.OPEN) {
+      // while we were hidden — or we intentionally paused it on hide to free
+      // Chrome's six HTTP/1.1 connections for active tabs' normal API calls.
+      // Reconnect immediately so the user sees streaming resume the instant
+      // they return to the tab.
+      if (!source || source.readyState !== EventSource.OPEN) {
         reconnect(`${reason}-stream-closed`);
         return;
       }
@@ -235,7 +254,13 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
         reconnect(`${reason}-stream-stale`);
       }
     };
-    const onVisibilityChange = () => maybeReconnectOnResume("visibility-restored");
+    const onVisibilityChange = () => {
+      if (!isVisible()) {
+        closeSource("visibility-hidden");
+        return;
+      }
+      maybeReconnectOnResume("visibility-restored");
+    };
     // iOS Safari restores tabs from the back-forward cache without firing
     // visibilitychange and without resuming JS timers. The reliable signal
     // is `pageshow` with event.persisted=true. We also accept a non-
@@ -268,7 +293,7 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
         window.removeEventListener("focus", onWindowFocus);
         window.removeEventListener("online", onOnline);
       }
-      try { source.close(); } catch { /* ignore */ }
+      closeSource("unsubscribe");
       recordClientEvent({
         kind: "sse-client-close",
         sessionId,
