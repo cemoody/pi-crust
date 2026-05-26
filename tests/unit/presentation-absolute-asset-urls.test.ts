@@ -30,6 +30,25 @@ describe("withAbsolutePresentationAssetUrls", () => {
     );
   });
 
+  // Regression: when the helper is called with a fully-qualified apiBase,
+  // the rewritten src must start with http(s):// so it passes the asset
+  // safety check in src/presentations/assets.ts. A bare `/api/…` path
+  // looks like a filesystem absolute path to that validator and gets
+  // rejected at compile time as "Unsafe presentation asset path". The
+  // card now always passes window.location.origin when no explicit
+  // VITE_PI_CRUST_API_BASE is set, so this is the realistic shape.
+  it("with a fully-qualified apiBase, output is http(s):// and passes the asset-safety check", async () => {
+    const out = withAbsolutePresentationAssetUrls(
+      { title: "T", slides: [{ title: "p", image: { src: "chart.png" } }] },
+      { apiBase: "http://localhost:8787", sessionId: "sess-1" },
+    );
+    const rewritten = out.slides[0]!.image!.src;
+    expect(rewritten.startsWith("http://") || rewritten.startsWith("https://")).toBe(true);
+    // The compile-time validator (resolvePresentationAssetSrc) must accept it.
+    const { resolvePresentationAssetSrc } = await import("../../src/presentations/assets.js");
+    expect(() => resolvePresentationAssetSrc(rewritten)).not.toThrow();
+  });
+
   it("respects apiBase (no trailing slash issues)", () => {
     const out = withAbsolutePresentationAssetUrls(
       { title: "T", slides: [{ title: "p", image: { src: "x.png" } }] },

@@ -213,13 +213,22 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
     if (!stableDeck || !modalDeck) return { html: "", previewHtml: "", markdown: "" };
     try {
       // Rewrite every bare `image.src` (and `<img src>` inside passthrough
-      // HTML) to an absolute API URL pointing at the per-session asset
-      // route. The preview/modal iframes use srcDoc, which means relative
-      // URLs have no usable base — a bare `chart.png` resolves against
-      // `about:srcdoc` and shows as a broken-image icon even when the
-      // file was correctly auto-copied (#168). The standalone download
+      // HTML) to a fully-qualified API URL pointing at the per-session
+      // asset route. The preview/modal iframes use srcDoc, which means
+      // relative URLs have no usable base — a bare `chart.png` resolves
+      // against `about:srcdoc` and shows as a broken-image icon even when
+      // the file was correctly auto-copied (#168). The standalone download
       // path doesn't need this because it inlines assets as data: URIs.
-      const apiBase = (import.meta as ImportMeta).env?.VITE_PI_CRUST_API_BASE ?? "";
+      //
+      // We use the page origin when VITE_PI_CRUST_API_BASE isn't set so
+      // the resulting URL starts with `http(s)://`. A bare `/api/...`
+      // path would trip the asset-safety check in
+      // resolvePresentationAssetSrc (which rejects anything starting with
+      // `/` as a possible filesystem path).
+      const apiBaseRaw = (import.meta as ImportMeta).env?.VITE_PI_CRUST_API_BASE ?? "";
+      const apiBase = apiBaseRaw
+        ? apiBaseRaw
+        : (typeof window !== "undefined" && window.location?.origin) || "";
       const absStable = sessionId
         ? withAbsolutePresentationAssetUrls(stableDeck, { apiBase, sessionId })
         : stableDeck;
