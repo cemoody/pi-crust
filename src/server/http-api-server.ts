@@ -675,7 +675,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     }
   }
 
-  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|prompt|bash|abort|rename|delete|model|state|events|extension-ui-response))?$/);
+  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/((?:messages(?:\/[^/]+\/(?:images\/\d+|details|tool-output))?)|prompt|bash|abort|rename|delete|model|state|events|extension-ui-response))?$/);
   if (!match) return sendJson(res, 404, { error: "not found" });
   const sessionId = decodeURIComponent(match[1]!);
   const action = match[2] ?? "state";
@@ -811,7 +811,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   const imageMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/images\/(\d+)$/);
   if (req.method === "GET" && imageMatch) {
     const message = await lookupSessionMessage(lookupContext, decodeURIComponent(imageMatch[1]!), decodeURIComponent(imageMatch[2]!));
-    const image = message?.images?.[Number(imageMatch[3]!)];
+    const image = messageImageAt(message, Number(imageMatch[3]!));
     if (!image) return sendJson(res, 404, { error: "image not found" });
     const bytes = Buffer.from(image.data, "base64");
     res.writeHead(200, {
@@ -1389,6 +1389,17 @@ function stripImagesForTransport(images: readonly { readonly data: string; reado
     mimeType: image.mimeType,
     url: `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/images/${imageIndex}`,
   }));
+}
+
+function messageImages(message: SessionMessage | undefined): readonly { readonly data: string; readonly mimeType: string }[] {
+  if (!message) return [];
+  const normalized = typeof message.content === "string" ? { images: [] as readonly { readonly data: string; readonly mimeType: string }[] } : contentTextAndThinking(message.content);
+  return normalized.images.length > 0 ? normalized.images : (message.images ?? []);
+}
+
+function messageImageAt(message: SessionMessage | undefined, imageIndex: number) {
+  if (!Number.isInteger(imageIndex) || imageIndex < 0) return undefined;
+  return messageImages(message)[imageIndex];
 }
 
 function stripToolForTransport(tool: NonNullable<SessionMessage["tool"]>, sessionId: string | undefined, messageId: string) {

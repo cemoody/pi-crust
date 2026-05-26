@@ -75,6 +75,35 @@ describe("GET /api/sessions/:id/messages payload budget", () => {
     expect(body.length).toBeLessThan(200_000);
   });
 
+  it("serves lazy image URLs for structured-content image blocks", async () => {
+    // Real pirpc transcripts persist user image attachments as content-array
+    // blocks. /messages strips those bytes into a lazy URL, so that URL must
+    // resolve back to the same structured-content block instead of only
+    // looking at message.images.
+    const tinyPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    const { baseUrl, sessionId } = await startWithMessages([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "see attached" },
+          { type: "image", data: tinyPng, mimeType: "image/png" },
+        ],
+        timestamp: 1,
+      } as unknown as SessionMessage,
+    ]);
+
+    const messagesResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`);
+    expect(messagesResponse.ok).toBe(true);
+    const messages = await messagesResponse.json() as Array<{ text: string; images?: Array<{ mimeType: string; url: string }> }>;
+    expect(messages[0]?.text).toBe("see attached");
+    expect(messages[0]?.images?.[0]).toMatchObject({ mimeType: "image/png" });
+
+    const imageResponse = await fetch(`${baseUrl}${messages[0]!.images![0]!.url}`);
+    expect(imageResponse.status).toBe(200);
+    expect(imageResponse.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await imageResponse.arrayBuffer()).toString("base64")).toBe(tinyPng);
+  });
+
   it("stays bounded when a session contains many image-bearing messages", async () => {
     // 20 messages × ~500 KB image each = ~10 MB of base64 today.
     const imageChunk = "B".repeat(500_000);
