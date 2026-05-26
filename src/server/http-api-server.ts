@@ -1003,6 +1003,12 @@ function resolveSessionAlias(context: HttpApiServerContext, sessionId: string): 
 // loop. Collapse a burst into one underlying computation per cwd, and reuse
 // the result for a brief TTL so back-to-back polls cost ~0.
 const LIST_SESSIONS_CACHE_TTL_MS = 750;
+// Live worker state is an overlay on top of persisted session-list metadata.
+// The sidebar/status endpoint must stay cheap even when a long-lived supervisor
+// socket is stale, accepts a request but never replies, or has already been
+// marked unhealthy by /api/health. Fall back to the list-card if a hot handle
+// cannot answer within this budget.
+const STATUS_LIVE_STATE_TIMEOUT_MS = 250;
 interface SessionsCacheEntry {
   readonly expiresAt: number;
   readonly cards: Awaited<ReturnType<typeof listSessionCards>>;
@@ -1040,21 +1046,37 @@ async function listSessionCards(context: HttpApiServerContext, cwd?: string) {
 async function sessionCardWithLiveState(context: HttpApiServerContext, session: SessionListItem) {
   const metadata = await readSessionTimelineMetadata(session.sessionFile);
   if (context.registry.hasSession(session.id)) {
-    try {
-      const card = toSessionCard(await context.registry.getSession(session.id).handle.getState(), metadata);
-      return {
-        ...card,
-        // getState() is an observation and some adapters report Date.now()
-        // there. Sidebar snapshots should sort by real session activity from
-        // the session index, not by the time this polling request ran.
-        lastActivity: Number.isFinite(session.lastActivity) ? session.lastActivity : card.lastActivity,
-      };
-    } catch {
-      // Fall back to the persisted list entry if the hot handle disappeared
-      // while this status snapshot was being assembled.
+    const registered = context.registry.getSession(session.id);
+    const handle = registered.handle;
+    const isHealthy = typeof handle.isHealthy === "function" ? handle.isHealthy() : true;
+    if (isHealthy) {
+      try {
+        const state = await withTimeout(handle.getState(), STATUS_LIVE_STATE_TIMEOUT_MS, `status live state for ${session.id}`);
+        const card = toSessionCard(state, metadata);
+        return {
+          ...card,
+          // getState() is an observation and some adapters report Date.now()
+          // there. Sidebar snapshots should sort by real session activity from
+          // the session index, not by the time this polling request ran.
+          lastActivity: Number.isFinite(session.lastActivity) ? session.lastActivity : card.lastActivity,
+        };
+      } catch {
+        // Fall back to the persisted list entry if the hot handle disappeared,
+        // is stale, or fails to answer within the sidebar poll budget.
+      }
     }
   }
   return toSessionListCard(session, metadata);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<T>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+  });
+  return Promise.race([promise, deadline]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
 
 interface SessionTimelineMetadata {
