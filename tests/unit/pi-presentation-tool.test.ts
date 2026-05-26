@@ -38,6 +38,44 @@ describe("Pi presentation tool extension", () => {
     });
   });
 
+  it("rejects malformed decks with a structured error so the LLM can self-correct", async () => {
+    const tools: RegisteredTool[] = [];
+    piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
+    const tool = tools.find((candidate) => candidate.name === "show_presentation")!;
+
+    // image passed as a string instead of { src, alt? } — the exact mistake
+    // observed in the bug report. The tool must throw (not silently succeed)
+    // and the message must name the bad field + suggest the right shape.
+    await expect(tool.execute("call-bad-image", {
+      title: "Bad image",
+      slides: [
+        { title: "Cover" },
+        { title: "Pic", image: "https://example.com/cat.png" },
+      ],
+    })).rejects.toThrow(/slides\[1\]\.image must be an object/);
+
+    // Missing image.src.
+    await expect(tool.execute("call-no-src", {
+      title: "No src",
+      slides: [{ title: "x", image: { alt: "oops" } }],
+    })).rejects.toThrow(/slides\[0\]\.image\.src is required/);
+
+    // The error message should include the shape hint so the model knows what
+    // to send next time.
+    try {
+      await tool.execute("call-shape", {
+        title: "Shape",
+        slides: [{ title: "x", image: "u" }],
+      });
+      throw new Error("expected throw");
+    } catch (err) {
+      const msg = (err as Error).message;
+      expect(msg).toContain("Expected slide shape");
+      expect(msg).toContain("image?: { src: string");
+      expect(msg).toContain("call show_presentation again");
+    }
+  });
+
   it("keeps show_artifact backwards-compatible for presentation artifacts", async () => {
     const tools: RegisteredTool[] = [];
     piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
