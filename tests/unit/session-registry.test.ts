@@ -156,6 +156,32 @@ describe("SessionRegistry", () => {
     expect(sourceEvents).toEqual([]);
   });
 
+  it("cloning a session does not duplicate transferred subscriber events", async () => {
+    const { registry, projectA } = await makeRegistry();
+    const source = await registry.createSession({ cwd: projectA, sessionName: "source" });
+    const transferredEvents: string[] = [];
+    registry.subscribe(source.id, (event) => transferredEvents.push(event.type));
+
+    const { session: clone } = await registry.cloneSession(source.id);
+    await registry.prompt(clone.id, "clone prompt");
+
+    expect(transferredEvents).toEqual(["agent_start", "message", "message", "agent_end"]);
+  });
+
+  it("unsubscribes handle listeners when disposing sessions", async () => {
+    const { registry, projectA } = await makeRegistry();
+    const created = await registry.createSession({ cwd: projectA });
+    const events: string[] = [];
+    registry.subscribe(created.id, (event) => events.push(event.type));
+    await registry.disposeSession(created.id);
+
+    // The old handle is no longer registry-owned. Emitting through it must not
+    // leak into stale subscribers after dispose/replace paths.
+    await created.handle.prompt("after dispose");
+
+    expect(events).toEqual([]);
+  });
+
   it("deletes the persisted session file so deleted sessions do not reappear in lists", async () => {
     const { registry, projectA } = await makeRegistry();
     const created = await registry.createSession({ cwd: projectA });

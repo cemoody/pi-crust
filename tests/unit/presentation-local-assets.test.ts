@@ -116,6 +116,23 @@ describe("prepareLocalPresentationAssets", () => {
     expect(copied).toEqual([]);
   });
 
+  it("REJECTS symlinks under cwd that resolve outside cwd", async () => {
+    const outsideAbs = path.join(tmpRoot, "outside-secret.png");
+    await fs.writeFile(outsideAbs, "secret outside bytes");
+    const linkAbs = path.join(cwd, "linked-secret.png");
+    await fs.symlink(outsideAbs, linkAbs);
+    const deck: PresentationDeck = {
+      title: "T",
+      slides: [{ title: "Pic", image: { src: linkAbs } }],
+    };
+
+    const { deck: out, copied } = await prepareLocalPresentationAssets(deck, { cwd, targetDir });
+
+    expect(out.slides[0]!.image?.src).toBe(linkAbs);
+    expect(copied).toEqual([]);
+    await expect(fs.stat(path.join(targetDir, "linked-secret.png"))).rejects.toThrow();
+  });
+
   it("leaves the src untouched when the file does not exist (validator will flag it)", async () => {
     const ghost = path.join(cwd, "missing.png");
     const deck: PresentationDeck = {

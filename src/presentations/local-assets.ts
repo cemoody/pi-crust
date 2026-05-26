@@ -76,6 +76,7 @@ export async function prepareLocalPresentationAssets(
   const byContentHash = new Map<string, string>(); // hash → final basename
   const usedNames = new Set<string>();
   const copied: PreparedLocalAssetCopy[] = [];
+  const realCwd = await fs.realpath(options.cwd);
   let targetDirEnsured = false;
   const ensureTargetDir = async () => {
     if (targetDirEnsured) return;
@@ -109,11 +110,24 @@ export async function prepareLocalPresentationAssets(
       byAbsSrc.set(src, { src });
       return src;
     }
-    // Stat: only regular files are eligible.
+    // Resolve the final target before reading: stat/readFile follow
+    // symlinks, so a symlink under cwd could otherwise smuggle an outside
+    // file into the presentation asset directory.
+    let realAbs: string;
     let stat;
     try {
-      stat = await fs.stat(abs);
+      realAbs = await fs.realpath(abs);
+      stat = await fs.stat(realAbs);
     } catch {
+      byAbsSrc.set(src, { src });
+      return src;
+    }
+    const realRelFromCwd = path.relative(realCwd, realAbs);
+    if (
+      realRelFromCwd === "" ||
+      realRelFromCwd.startsWith("..") ||
+      path.isAbsolute(realRelFromCwd)
+    ) {
       byAbsSrc.set(src, { src });
       return src;
     }
@@ -123,7 +137,7 @@ export async function prepareLocalPresentationAssets(
     }
     // Read once for hashing + copying. Asset files are images (KB–MB);
     // streaming would complicate dedupe without meaningful payoff here.
-    const bytes = await fs.readFile(abs);
+    const bytes = await fs.readFile(realAbs);
     const hash = crypto.createHash("sha256").update(bytes).digest("hex");
     const existingForHash = byContentHash.get(hash);
     if (existingForHash) {

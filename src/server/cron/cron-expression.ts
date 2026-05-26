@@ -42,6 +42,7 @@ export function parseCron(expr: string): ParsedCron {
 function parseField(field: string, min: number, max: number): Set<number> {
   const out = new Set<number>();
   for (const part of field.split(",")) {
+    if (part.trim() === "") throw new CronParseError(`Empty list entry in field: "${field}"`);
     expandPart(part, min, max, out);
   }
   if (out.size === 0) throw new CronParseError(`Empty field: "${field}"`);

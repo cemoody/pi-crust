@@ -28,9 +28,9 @@ export interface CronJobPatch {
   readonly prompt?: string;
   readonly cwd?: string;
   readonly enabled?: boolean;
-  readonly lastRun?: number;
-  readonly nextRun?: number;
-  readonly lastSessionId?: string;
+  readonly lastRun?: number | undefined;
+  readonly nextRun?: number | undefined;
+  readonly lastSessionId?: string | undefined;
 }
 
 export class CronStore {
@@ -100,10 +100,10 @@ export class CronStore {
       ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {}),
       ...(patch.cwd !== undefined ? { cwd: patch.cwd } : {}),
       ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
-      ...(patch.lastRun !== undefined ? { lastRun: patch.lastRun } : {}),
-      ...(patch.nextRun !== undefined ? { nextRun: patch.nextRun } : {}),
-      ...(patch.lastSessionId !== undefined ? { lastSessionId: patch.lastSessionId } : {}),
     };
+    applyOptionalPatch(next, patch, "lastRun");
+    applyOptionalPatch(next, patch, "nextRun");
+    applyOptionalPatch(next, patch, "lastSessionId");
     this.jobs[idx] = next;
     await this.persist();
     return next;
@@ -128,6 +128,18 @@ export class CronStore {
     });
     await this.writeQueue;
   }
+}
+
+function applyOptionalPatch<K extends "lastRun" | "nextRun" | "lastSessionId">(
+  job: CronJob,
+  patch: CronJobPatch,
+  key: K,
+): void {
+  if (!Object.prototype.hasOwnProperty.call(patch, key)) return;
+  const mutable = job as unknown as Record<string, unknown>;
+  const value = patch[key];
+  if (value === undefined) delete mutable[key];
+  else mutable[key] = value;
 }
 
 function isCronJob(value: unknown): value is CronJob {

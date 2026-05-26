@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import type { PathPolicy } from "../security/path-policy.js";
-import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ModelInfo, PiAdapter, PiEvent, PiEventListener, PiSessionHandle, PromptAttachment, SeqEventListener, SessionListItem, SessionState } from "../pi/types.js";
+import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ModelInfo, PiAdapter, PiEvent, PiEventListener, PiSessionHandle, PromptAttachment, SeqEventListener, SessionListItem, SessionState, Unsubscribe } from "../pi/types.js";
 import { WorkerRegistry } from "./worker-registry.js";
 
 export interface SessionRegistryOptions {
@@ -27,6 +27,7 @@ interface SessionInternal {
   readonly registered: RegisteredSession;
   readonly ring: RingEntry[];
   readonly subscribers: Set<SeqEventListener>;
+  unsubscribeHandle: Unsubscribe;
   nextLocalSeq: number;
   /** Greatest seq we've delivered (used so the SSE layer can read "current top"). */
   lastSeq: number;
@@ -235,6 +236,7 @@ export class SessionRegistry {
   async disposeSession(sessionId: string): Promise<void> {
     const internal = this.getInternal(sessionId);
     internal.subscribers.clear();
+    internal.unsubscribeHandle();
     await internal.registered.handle.dispose();
     this.sessions.delete(sessionId);
   }
@@ -243,6 +245,7 @@ export class SessionRegistry {
   async detachSession(sessionId: string): Promise<void> {
     const internal = this.getInternal(sessionId);
     internal.subscribers.clear();
+    internal.unsubscribeHandle();
     const handle = internal.registered.handle;
     if (handle.detach) await handle.detach();
     else await handle.dispose();
@@ -252,6 +255,7 @@ export class SessionRegistry {
   async deleteSession(sessionId: string): Promise<void> {
     const internal = this.getInternal(sessionId);
     internal.subscribers.clear();
+    internal.unsubscribeHandle();
     await internal.registered.handle.dispose();
     this.sessions.delete(sessionId);
     await fs.rm(internal.registered.sessionFile, { force: true });
@@ -286,11 +290,10 @@ export class SessionRegistry {
       registered,
       ring: [],
       subscribers: new Set(),
+      unsubscribeHandle: () => undefined,
       nextLocalSeq: 1,
       lastSeq: 0,
     };
-    this.sessions.set(handle.id, internal);
-
     const onEvent = (event: PiEvent, seq: number) => {
       internal.lastSeq = seq;
       internal.ring.push({ seq, event });
@@ -300,26 +303,28 @@ export class SessionRegistry {
       }
     };
 
-    if (handle.subscribeWithSeq) {
-      handle.subscribeWithSeq(onEvent);
-    } else {
-      handle.subscribe((event) => {
-        const seq = internal.nextLocalSeq++;
-        onEvent(event, seq);
-      });
-    }
+    internal.unsubscribeHandle = handle.subscribeWithSeq
+      ? handle.subscribeWithSeq(onEvent)
+      : handle.subscribe((event) => {
+          const seq = internal.nextLocalSeq++;
+          onEvent(event, seq);
+        });
+
+    this.sessions.set(handle.id, internal);
     return registered;
   }
 
   private replaceSessionId(oldSessionId: string, handle: PiSessionHandle): RegisteredSession {
     const old = this.sessions.get(oldSessionId);
     this.sessions.delete(oldSessionId);
+    if (old) old.unsubscribeHandle();
     const registered = this.register(handle);
     if (old) {
       // Transfer any remaining subscribers to the new session id, so SSE
       // clients survive fork/clone identity changes.
       const next = this.sessions.get(handle.id)!;
       for (const listener of old.subscribers) next.subscribers.add(listener);
+      old.subscribers.clear();
     }
     return registered;
   }

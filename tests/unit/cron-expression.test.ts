@@ -55,6 +55,13 @@ describe("parseCron", () => {
     expect(() => parseCron("a * * * *")).toThrow(CronParseError);
   });
 
+  it("rejects empty comma-separated list entries", () => {
+    expect(() => parseCron("1, * * * *")).toThrow(CronParseError);
+    expect(() => parseCron(", * * * *")).toThrow(CronParseError);
+    expect(() => parseCron("1,2, * * * *")).toThrow(CronParseError);
+    expect(() => parseCron("* * * * 1,")).toThrow(CronParseError);
+  });
+
   it("rejects zero or negative steps", () => {
     expect(() => parseCron("*/0 * * * *")).toThrow(CronParseError);
   });

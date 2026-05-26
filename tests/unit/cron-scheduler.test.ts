@@ -120,6 +120,7 @@ describe("CronScheduler.refreshNextRuns", () => {
     const { projectA, store, scheduler } = await setup();
     const enabled = await store.create({ name: "e", schedule: "*/5 * * * *", prompt: "", cwd: projectA });
     const disabled = await store.create({ name: "d", schedule: "*/5 * * * *", prompt: "", cwd: projectA, enabled: false });
+    await store.update(disabled.id, { nextRun: Date.now() + 60_000 });
 
     await scheduler.refreshNextRuns();
 

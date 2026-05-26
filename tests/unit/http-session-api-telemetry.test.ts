@@ -143,10 +143,11 @@ describe("sse-silence detector behavior", () => {
 
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-  it("emits an sse-silence event after the threshold passes with no messages", async () => {
+  it("emits an sse-silence event and reconnects after the threshold passes with no messages", async () => {
+    const events: unknown[] = [];
     const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
     const api = new HttpSessionDashboardApi();
-    const unsubscribe = api.streamEvents("sid-silence", () => {});
+    const unsubscribe = api.streamEvents("sid-silence", (event) => events.push(event));
 
     // Let the constructor's microtask run so onopen fires.
     await vi.advanceTimersByTimeAsync(1);
@@ -154,12 +155,13 @@ describe("sse-silence detector behavior", () => {
     // No messages. Advance past the silence threshold.
     await vi.advanceTimersByTimeAsync(SSE_SILENCE_THRESHOLD_MS + SSE_SILENCE_CHECK_INTERVAL_MS);
 
-    const silenceEvents = fetchSpy.mock.calls
+    const telemetry = fetchSpy.mock.calls
       .filter((c) => String(c[0]).includes("/api/client-event"))
-      .map((c) => JSON.parse(String((c[1] as RequestInit).body)))
-      .filter((e: { kind: string }) => e.kind === "sse-silence");
+      .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+    const silenceEvents = telemetry.filter((e: { kind: string }) => e.kind === "sse-silence");
+    const reconnectEvents = telemetry.filter((e: { kind: string }) => e.kind === "sse-client-reconnect");
 
-    expect(silenceEvents.length, `expected \u22651 sse-silence event. Got telemetry: ${JSON.stringify(fetchSpy.mock.calls.map((c) => c[1] && JSON.parse(String((c[1] as RequestInit).body))))}`)
+    expect(silenceEvents.length, `expected \u22651 sse-silence event. Got telemetry: ${JSON.stringify(telemetry)}`)
       .toBeGreaterThanOrEqual(1);
     expect(silenceEvents[0]).toMatchObject({
       kind: "sse-silence",
@@ -167,6 +169,10 @@ describe("sse-silence detector behavior", () => {
       idleMs: expect.any(Number),
     });
     expect(silenceEvents[0].idleMs).toBeGreaterThanOrEqual(SSE_SILENCE_THRESHOLD_MS);
+    expect(reconnectEvents).toEqual([
+      expect.objectContaining({ kind: "sse-client-reconnect", sessionId: "sid-silence", reason: "sse-silence" }),
+    ]);
+    expect(events).toContainEqual({ type: "stream_reconnected", reason: "sse-silence" });
 
     unsubscribe();
   });

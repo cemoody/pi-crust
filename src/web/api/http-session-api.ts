@@ -213,6 +213,7 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
           ageMs: Date.now() - openedAt,
           tabSessionId: getTabSessionId(),
         });
+        reconnect("sse-silence");
       }
     }, SSE_SILENCE_CHECK_INTERVAL_MS);
 

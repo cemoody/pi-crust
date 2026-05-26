@@ -46,6 +46,22 @@ describe("CronStore", () => {
     expect(updated?.prompt).toBe("p");
   });
 
+  it("clears optional metadata fields when patches explicitly set them to undefined", async () => {
+    const { store } = await makeStore();
+    const created = await store.create({ name: "A", schedule: "* * * * *", prompt: "p", cwd: "/tmp" });
+    await store.update(created.id, { lastRun: 123, nextRun: 456, lastSessionId: "sid-1" });
+
+    const updated = await store.update(created.id, { lastRun: undefined, nextRun: undefined, lastSessionId: undefined });
+
+    expect(updated).not.toHaveProperty("lastRun");
+    expect(updated).not.toHaveProperty("nextRun");
+    expect(updated).not.toHaveProperty("lastSessionId");
+    const persisted = JSON.parse(await fs.readFile(store.filePath, "utf8"));
+    expect(persisted.jobs[0]).not.toHaveProperty("lastRun");
+    expect(persisted.jobs[0]).not.toHaveProperty("nextRun");
+    expect(persisted.jobs[0]).not.toHaveProperty("lastSessionId");
+  });
+
   it("returns undefined when updating an unknown id", async () => {
     const { store } = await makeStore();
     expect(await store.update("nope", { enabled: false })).toBeUndefined();

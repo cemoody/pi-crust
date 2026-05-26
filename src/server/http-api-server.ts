@@ -82,6 +82,7 @@ interface HttpApiServerContext extends HttpApiServerOptions {
 }
 
 const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
+export const JSON_BODY_MAX_BYTES = 16 * 1024 * 1024;
 
 /**
  * Append-only JSON-lines logger used for client telemetry. Lazy-creates the
@@ -334,7 +335,10 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
     ...(options.clientEventLogPath ? { clientEventLog: createClientEventLog(options.clientEventLogPath) } : {}),
   };
   return http.createServer((req, res) => {
-    void handle(req, res, context).catch((error) => sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) }));
+    void handle(req, res, context).catch((error) => {
+      if (error instanceof HttpBodyError) return sendJson(res, error.status, { error: error.message });
+      return sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+    });
   });
 }
 
@@ -1767,11 +1771,27 @@ function setCors(res: http.ServerResponse): void {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
+class HttpBodyError extends Error {
+  constructor(readonly status: 400 | 413, message: string) {
+    super(message);
+  }
+}
+
 async function readJson(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  let received = 0;
+  for await (const chunk of req) {
+    const buf = Buffer.from(chunk);
+    received += buf.length;
+    if (received > JSON_BODY_MAX_BYTES) throw new HttpBodyError(413, "request body too large");
+    chunks.push(buf);
+  }
   const text = Buffer.concat(chunks).toString("utf8");
-  return text ? JSON.parse(text) : {};
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    throw new HttpBodyError(400, "request body was not valid JSON");
+  }
 }
 
 async function handleExtensionCommand(
