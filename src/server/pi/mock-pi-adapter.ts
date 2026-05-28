@@ -277,6 +277,13 @@ class MockPiSessionHandle implements PiSessionHandle {
     return result;
   }
 
+  async reload(): Promise<SessionState> {
+    this.lastActivity = Date.now();
+    await this.persist();
+    this.emit({ type: "session_reload", reason: "manual" } as unknown as PiEvent);
+    return this.getState();
+  }
+
   subscribe(listener: PiEventListener): Unsubscribe {
     this.emitter.on("event", listener);
     return () => this.emitter.off("event", listener);

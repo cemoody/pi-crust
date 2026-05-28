@@ -679,7 +679,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     }
   }
 
-  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/((?:messages(?:\/[^/]+\/(?:images\/\d+|details|tool-output|artifact))?)|prompt|bash|abort|compact|rename|delete|model|state|events|extension-ui-response))?$/);
+  const match = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/((?:messages(?:\/[^/]+\/(?:images\/\d+|details|tool-output|artifact))?)|prompt|bash|abort|compact|reload|rename|delete|model|state|events|extension-ui-response))?$/);
   if (!match) return sendJson(res, 404, { error: "not found" });
   const sessionId = decodeURIComponent(match[1]!);
   const action = match[2] ?? "state";
@@ -918,6 +918,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     await context.registry.compact(session.id, customInstructions);
     const updatedSession = await getOrOpenSession(context, session.id);
     return sendJson(res, 200, toDashboardMessages(await updatedSession.handle.getMessages(), { sessionId: updatedSession.id }));
+  }
+
+  if (req.method === "POST" && action === "reload") {
+    const session = await getOrOpenSession(context, sessionId);
+    const reloaded = await context.registry.reloadSession(session.id);
+    const metadata = await readSessionTimelineMetadata(reloaded.sessionFile);
+    return sendJson(res, 200, toSessionCard(await reloaded.handle.getState(), metadata));
   }
 
   if (req.method === "POST" && action === "rename") {

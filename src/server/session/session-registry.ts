@@ -165,6 +165,17 @@ export class SessionRegistry {
     return handle.compact(customInstructions);
   }
 
+  async reloadSession(sessionId: string): Promise<RegisteredSession> {
+    const registered = this.getSession(sessionId);
+    if (!registered.handle.reload) throw new Error("Session adapter does not support reload");
+    const oldId = registered.handle.id;
+    await registered.handle.reload();
+    // Re-register even when the session id is unchanged: a Pi RPC restart
+    // resets the supervisor event sequence, so the registry must reset its
+    // per-session ring/seq state while preserving active subscribers.
+    return this.replaceSessionId(oldId, registered.handle);
+  }
+
   async setSessionName(sessionId: string, name: string): Promise<SessionState> {
     return this.getSession(sessionId).handle.setSessionName(name);
   }

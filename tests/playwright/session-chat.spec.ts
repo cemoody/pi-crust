@@ -118,6 +118,19 @@ test('/clear slash command starts a fresh session (alias for /new)', async ({ pa
   await expect(page.getByLabel('Prompt draft')).toHaveValue('');
 });
 
+test('/reload slash command restarts the session runtime instead of prompting', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('/');
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
+
+  await page.getByLabel('Prompt draft').fill('/reload');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByLabel('Notifications').getByText('Reloaded Pi RPC session.')).toBeVisible();
+  await expect(page.getByText(/Mock response to: \/reload/)).toHaveCount(0);
+  await expect(page.getByLabel('Prompt draft')).toHaveValue('');
+});
+
 test('top-right session actions reflect implemented extension commands', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('link', { name: /^Seeded session\b/ }).click();
