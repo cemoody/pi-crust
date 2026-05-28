@@ -32,6 +32,7 @@ const buckets = {
   playwrightPromo: [],
   playwrightNpx: [],
   playwrightProduction: [],
+  playwrightRealtime: [],
 };
 const unowned = [];
 
@@ -40,6 +41,12 @@ for (const file of testFiles) {
     if (file === "tests/playwright/promo-screenshots.spec.ts") buckets.playwrightPromo.push(file);
     else if (/\.spec\.tsx?$/.test(file)) buckets.playwrightDefault.push(file);
     else unowned.push(`${file} is under tests/playwright but is not a Playwright .spec.ts/.spec.tsx file`);
+    continue;
+  }
+
+  if (file.startsWith("tests/playwright-realtime/")) {
+    if (/\.spec\.tsx?$/.test(file)) buckets.playwrightRealtime.push(file);
+    else unowned.push(`${file} is under tests/playwright-realtime but is not a Playwright .spec.ts/.spec.tsx file`);
     continue;
   }
 
@@ -75,6 +82,8 @@ const requiredWorkflowSnippets = [
   ["npx extension Playwright command", "npx playwright test --config=playwright.npx-extension.config.ts --reporter=list"],
   ["production smoke job", "name: production build smoke"],
   ["production smoke command", "npx playwright test --config=playwright.production.config.ts --reporter=list"],
+  ["realtime Playwright job", "name: playwright (realtime leader-election)"],
+  ["realtime Playwright command", "npx playwright test --config=playwright.realtime.config.ts --reporter=list"],
 ];
 for (const [label, snippet] of requiredWorkflowSnippets) {
   if (!workflow.includes(snippet)) unowned.push(`ci.yml is missing ${label}: ${snippet}`);
@@ -92,6 +101,7 @@ console.log(`- playwright default: ${buckets.playwrightDefault.length} spec file
 console.log(`- playwright promo: ${buckets.playwrightPromo.length} spec file(s)`);
 console.log(`- playwright npx extension: ${buckets.playwrightNpx.length} spec file(s)`);
 console.log(`- playwright production: ${buckets.playwrightProduction.length} spec file(s)`);
+console.log(`- playwright realtime: ${buckets.playwrightRealtime.length} spec file(s)`);
 console.log(`- total: ${testFiles.length} test file(s)`);
 
 function walk(dir) {
