@@ -616,7 +616,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   }, [api, messagesBySession, hasMoreOlderBySession, loadingOlderBySession]);
   const commandSuggestions = useMemo(
     () => unique([
-      "model", "settings", "session", "compact", "reload", "new", "clear",
+      "login", "logout", "model", "settings", "session", "compact", "reload", "new", "clear",
       ...extensionSlashCommands,
     ]),
     [extensionSlashCommands],
@@ -907,6 +907,14 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   }
 
   async function handleSlashCommand(name: string, argv: string) {
+    if (name === "login") {
+      await loginFromSlash(argv);
+      return;
+    }
+    if (name === "logout") {
+      await logoutFromSlash(argv);
+      return;
+    }
     if (!activeSession) {
       setNotice("Open or create a session first to run slash commands.");
       return;
@@ -967,6 +975,47 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
         }
         setNotice(`Command \"/${name}\" is recognised in the TUI but not yet implemented in the pi-crust.`);
       }
+    }
+  }
+
+  async function loginFromSlash(argv: string): Promise<void> {
+    if (!api.login) {
+      setNotice("This server does not support browser login. Run /login in the Pi TUI.");
+      return;
+    }
+    const [provider, ...keyParts] = argv.trim().split(/\s+/).filter(Boolean);
+    const apiKey = keyParts.join(" ").trim();
+    if (!provider || !apiKey) {
+      setView("settings");
+      setNotice("Usage: /login <provider> <api-key>. OAuth browser login is not available yet; for subscription OAuth, run /login in the Pi TUI.");
+      return;
+    }
+    try {
+      const result = await api.login(provider, apiKey);
+      setNotice(`Saved credentials for ${result.provider.provider}.`);
+      if (api.getExtensionSettings) void refreshExtensionSettings();
+    } catch (caught) {
+      setNotice(errorMessage(caught));
+    }
+  }
+
+  async function logoutFromSlash(argv: string): Promise<void> {
+    if (!api.logout) {
+      setNotice("This server does not support browser logout. Run /logout in the Pi TUI.");
+      return;
+    }
+    const provider = argv.trim().split(/\s+/)[0] ?? "";
+    if (!provider) {
+      setView("settings");
+      setNotice("Usage: /logout <provider>.");
+      return;
+    }
+    try {
+      const result = await api.logout(provider);
+      setNotice(`Logged out of ${result.provider.provider}.`);
+      if (api.getExtensionSettings) void refreshExtensionSettings();
+    } catch (caught) {
+      setNotice(errorMessage(caught));
     }
   }
 

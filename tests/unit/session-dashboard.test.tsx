@@ -1017,6 +1017,91 @@ describe("SessionDashboard", () => {
     expect(await screen.findByRole("button", { name: "compact" })).toBeInTheDocument();
   });
 
+  it("/login <provider> <api-key> stores credentials instead of sending a model prompt", async () => {
+    const login = vi.fn(async (provider: string, _apiKey: string) => ({
+      provider: { provider, configured: true as const, source: "stored" as const },
+    }));
+    const prompt = vi.fn(async (_sessionId: string, text: string) => [
+      { id: "u", role: "user" as const, text },
+      { id: "a", role: "assistant" as const, text: `Mock response to: ${text}` },
+    ]);
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
+      login,
+      prompt,
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/login anthropic sk-test-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(login).toHaveBeenCalledWith("anthropic", "sk-test-secret"));
+    expect(prompt).not.toHaveBeenCalled();
+    await screen.findByText("Saved credentials for anthropic.");
+    expect(screen.queryByText(/Mock response to: \/login/)).not.toBeInTheDocument();
+  });
+
+  it("/login without credentials does not prompt and shows browser login guidance", async () => {
+    const login = vi.fn();
+    const prompt = vi.fn();
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
+      login,
+      prompt,
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/login anthropic" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText(/Usage: \/login <provider> <api-key>/);
+    expect(login).not.toHaveBeenCalled();
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("/logout <provider> clears credentials instead of sending a model prompt", async () => {
+    const logout = vi.fn(async (provider: string) => ({
+      provider: { provider, configured: false as const },
+    }));
+    const prompt = vi.fn(async (_sessionId: string, text: string) => [
+      { id: "u", role: "user" as const, text },
+      { id: "a", role: "assistant" as const, text: `Mock response to: ${text}` },
+    ]);
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
+      logout,
+      prompt,
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/logout anthropic" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(logout).toHaveBeenCalledWith("anthropic"));
+    expect(prompt).not.toHaveBeenCalled();
+    await screen.findByText("Logged out of anthropic.");
+    expect(screen.queryByText(/Mock response to: \/logout/)).not.toBeInTheDocument();
+  });
+
+  it("suggests /login and /logout as built-in TUI slash commands", async () => {
+    render(<SessionDashboard api={makeApi([
+      { id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 },
+    ])} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
+    const prompt = await screen.findByLabelText("Prompt draft");
+
+    fireEvent.change(prompt, { target: { value: "/log" } });
+    expect(await screen.findByRole("button", { name: "login" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "logout" })).toBeInTheDocument();
+  });
+
   it("/reload restarts the session runtime instead of sending a model prompt", async () => {
     const reloadSession = vi.fn(async (sessionId: string) => ({
       id: sessionId,

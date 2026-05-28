@@ -5,6 +5,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
+import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
 import { contentTextAndThinking, PiRpcAdapter, toSessionMessages } from "./pi/pirpc-pi-adapter.js";
@@ -50,6 +51,7 @@ export interface HttpApiServerOptions {
    */
   readonly extensions?: PrcExtensionHost;
   readonly extensionRuntime?: PrcExtensionRuntime;
+  readonly authStorage?: AuthStorage;
 }
 
 interface HttpApiServerContext extends HttpApiServerOptions {
@@ -185,6 +187,27 @@ function validateAppIconUrl(value: string): string | undefined {
 
 function getExtensionHost(context: Pick<HttpApiServerContext, "extensions" | "extensionRuntime">): PrcExtensionHost | undefined {
   return context.extensionRuntime?.current ?? context.extensions;
+}
+
+function getAuthStorage(context: Pick<HttpApiServerContext, "authStorage">): AuthStorage {
+  return context.authStorage ?? AuthStorage.create();
+}
+
+async function authProviderInfo(context: Pick<HttpApiServerContext, "authStorage" | "registry">, provider: string) {
+  const status = getAuthStorage(context).getAuthStatus(provider);
+  return {
+    provider,
+    configured: status.configured,
+    ...(status.source ? { source: status.source } : {}),
+    ...(status.label ? { label: status.label } : {}),
+  };
+}
+
+async function listAuthProviders(context: Pick<HttpApiServerContext, "authStorage" | "registry">) {
+  const providers = new Set<string>();
+  for (const model of await context.registry.listModels()) providers.add(model.provider);
+  for (const provider of getAuthStorage(context).list()) providers.add(provider);
+  return Promise.all([...providers].sort().map((provider) => authProviderInfo(context, provider)));
 }
 
 /**
@@ -511,6 +534,33 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && url.pathname === "/api/extensions") {
     return sendJson(res, 200, serializeExtensions(getExtensionHost(context)));
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/auth/providers") {
+    return sendJson(res, 200, { providers: await listAuthProviders(context) });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/login") {
+    const body = await readJson(req) as { provider?: unknown; apiKey?: unknown };
+    if (typeof body.provider !== "string" || body.provider.trim().length === 0) {
+      return sendJson(res, 400, { error: "provider must be a non-empty string" });
+    }
+    if (typeof body.apiKey !== "string" || body.apiKey.trim().length === 0) {
+      return sendJson(res, 400, { error: "apiKey must be a non-empty string. Browser OAuth login is not available yet; use /login <provider> <api-key> or run /login in the Pi TUI." });
+    }
+    const provider = body.provider.trim();
+    getAuthStorage(context).set(provider, { type: "api_key", key: body.apiKey.trim() });
+    return sendJson(res, 200, { provider: await authProviderInfo(context, provider) });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/logout") {
+    const body = await readJson(req) as { provider?: unknown };
+    if (typeof body.provider !== "string" || body.provider.trim().length === 0) {
+      return sendJson(res, 400, { error: "provider must be a non-empty string" });
+    }
+    const provider = body.provider.trim();
+    getAuthStorage(context).logout(provider);
+    return sendJson(res, 200, { provider: await authProviderInfo(context, provider) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/extensions/settings") {

@@ -1,5 +1,5 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
-import type { AppBrandingInfo, AppBrandingSettings, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, GetMessagesOptions, ModelOption, NewSessionInput, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import type { AppBrandingInfo, AppBrandingSettings, AuthMutationResponse, AuthProviderListResponse, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, GetMessagesOptions, ModelOption, NewSessionInput, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
 import { recordClientEvent, getTabSessionId } from "../utils/client-telemetry.js";
 
 const API_BASE = import.meta.env.VITE_PI_CRUST_API_BASE ?? "";
@@ -45,6 +45,18 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
 
   async setSetting(key: string, value: unknown): Promise<ExtensionReloadResponse> {
     return request<ExtensionReloadResponse>("/api/settings", { method: "POST", body: { key, value } });
+  }
+
+  async listAuthProviders(): Promise<AuthProviderListResponse> {
+    return request<AuthProviderListResponse>("/api/auth/providers");
+  }
+
+  async login(provider: string, apiKey: string): Promise<AuthMutationResponse> {
+    return request<AuthMutationResponse>("/api/auth/login", { method: "POST", body: { provider, apiKey } });
+  }
+
+  async logout(provider: string): Promise<AuthMutationResponse> {
+    return request<AuthMutationResponse>("/api/auth/logout", { method: "POST", body: { provider } });
   }
 
   async installExtensionPackage(source: string): Promise<ExtensionReloadResponse> {

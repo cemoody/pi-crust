@@ -245,6 +245,21 @@ export interface AppBrandingSettings {
   readonly appIconUrl?: string;
 }
 
+export interface AuthProviderInfo {
+  readonly provider: string;
+  readonly configured: boolean;
+  readonly source?: "stored" | "runtime" | "environment" | "fallback" | "models_json_key" | "models_json_command";
+  readonly label?: string;
+}
+
+export interface AuthProviderListResponse {
+  readonly providers: readonly AuthProviderInfo[];
+}
+
+export interface AuthMutationResponse {
+  readonly provider: AuthProviderInfo;
+}
+
 export interface ExtensionSettingsResponse {
   readonly packages?: readonly unknown[];
   readonly projectPackages?: readonly unknown[];
@@ -285,6 +300,9 @@ export interface SessionDashboardApi {
   setExtensionEnabled?(extensionId: string, enabled: boolean): Promise<ExtensionReloadResponse>;
   setAppBranding?(branding: AppBrandingSettings): Promise<AppBrandingInfo>;
   setSetting?(key: string, value: unknown): Promise<ExtensionReloadResponse>;
+  listAuthProviders?(): Promise<AuthProviderListResponse>;
+  login?(provider: string, apiKey: string): Promise<AuthMutationResponse>;
+  logout?(provider: string): Promise<AuthMutationResponse>;
   installExtensionPackage?(source: string): Promise<ExtensionReloadResponse>;
   removeExtensionPackage?(source: string): Promise<ExtensionReloadResponse>;
   runExtensionCommand?(extensionId: string, invocationName: string, input?: unknown): Promise<unknown>;

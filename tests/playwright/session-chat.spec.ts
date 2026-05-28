@@ -131,6 +131,24 @@ test('/reload slash command restarts the session runtime instead of prompting', 
   await expect(page.getByLabel('Prompt draft')).toHaveValue('');
 });
 
+test('/login and /logout slash commands update auth without prompting', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: /^Seeded session\b/ }).click();
+
+  await page.getByLabel('Prompt draft').fill('/login mock sk-playwright-secret');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByLabel('Notifications').getByText('Saved credentials for mock.')).toBeVisible();
+  await expect(page.getByText(/Mock response to: \/login/)).toHaveCount(0);
+  await expect(page.getByText('sk-playwright-secret')).toHaveCount(0);
+
+  await page.getByLabel('Prompt draft').fill('/logout mock');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page.getByLabel('Notifications').getByText('Logged out of mock.')).toBeVisible();
+  await expect(page.getByText(/Mock response to: \/logout/)).toHaveCount(0);
+});
+
 test('top-right session actions reflect implemented extension commands', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('link', { name: /^Seeded session\b/ }).click();
