@@ -1017,6 +1017,49 @@ describe("SessionDashboard", () => {
     expect(await screen.findByRole("button", { name: "compact" })).toBeInTheDocument();
   });
 
+  it("/reload restarts the session runtime instead of sending a model prompt", async () => {
+    const reloadSession = vi.fn(async (sessionId: string) => ({
+      id: sessionId,
+      cwd: "/repo/a",
+      sessionName: "Original",
+      status: "idle" as const,
+      model: "m",
+      tokenSummary: "0 tokens",
+      lastActivity: 2,
+    }));
+    const prompt = vi.fn(async (_sessionId: string, text: string) => [
+      { id: "u", role: "user" as const, text },
+      { id: "a", role: "assistant" as const, text: `Mock response to: ${text}` },
+    ]);
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
+      reloadSession,
+      prompt,
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/reload" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(reloadSession).toHaveBeenCalledWith("a"));
+    expect(prompt).not.toHaveBeenCalled();
+    await screen.findByText("Reloaded Pi RPC session.");
+    expect(screen.queryByText(/Mock response to: \/reload/)).not.toBeInTheDocument();
+  });
+
+  it("suggests /reload as a built-in TUI slash command", async () => {
+    render(<SessionDashboard api={makeApi([
+      { id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 },
+    ])} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/rel" } });
+
+    expect(await screen.findByRole("button", { name: "reload" })).toBeInTheDocument();
+  });
+
   it("/clear is an alias for /new and starts a fresh session", async () => {
     // pi renamed /clear -> /new (see pi-coding-agent CHANGELOG). The pi-crust keeps
     // /clear working as a muscle-memory alias for users coming from Claude

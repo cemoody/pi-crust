@@ -145,6 +145,8 @@ export interface PiSessionHandle {
   getMessages(): Promise<readonly SessionMessage[]>;
   prompt(message: string, attachments?: readonly PromptAttachment[]): Promise<void>;
   compact?(customInstructions?: string): Promise<unknown>;
+  /** Restart the underlying Pi runtime for this session, preserving session file/cwd. */
+  reload?(): Promise<SessionState>;
   abort(): Promise<void>;
   setSessionName(name: string): Promise<SessionState>;
   setModel(provider: string, modelId: string): Promise<SessionState>;

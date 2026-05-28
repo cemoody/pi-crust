@@ -118,7 +118,12 @@ export class PiRpcAdapter implements PiAdapter {
       socketPath: options.socketPath,
       sessionFile: options.sessionFile,
       cwd: options.cwd,
+      piCommand: this.piCommand,
+      supervisorScript: this.supervisorScript,
       workerRegistry: this.workerRegistry,
+      ...optional({ sessionDir: this.options.sessionDir }),
+      ...optional({ extraArgs: this.options.extraArgs }),
+      ...optional({ artifactExtension: this.options.artifactExtension }),
     });
   }
 
@@ -201,7 +206,43 @@ interface ReattachInternalOptions {
   readonly socketPath: string;
   readonly sessionFile: string;
   readonly cwd: string;
+  readonly piCommand: string;
+  readonly supervisorScript: string;
   readonly workerRegistry: WorkerRegistry;
+  readonly sessionDir?: string;
+  readonly extraArgs?: readonly string[];
+  readonly artifactExtension?: false | string;
+}
+
+interface RestartOptions {
+  readonly piCommand: string;
+  readonly supervisorScript: string;
+  readonly workerRegistry: WorkerRegistry;
+  readonly sessionDir?: string;
+  readonly extraArgs?: readonly string[];
+  readonly artifactExtension?: false | string;
+}
+
+function restartOptionsFromSpawn(options: SpawnSessionOptions): RestartOptions {
+  return {
+    piCommand: options.piCommand,
+    supervisorScript: options.supervisorScript,
+    workerRegistry: options.workerRegistry,
+    ...optional({ sessionDir: options.sessionDir }),
+    ...optional({ extraArgs: options.extraArgs }),
+    ...optional({ artifactExtension: options.artifactExtension }),
+  };
+}
+
+function restartOptionsFromReattach(options: ReattachInternalOptions): RestartOptions {
+  return {
+    piCommand: options.piCommand,
+    supervisorScript: options.supervisorScript,
+    workerRegistry: options.workerRegistry,
+    ...optional({ sessionDir: options.sessionDir }),
+    ...optional({ extraArgs: options.extraArgs }),
+    ...optional({ artifactExtension: options.artifactExtension }),
+  };
 }
 
 class PiRpcSessionHandle implements PiSessionHandle {
@@ -209,14 +250,14 @@ class PiRpcSessionHandle implements PiSessionHandle {
   cwd: string;
   sessionFile: string;
 
-  private readonly rpc: SupervisedRpcProcess;
+  private rpc: SupervisedRpcProcess;
   private readonly emitter = new EventEmitter();
   private readonly seqEmitter = new EventEmitter();
   private latestState: Record<string, unknown>;
   private disposed = false;
   private detached = false;
 
-  private constructor(rpc: SupervisedRpcProcess, cwd: string, state: Record<string, unknown>) {
+  private constructor(rpc: SupervisedRpcProcess, cwd: string, state: Record<string, unknown>, private readonly restartOptions: RestartOptions) {
     this.rpc = rpc;
     this.cwd = cwd;
     this.latestState = state;
@@ -224,16 +265,7 @@ class PiRpcSessionHandle implements PiSessionHandle {
     this.sessionFile = String(state.sessionFile ?? "");
     if (!this.id) throw new Error("Pi RPC session did not report a sessionId");
     if (!this.sessionFile) throw new Error("Pi RPC session did not report a sessionFile");
-
-    // Plumb identity into the rpc layer so its close/reject log lines name
-    // the session (see logUnexpectedClose / logRejectedHandleClosed below).
-    this.rpc.observabilityContext = { sessionId: this.id };
-    if (typeof state.pid === "number") this.rpc.observabilityContext.supervisorPid = state.pid;
-
-    this.rpc.onEvent((event, seq) => {
-      this.emitter.emit("event", event as PiEvent);
-      this.seqEmitter.emit("event", event as PiEvent, seq);
-    });
+    this.attachRpc(rpc, state);
   }
 
   /**
@@ -269,7 +301,7 @@ class PiRpcSessionHandle implements PiSessionHandle {
     try {
       const state = await rpc.request("get_state");
       if (!isRecord(state)) throw new Error("Pi RPC get_state returned invalid data");
-      return new PiRpcSessionHandle(rpc, options.cwd, state);
+      return new PiRpcSessionHandle(rpc, options.cwd, state, restartOptionsFromSpawn(options));
     } catch (error) {
       await rpc.dispose();
       throw error;
@@ -288,7 +320,7 @@ class PiRpcSessionHandle implements PiSessionHandle {
       await rpc.detach();
       throw new Error("Pi RPC get_state returned invalid data during reattach");
     }
-    return new PiRpcSessionHandle(rpc, options.cwd, state);
+    return new PiRpcSessionHandle(rpc, options.cwd, state, restartOptionsFromReattach(options));
   }
 
   async getState(): Promise<SessionState> {
@@ -327,6 +359,42 @@ class PiRpcSessionHandle implements PiSessionHandle {
 
   async compact(customInstructions?: string): Promise<unknown> {
     return this.rpc.request("compact", customInstructions?.trim() ? { customInstructions } : {});
+  }
+
+  async reload(): Promise<SessionState> {
+    const previousRpc = this.rpc;
+    const previousSupervisorPid = previousRpc.observabilityContext.supervisorPid;
+    await previousRpc.dispose();
+    if (typeof previousSupervisorPid === "number") {
+      await waitForProcessExit(previousSupervisorPid, 3_000);
+    }
+
+    const rpc = await SupervisedRpcProcess.spawnDetached({
+      piCommand: this.restartOptions.piCommand,
+      args: await buildPiRpcArgs({
+        sessionFile: this.sessionFile,
+        ...optional({ sessionDir: this.restartOptions.sessionDir }),
+        ...optional({ extraArgs: this.restartOptions.extraArgs }),
+        ...optional({ artifactExtension: this.restartOptions.artifactExtension }),
+      }),
+      cwd: this.cwd,
+      supervisorScript: this.restartOptions.supervisorScript,
+      workerRegistry: this.restartOptions.workerRegistry,
+    });
+    try {
+      const state = await rpc.request("get_state");
+      if (!isRecord(state)) throw new Error("Pi RPC get_state returned invalid data after reload");
+      this.rpc = rpc;
+      this.latestState = state;
+      this.cwd = String(state.cwd ?? this.cwd);
+      this.id = String(state.sessionId ?? this.id);
+      this.sessionFile = String(state.sessionFile ?? this.sessionFile);
+      this.attachRpc(rpc, state);
+      return this.toState(state);
+    } catch (error) {
+      await rpc.dispose();
+      throw error;
+    }
   }
 
   async setSessionName(name: string): Promise<SessionState> {
@@ -389,6 +457,16 @@ class PiRpcSessionHandle implements PiSessionHandle {
     this.emitter.removeAllListeners();
     this.seqEmitter.removeAllListeners();
     await this.rpc.detach();
+  }
+
+  private attachRpc(rpc: SupervisedRpcProcess, state: Record<string, unknown>): void {
+    rpc.observabilityContext = { sessionId: this.id };
+    if (typeof state.pid === "number") rpc.observabilityContext.supervisorPid = state.pid;
+    rpc.onEvent((event, seq) => {
+      if (this.rpc !== rpc) return;
+      this.emitter.emit("event", event as PiEvent);
+      this.seqEmitter.emit("event", event as PiEvent, seq);
+    });
   }
 
   private async refreshIdentity(): Promise<void> {
@@ -842,6 +920,35 @@ class SupervisedRpcProcess {
   private failAll(error: Error): void {
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
+  }
+}
+
+async function buildPiRpcArgs(options: {
+  readonly sessionFile?: string;
+  readonly sessionDir?: string;
+  readonly extraArgs?: readonly string[];
+  readonly artifactExtension?: false | string;
+}): Promise<string[]> {
+  const args = ["--mode", "rpc"];
+  if (options.sessionDir) args.push("--session-dir", options.sessionDir);
+  if (options.sessionFile) args.push("--session", options.sessionFile);
+  const extension = await resolveArtifactExtension(options.artifactExtension);
+  if (extension) args.push("--extension", extension);
+  const cemoodyExtension = await resolveCemoodyArtifactExtension();
+  if (cemoodyExtension) args.push("--extension", cemoodyExtension);
+  args.push(...(options.extraArgs ?? []));
+  return args;
+}
+
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await sleep(50);
   }
 }
 

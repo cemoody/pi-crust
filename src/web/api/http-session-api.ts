@@ -108,6 +108,10 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     });
   }
 
+  async reloadSession(sessionId: string): Promise<SessionCardData> {
+    return request<SessionCardData>(`/api/sessions/${encodeURIComponent(sessionId)}/reload`, { method: "POST", body: {} });
+  }
+
   async abort(sessionId: string): Promise<void> {
     await request(`/api/sessions/${encodeURIComponent(sessionId)}/abort`, { method: "POST", body: {} });
   }

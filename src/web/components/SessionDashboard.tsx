@@ -616,7 +616,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   }, [api, messagesBySession, hasMoreOlderBySession, loadingOlderBySession]);
   const commandSuggestions = useMemo(
     () => unique([
-      "model", "settings", "session", "compact", "new", "clear",
+      "model", "settings", "session", "compact", "reload", "new", "clear",
       ...extensionSlashCommands,
     ]),
     [extensionSlashCommands],
@@ -923,6 +923,9 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       case "compact":
         await compactActiveSession(argv);
         return;
+      case "reload":
+        await reloadActiveSession();
+        return;
       case "new":
       case "clear":
         // /clear was renamed to /new in pi (see pi-coding-agent CHANGELOG:
@@ -964,6 +967,24 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
         }
         setNotice(`Command \"/${name}\" is recognised in the TUI but not yet implemented in the pi-crust.`);
       }
+    }
+  }
+
+  async function reloadActiveSession(): Promise<void> {
+    if (!activeSession) return;
+    if (!api.reloadSession) {
+      setNotice("This session adapter does not support reload.");
+      return;
+    }
+    const sessionId = activeSession.id;
+    try {
+      setNotice("Reloading Pi RPC session…");
+      const reloaded = await api.reloadSession(sessionId);
+      setSessions((current) => current.map((session) => session.id === sessionId ? reloaded : session));
+      setActiveSessionId(reloaded.id);
+      setNotice("Reloaded Pi RPC session.");
+    } catch (caught) {
+      setNotice(errorMessage(caught));
     }
   }
 
