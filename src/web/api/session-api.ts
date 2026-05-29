@@ -1,4 +1,15 @@
-export type SessionCardStatus = "idle" | "streaming" | "waiting_for_approval" | "compacting" | "retrying" | "error";
+export type SessionCardStatus =
+  | "idle"
+  | "streaming"
+  | "waiting_for_approval"
+  | "compacting"
+  | "retrying"
+  | "error"
+  // Infra/lifecycle states overlaid by the API server (not pi agent states).
+  // "dead": the backing pi worker process died and isn't revived yet.
+  // "reviving": the server is respawning the worker from the on-disk session.
+  | "dead"
+  | "reviving";
 
 /** Options accepted by api.getMessages(). The server's /messages endpoint
  *  supports a tail-windowed read so a multi-MB transcript doesn't have to
@@ -248,8 +259,40 @@ export interface AppBrandingSettings {
 export interface AuthProviderInfo {
   readonly provider: string;
   readonly configured: boolean;
+  /** API-key/display name, e.g. "Anthropic" or "OpenAI". Falls back to the id. */
+  readonly name?: string;
+  /** Subscription label for OAuth providers, e.g. "Anthropic (Claude Pro/Max)". */
+  readonly oauthName?: string;
+  /** Whether this provider can be logged in via OAuth subscription. */
+  readonly oauthLogin?: boolean;
+  /** Whether this provider accepts API-key login. A provider can support both. */
+  readonly apiKeyLogin?: boolean;
+  /** OAuth providers that accept a pasted redirect URL (callback-server flow). */
+  readonly usesCallbackServer?: boolean;
+  /** Type of credential currently stored in auth.json for this provider, if any. */
+  readonly credentialType?: "oauth" | "api_key";
   readonly source?: "stored" | "runtime" | "environment" | "fallback" | "models_json_key" | "models_json_command";
   readonly label?: string;
+}
+
+export type OAuthLoginEvent =
+  | { readonly type: "auth"; readonly url: string; readonly instructions?: string }
+  | { readonly type: "progress"; readonly message: string }
+  | { readonly type: "prompt"; readonly requestId: string; readonly message: string; readonly placeholder?: string; readonly allowEmpty?: boolean }
+  | { readonly type: "manualCode"; readonly requestId: string; readonly message: string }
+  | { readonly type: "select"; readonly requestId: string; readonly message: string; readonly options: ReadonlyArray<{ readonly id: string; readonly label: string }> }
+  | { readonly type: "done" }
+  | { readonly type: "error"; readonly message: string };
+
+export type OAuthLoginStatus = "active" | "done" | "error" | "cancelled";
+
+export interface OAuthLoginSnapshot {
+  readonly flowId: string;
+  readonly provider: string;
+  readonly status: OAuthLoginStatus;
+  readonly cursor: number;
+  readonly events: readonly OAuthLoginEvent[];
+  readonly error?: string;
 }
 
 export interface AuthProviderListResponse {
@@ -303,6 +346,14 @@ export interface SessionDashboardApi {
   listAuthProviders?(): Promise<AuthProviderListResponse>;
   login?(provider: string, apiKey: string): Promise<AuthMutationResponse>;
   logout?(provider: string): Promise<AuthMutationResponse>;
+  /** Begin an interactive OAuth ("subscription") login flow. */
+  startOAuthLogin?(provider: string): Promise<OAuthLoginSnapshot>;
+  /** Tail a running OAuth login flow for new events. */
+  pollOAuthLogin?(flowId: string, cursor: number): Promise<OAuthLoginSnapshot>;
+  /** Satisfy a pending OAuth login input request (prompt/select/manual code). */
+  submitOAuthLogin?(flowId: string, requestId: string, value: string): Promise<OAuthLoginSnapshot>;
+  /** Cancel a running OAuth login flow. */
+  cancelOAuthLogin?(flowId: string): Promise<OAuthLoginSnapshot>;
   installExtensionPackage?(source: string): Promise<ExtensionReloadResponse>;
   removeExtensionPackage?(source: string): Promise<ExtensionReloadResponse>;
   runExtensionCommand?(extensionId: string, invocationName: string, input?: unknown): Promise<unknown>;

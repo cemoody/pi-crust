@@ -1039,7 +1039,7 @@ describe("SessionDashboard", () => {
 
     await waitFor(() => expect(login).toHaveBeenCalledWith("anthropic", "sk-test-secret"));
     expect(prompt).not.toHaveBeenCalled();
-    await screen.findByText("Saved credentials for anthropic.");
+    await screen.findByText("Saved API key for anthropic.");
     expect(screen.queryByText(/Mock response to: \/login/)).not.toBeInTheDocument();
   });
 
@@ -1061,6 +1061,60 @@ describe("SessionDashboard", () => {
     await screen.findByText(/Usage: \/login <provider> <api-key>/);
     expect(login).not.toHaveBeenCalled();
     expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("/login opens the interactive auth dialog when the server supports OAuth", async () => {
+    const startOAuthLogin = vi.fn();
+    const listAuthProviders = vi.fn(async () => ({
+      providers: [
+        { provider: "anthropic", configured: false as const, name: "Anthropic", oauthName: "Anthropic (Claude)", oauthLogin: true as const, apiKeyLogin: true as const },
+        { provider: "mock", configured: false as const, name: "Mock", apiKeyLogin: true as const },
+      ],
+    }));
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
+      login: vi.fn(),
+      listAuthProviders,
+      startOAuthLogin,
+      pollOAuthLogin: vi.fn(),
+      submitOAuthLogin: vi.fn(),
+      cancelOAuthLogin: vi.fn(),
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/login" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // Auth-type selector from the TUI flow appears, and no model prompt is sent.
+    await screen.findByRole("dialog", { name: "Sign in" });
+    expect(await screen.findByText("Use a subscription")).toBeInTheDocument();
+    expect(startOAuthLogin).not.toHaveBeenCalled();
+  });
+
+  it("/login <provider> jumps straight to that provider's OAuth flow", async () => {
+    const startOAuthLogin = vi.fn(async () => ({ flowId: "f1", provider: "anthropic", status: "active" as const, cursor: 0, events: [] }));
+    const pollOAuthLogin = vi.fn(async () => ({ flowId: "f1", provider: "anthropic", status: "active" as const, cursor: 0, events: [] }));
+    const api = {
+      ...makeApi([{ id: "a", cwd: "/repo/a", sessionName: "Original", status: "idle", model: "m", lastActivity: 1 }]),
+      login: vi.fn(),
+      listAuthProviders: vi.fn(async () => ({
+        providers: [{ provider: "anthropic", configured: false as const, name: "Anthropic", oauthName: "Anthropic (Claude)", oauthLogin: true as const, apiKeyLogin: true as const }],
+      })),
+      startOAuthLogin,
+      pollOAuthLogin,
+      submitOAuthLogin: vi.fn(),
+      cancelOAuthLogin: vi.fn(),
+    } satisfies SessionDashboardApi;
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Original");
+    fireEvent.click(screen.getByRole("link", { name: /Original/ }));
+    fireEvent.change(await screen.findByLabelText("Prompt draft"), { target: { value: "/login anthropic" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(startOAuthLogin).toHaveBeenCalledWith("anthropic"));
   });
 
   it("/logout <provider> clears credentials instead of sending a model prompt", async () => {

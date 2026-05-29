@@ -6,6 +6,8 @@ import fsp from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
+import { getProviders } from "@earendil-works/pi-ai";
+import { OAuthLoginError, OAuthLoginManager } from "./auth/oauth-login-manager.js";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
 import { contentTextAndThinking, PiRpcAdapter, toSessionMessages } from "./pi/pirpc-pi-adapter.js";
@@ -84,6 +86,12 @@ interface HttpApiServerContext extends HttpApiServerOptions {
   readonly activeSseByTab: Map<string, http.ServerResponse>;
   /** Set after the realtime gateway is mounted; exposes live connection stats. */
   realtimeGateway?: import("./protocol/realtime-gateway.js").RealtimeGateway;
+  /**
+   * Lazily-created driver for the interactive OAuth ("subscription") login
+   * flow. Held on the context so a multi-request flow uses one AuthStorage
+   * instance and one in-flight login() promise.
+   */
+  oauthLoginManager?: OAuthLoginManager;
 }
 
 const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
@@ -196,21 +204,174 @@ function getAuthStorage(context: Pick<HttpApiServerContext, "authStorage">): Aut
   return context.authStorage ?? AuthStorage.create();
 }
 
-async function authProviderInfo(context: Pick<HttpApiServerContext, "authStorage" | "registry">, provider: string) {
-  const status = getAuthStorage(context).getAuthStatus(provider);
+/**
+ * One OAuth login flow spans several HTTP requests (start, poll, submit,
+ * cancel), so it needs a stable AuthStorage instance and a single in-flight
+ * login() promise. Cache the manager on the context the first time it's asked
+ * for. Tests that inject an in-memory AuthStorage get a manager bound to it.
+ */
+function getOAuthLoginManager(context: HttpApiServerContext): OAuthLoginManager {
+  if (!context.oauthLoginManager) {
+    context.oauthLoginManager = new OAuthLoginManager(getAuthStorage(context));
+  }
+  return context.oauthLoginManager;
+}
+
+// Mirror of @earendil-works/pi-coding-agent's BUILT_IN_PROVIDER_DISPLAY_NAMES.
+// Re-declared here because the package doesn't export it from its root entry
+// and importing a dist subpath would be brittle across versions. Kept in sync
+// so /api/auth/providers shows the same friendly names as the Pi TUI.
+const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  anthropic: "Anthropic",
+  "amazon-bedrock": "Amazon Bedrock",
+  "azure-openai-responses": "Azure OpenAI Responses",
+  cerebras: "Cerebras",
+  "cloudflare-ai-gateway": "Cloudflare AI Gateway",
+  "cloudflare-workers-ai": "Cloudflare Workers AI",
+  deepseek: "DeepSeek",
+  fireworks: "Fireworks",
+  google: "Google Gemini",
+  "google-vertex": "Google Vertex AI",
+  groq: "Groq",
+  huggingface: "Hugging Face",
+  "kimi-coding": "Kimi For Coding",
+  mistral: "Mistral",
+  minimax: "MiniMax",
+  "minimax-cn": "MiniMax (China)",
+  moonshotai: "Moonshot AI",
+  "moonshotai-cn": "Moonshot AI (China)",
+  opencode: "OpenCode Zen",
+  "opencode-go": "OpenCode Go",
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+  together: "Together AI",
+  "vercel-ai-gateway": "Vercel AI Gateway",
+  xai: "xAI",
+  zai: "ZAI",
+  xiaomi: "Xiaomi MiMo",
+  "xiaomi-token-plan-cn": "Xiaomi MiMo Token Plan (China)",
+  "xiaomi-token-plan-ams": "Xiaomi MiMo Token Plan (Amsterdam)",
+  "xiaomi-token-plan-sgp": "Xiaomi MiMo Token Plan (Singapore)",
+};
+
+const BUILT_IN_MODEL_PROVIDERS: ReadonlySet<string> = new Set(getProviders());
+
+/**
+ * Mirror of the TUI's `isApiKeyLoginProvider`: a provider supports API-key
+ * login when it has a known display name, OR it's an unknown provider that
+ * isn't an OAuth-only provider. Built-in model providers without a display
+ * name (rare) are excluded so we don't offer key entry for providers that
+ * have no sensible API-key path.
+ */
+function isApiKeyLoginProvider(provider: string, oauthIds: ReadonlySet<string>): boolean {
+  if (BUILT_IN_PROVIDER_DISPLAY_NAMES[provider]) return true;
+  if (BUILT_IN_MODEL_PROVIDERS.has(provider)) return false;
+  return !oauthIds.has(provider);
+}
+
+function apiKeyDisplayName(provider: string): string {
+  return BUILT_IN_PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+}
+
+async function authProviderInfo(
+  context: Pick<HttpApiServerContext, "authStorage" | "registry">,
+  provider: string,
+  options: { readonly oauthLogin: boolean; readonly apiKeyLogin: boolean; readonly oauthName?: string; readonly usesCallbackServer?: boolean },
+) {
+  const storage = getAuthStorage(context);
+  const status = storage.getAuthStatus(provider);
+  const credential = storage.get(provider);
   return {
     provider,
     configured: status.configured,
+    name: apiKeyDisplayName(provider),
+    oauthLogin: options.oauthLogin,
+    apiKeyLogin: options.apiKeyLogin,
+    ...(options.oauthName ? { oauthName: options.oauthName } : {}),
+    ...(options.usesCallbackServer ? { usesCallbackServer: true } : {}),
+    ...(credential ? { credentialType: credential.type } : {}),
     ...(status.source ? { source: status.source } : {}),
     ...(status.label ? { label: status.label } : {}),
   };
 }
 
-async function listAuthProviders(context: Pick<HttpApiServerContext, "authStorage" | "registry">) {
+async function singleAuthProviderInfo(context: HttpApiServerContext, provider: string) {
+  const oauthProviders = getOAuthLoginManager(context).oauthProviders();
+  const oauthIds = new Set(oauthProviders.map((entry) => entry.id));
+  const oauth = oauthProviders.find((entry) => entry.id === provider);
+  return authProviderInfo(context, provider, {
+    oauthLogin: !!oauth,
+    apiKeyLogin: isApiKeyLoginProvider(provider, oauthIds),
+    ...(oauth ? { oauthName: oauth.name, usesCallbackServer: oauth.usesCallbackServer } : {}),
+  });
+}
+
+async function listAuthProviders(context: HttpApiServerContext) {
+  const oauthProviders = getOAuthLoginManager(context).oauthProviders();
+  const oauthById = new Map(oauthProviders.map((provider) => [provider.id, provider] as const));
+  const oauthIds = new Set(oauthProviders.map((provider) => provider.id));
   const providers = new Set<string>();
   for (const model of await context.registry.listModels()) providers.add(model.provider);
   for (const provider of getAuthStorage(context).list()) providers.add(provider);
-  return Promise.all([...providers].sort().map((provider) => authProviderInfo(context, provider)));
+  for (const provider of oauthProviders) providers.add(provider.id);
+  return Promise.all(
+    [...providers].sort().map((provider) => {
+      const oauth = oauthById.get(provider);
+      return authProviderInfo(context, provider, {
+        oauthLogin: !!oauth,
+        apiKeyLogin: isApiKeyLoginProvider(provider, oauthIds),
+        ...(oauth ? { oauthName: oauth.name, usesCallbackServer: oauth.usesCallbackServer } : {}),
+      });
+    }),
+  );
+}
+
+/**
+ * Routes under /api/auth/oauth/* that drive the interactive subscription
+ * login flow. Mirrors the Pi TUI's `/login` OAuth dialog:
+ *   POST   /api/auth/oauth/start          { provider }            -> flow snapshot
+ *   GET    /api/auth/oauth/:flowId?cursor=N                        -> flow snapshot
+ *   POST   /api/auth/oauth/:flowId/input  { requestId, value }    -> flow snapshot
+ *   POST   /api/auth/oauth/:flowId/cancel                          -> flow snapshot
+ */
+async function handleOAuthLoginRoute(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  context: HttpApiServerContext,
+  url: URL,
+): Promise<void> {
+  const manager = getOAuthLoginManager(context);
+  const rest = url.pathname.slice("/api/auth/oauth".length).replace(/^\//, "");
+  const [segment, action] = rest.split("/");
+  try {
+    if (req.method === "POST" && (segment === "start" || segment === "")) {
+      const body = await readJson(req) as { provider?: unknown };
+      if (typeof body.provider !== "string" || body.provider.trim().length === 0) {
+        return sendJson(res, 400, { error: "provider must be a non-empty string" });
+      }
+      return sendJson(res, 200, manager.start(body.provider.trim()));
+    }
+    if (!segment) return sendJson(res, 404, { error: "not found" });
+    if (req.method === "GET" && !action) {
+      const cursor = Number(url.searchParams.get("cursor") ?? 0);
+      return sendJson(res, 200, manager.poll(segment, Number.isFinite(cursor) ? cursor : 0));
+    }
+    if (req.method === "POST" && action === "input") {
+      const body = await readJson(req) as { requestId?: unknown; value?: unknown };
+      if (typeof body.requestId !== "string" || body.requestId.length === 0) {
+        return sendJson(res, 400, { error: "requestId must be a non-empty string" });
+      }
+      const value = typeof body.value === "string" ? body.value : "";
+      return sendJson(res, 200, manager.submit(segment, body.requestId, value));
+    }
+    if (req.method === "POST" && action === "cancel") {
+      return sendJson(res, 200, manager.cancel(segment));
+    }
+    return sendJson(res, 404, { error: "not found" });
+  } catch (error) {
+    if (error instanceof OAuthLoginError) return sendJson(res, 400, { error: error.message });
+    throw error;
+  }
 }
 
 /**
@@ -563,11 +724,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       return sendJson(res, 400, { error: "provider must be a non-empty string" });
     }
     if (typeof body.apiKey !== "string" || body.apiKey.trim().length === 0) {
-      return sendJson(res, 400, { error: "apiKey must be a non-empty string. Browser OAuth login is not available yet; use /login <provider> <api-key> or run /login in the Pi TUI." });
+      return sendJson(res, 400, { error: "apiKey must be a non-empty string. For subscription login use POST /api/auth/oauth/start instead." });
     }
     const provider = body.provider.trim();
     getAuthStorage(context).set(provider, { type: "api_key", key: body.apiKey.trim() });
-    return sendJson(res, 200, { provider: await authProviderInfo(context, provider) });
+    return sendJson(res, 200, { provider: await singleAuthProviderInfo(context, provider) });
+  }
+
+  if (url.pathname === "/api/auth/oauth" || url.pathname.startsWith("/api/auth/oauth/")) {
+    return handleOAuthLoginRoute(req, res, context, url);
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/logout") {
@@ -577,7 +742,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     }
     const provider = body.provider.trim();
     getAuthStorage(context).logout(provider);
-    return sendJson(res, 200, { provider: await authProviderInfo(context, provider) });
+    return sendJson(res, 200, { provider: await singleAuthProviderInfo(context, provider) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/extensions/settings") {

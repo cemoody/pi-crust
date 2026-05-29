@@ -1,5 +1,5 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
-import type { AppBrandingInfo, AppBrandingSettings, AuthMutationResponse, AuthProviderListResponse, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, GetMessagesOptions, ModelOption, NewSessionInput, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import type { AppBrandingInfo, AppBrandingSettings, AuthMutationResponse, AuthProviderListResponse, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, GetMessagesOptions, ModelOption, NewSessionInput, OAuthLoginSnapshot, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
 import { recordClientEvent, getTabSessionId } from "../utils/client-telemetry.js";
 import { createStreamEvents, selectRealtimeTransport, type StreamEvents } from "./session-streamer.js";
 import { createRealtimeConnection, type RealtimeConnection, type RealtimeTransport } from "./realtime-connection.js";
@@ -64,6 +64,22 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
 
   async logout(provider: string): Promise<AuthMutationResponse> {
     return request<AuthMutationResponse>("/api/auth/logout", { method: "POST", body: { provider } });
+  }
+
+  async startOAuthLogin(provider: string): Promise<OAuthLoginSnapshot> {
+    return request<OAuthLoginSnapshot>("/api/auth/oauth/start", { method: "POST", body: { provider } });
+  }
+
+  async pollOAuthLogin(flowId: string, cursor: number): Promise<OAuthLoginSnapshot> {
+    return request<OAuthLoginSnapshot>(`/api/auth/oauth/${encodeURIComponent(flowId)}?cursor=${cursor}`);
+  }
+
+  async submitOAuthLogin(flowId: string, requestId: string, value: string): Promise<OAuthLoginSnapshot> {
+    return request<OAuthLoginSnapshot>(`/api/auth/oauth/${encodeURIComponent(flowId)}/input`, { method: "POST", body: { requestId, value } });
+  }
+
+  async cancelOAuthLogin(flowId: string): Promise<OAuthLoginSnapshot> {
+    return request<OAuthLoginSnapshot>(`/api/auth/oauth/${encodeURIComponent(flowId)}/cancel`, { method: "POST", body: {} });
   }
 
   async installExtensionPackage(source: string): Promise<ExtensionReloadResponse> {

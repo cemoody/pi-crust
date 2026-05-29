@@ -31,6 +31,70 @@ describe("HTTP auth routes", () => {
     expect(JSON.stringify(response)).not.toContain("secret");
   });
 
+  it("classifies providers by login method and exposes OAuth subscription providers", async () => {
+    const { baseUrl } = await makeServer();
+
+    const response = await fetchJson<{ providers: Array<{ provider: string; oauthLogin?: boolean; apiKeyLogin?: boolean; name?: string; oauthName?: string }> }>(`${baseUrl}/api/auth/providers`);
+
+    // The model provider logs in with an API key, not a subscription.
+    expect(response.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "mock", apiKeyLogin: true, oauthLogin: false }),
+    ]));
+    // Anthropic supports BOTH a subscription and an API key, like the TUI.
+    expect(response.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "anthropic", oauthLogin: true, apiKeyLogin: true, oauthName: expect.any(String) }),
+    ]));
+  });
+
+  it("reports the stored credential type for configured providers", async () => {
+    const { baseUrl, authStorage } = await makeServer();
+    authStorage.set("mock", { type: "api_key", key: "sk-test" });
+
+    const response = await fetchJson<{ providers: Array<{ provider: string; credentialType?: string; configured?: boolean }> }>(`${baseUrl}/api/auth/providers`);
+    expect(response.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "mock", credentialType: "api_key", configured: true }),
+    ]));
+  });
+
+  it("runs an interactive OAuth login flow over HTTP", async () => {
+    const { baseUrl } = await makeServerWithFakeOAuth();
+
+    const started = await fetchJson<OAuthSnapshot>(`${baseUrl}/api/auth/oauth/start`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "fake-oauth" }),
+    });
+    expect(started.status).toBe("active");
+    const flowId = started.flowId;
+
+    // Poll until the prompt request shows up.
+    let prompt: { type: string; requestId?: string; url?: string } | undefined;
+    let cursor = 0;
+    for (let attempt = 0; attempt < 20 && !prompt; attempt += 1) {
+      const snapshot = await fetchJson<OAuthSnapshot>(`${baseUrl}/api/auth/oauth/${flowId}?cursor=${cursor}`);
+      cursor = snapshot.cursor;
+      expect(snapshot.events.some((event) => event.type === "auth" && event.url === "https://example.com/auth") || cursor > 0).toBe(true);
+      prompt = snapshot.events.find((event) => event.type === "prompt");
+      if (!prompt) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(prompt?.requestId).toBeTruthy();
+
+    await fetchJson<OAuthSnapshot>(`${baseUrl}/api/auth/oauth/${flowId}/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requestId: prompt!.requestId, value: "the-code" }),
+    });
+
+    let status = "active";
+    for (let attempt = 0; attempt < 20 && status === "active"; attempt += 1) {
+      const snapshot = await fetchJson<OAuthSnapshot>(`${baseUrl}/api/auth/oauth/${flowId}?cursor=${cursor}`);
+      cursor = snapshot.cursor;
+      status = snapshot.status;
+      if (status === "active") await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(status).toBe("done");
+  });
+
   it("stores an API key credential and then logs it out", async () => {
     const { baseUrl, authStorage } = await makeServer();
 
@@ -71,6 +135,40 @@ describe("HTTP auth routes", () => {
     });
   });
 });
+
+interface OAuthSnapshot {
+  flowId: string;
+  status: string;
+  cursor: number;
+  events: Array<{ type: string; requestId?: string; url?: string }>;
+}
+
+async function makeServerWithFakeOAuth(): Promise<{ readonly baseUrl: string }> {
+  const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "pi-auth-oauth-"));
+  tempRoots.push(tmpRoot);
+  const projectRoot = path.join(tmpRoot, "project");
+  const sessionRoot = path.join(tmpRoot, "sessions");
+  await fsp.mkdir(projectRoot, { recursive: true });
+  await fsp.mkdir(sessionRoot, { recursive: true });
+  const authStorage = {
+    getOAuthProviders: () => [{ id: "fake-oauth", name: "Fake OAuth", usesCallbackServer: false }],
+    getAuthStatus: () => ({ configured: false }),
+    get: () => undefined,
+    list: () => [],
+    login: async (_provider: string, callbacks: { onAuth: (info: { url: string }) => void; onPrompt: (prompt: { message: string }) => Promise<string> }) => {
+      callbacks.onAuth({ url: "https://example.com/auth" });
+      await callbacks.onPrompt({ message: "Paste the code" });
+    },
+  } as unknown as AuthStorage;
+  const adapter = new MockPiAdapter({ sessionRoot });
+  const registry = new SessionRegistry({
+    adapter,
+    pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
+  });
+  const server = createHttpApiServer({ registry, adapterKind: "test", projectRoot, sessionRoot, defaultCwd: projectRoot, authStorage });
+  servers.push(server);
+  return { baseUrl: await listen(server) };
+}
 
 async function makeServer(): Promise<{ readonly baseUrl: string; readonly authStorage: AuthStorage }> {
   const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "pi-auth-route-"));

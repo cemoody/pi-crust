@@ -1,0 +1,208 @@
+.login-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 22, 6, 0.32);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 110;
+}
+
+.login-dialog {
+  width: min(520px, 100%);
+  max-height: min(80vh, 720px);
+  background: var(--white-000);
+  border-radius: 10px;
+  box-shadow: var(--shadow-3);
+  border: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.login-dialog header {
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.login-dialog header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.login-dialog header button {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  background: var(--white-000);
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-secondary);
+}
+
+.login-dialog header button:hover { background: var(--gray-080); color: var(--black-900); }
+
+.login-dialog [role="alert"] {
+  margin: 12px 18px 0;
+  color: var(--red-600);
+  background: rgba(209, 74, 37, 0.08);
+  border: 1px solid rgba(209, 74, 37, 0.18);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12.5px;
+}
+
+.login-dialog-body {
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-dialog-muted {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.login-dialog-back {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 0;
+  cursor: pointer;
+}
+.login-dialog-back:hover { color: var(--black-900); }
+
+.login-dialog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-dialog-list li button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--hairline);
+  background: var(--white-000);
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+  height: auto;
+}
+
+.login-dialog-list li button:hover:not(:disabled) { background: var(--gray-080); }
+.login-dialog-list li button:disabled { color: var(--text-secondary); opacity: 0.6; cursor: not-allowed; }
+
+.login-dialog-list strong { font-weight: 500; font-size: 14px; }
+.login-dialog-list span { font-size: 12px; color: var(--text-secondary); }
+
+.login-dialog-search {
+  height: 32px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  outline: none;
+}
+.login-dialog-search:focus { border-color: var(--blue-accent); box-shadow: 0 0 0 3px var(--blue-focus); }
+
+.login-dialog-status { font-size: 12px; }
+.login-dialog-status-ok { color: var(--green-600, #2e7d32); }
+.login-dialog-status-warn { color: var(--gold-700, #b8860b); }
+.login-dialog-status-muted { color: var(--text-secondary); }
+
+.login-dialog-instructions {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--gold-700, #b8860b);
+}
+
+.login-dialog-empty { color: var(--text-secondary); font-size: 13px; padding: 8px 4px; }
+
+.login-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.login-dialog-field > span { color: var(--text-secondary); }
+
+.login-dialog-field input {
+  height: 34px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.login-dialog-field input:focus { border-color: var(--blue-accent); box-shadow: 0 0 0 3px var(--blue-focus); }
+
+.login-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.login-dialog-primary {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid var(--blue-accent);
+  background: var(--blue-accent);
+  color: var(--white-000);
+  font-size: 13px;
+  cursor: pointer;
+}
+.login-dialog-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.login-dialog-auth {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--gray-050, var(--gray-080));
+}
+
+.login-dialog-auth p { margin: 0; font-size: 13px; }
+
+.login-dialog-auth a {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--blue-accent);
+  word-break: break-all;
+}
+
+.login-dialog-copy {
+  align-self: flex-start;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  background: var(--white-000);
+  font-size: 12px;
+  cursor: pointer;
+}
+.login-dialog-copy:hover { background: var(--gray-080); }

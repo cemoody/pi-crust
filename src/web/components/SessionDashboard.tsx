@@ -29,6 +29,10 @@ function isTransientPromptTransportError(message: string): boolean {
 import { MessageTimeline, type TimelineMessage } from "./MessageTimeline.js";
 import { SessionContentErrorBoundary } from "./SessionContentErrorBoundary.js";
 import { ModelPicker } from "./ModelPicker.js";
+import { LoginDialog, type LoginDialogApi } from "./LoginDialog.js";
+import { LogoutDialog, type LogoutDialogApi } from "./LogoutDialog.js";
+
+const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING = "Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage.";
 import { PromptComposer, type ComposerAttachment } from "./PromptComposer.js";
 import { ShortcutHelp } from "./ShortcutHelp.js";
 import { ExtensionUiHost } from "./ExtensionUiHost.js";
@@ -155,6 +159,8 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   const [steeringBySession, setSteeringBySession] = useState<Record<string, string[]>>({});
   const [followUpBySession, setFollowUpBySession] = useState<Record<string, string[]>>({});
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [loginDialog, setLoginDialog] = useState<{ open: boolean; provider?: string }>({ open: false });
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const [extensions, setExtensions] = useState<ExtensionRegistryInfo>({ commands: [], activities: [], routes: [], diagnostics: [] });
   const [extensionSettings, setExtensionSettings] = useState<ExtensionSettingsResponse | null>(null);
   const [connectionStatusBySession, setConnectionStatusBySession] = useState<Record<string, string | undefined>>({});
@@ -980,39 +986,65 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
 
   async function loginFromSlash(argv: string): Promise<void> {
     if (!api.login) {
-      setNotice("This server does not support browser login. Run /login in the Pi TUI.");
+      setNotice("This server does not support login. Run /login in the Pi TUI.");
       return;
     }
     const [provider, ...keyParts] = argv.trim().split(/\s+/).filter(Boolean);
     const apiKey = keyParts.join(" ").trim();
-    if (!provider || !apiKey) {
-      setView("settings");
-      setNotice("Usage: /login <provider> <api-key>. OAuth browser login is not available yet; for subscription OAuth, run /login in the Pi TUI.");
+    // `/login <provider> <api-key>` stays a one-shot for muscle memory and
+    // scripting. Everything else opens the interactive dialog, which mirrors
+    // the TUI's auth-type -> provider -> (OAuth | API key) flow.
+    if (provider && apiKey) {
+      try {
+        const result = await api.login(provider, apiKey);
+        setNotice(`Saved API key for ${result.provider.name ?? result.provider.provider}.`);
+        if (api.getExtensionSettings) void refreshExtensionSettings();
+      } catch (caught) {
+        setNotice(errorMessage(caught));
+      }
       return;
     }
-    try {
-      const result = await api.login(provider, apiKey);
-      setNotice(`Saved credentials for ${result.provider.provider}.`);
-      if (api.getExtensionSettings) void refreshExtensionSettings();
-    } catch (caught) {
-      setNotice(errorMessage(caught));
+    const supportsOAuth = !!(api.startOAuthLogin && api.pollOAuthLogin && api.submitOAuthLogin && api.cancelOAuthLogin && api.listAuthProviders);
+    if (!supportsOAuth) {
+      setView("settings");
+      setNotice("Usage: /login <provider> <api-key>. This server does not support interactive login; run /login in the Pi TUI for subscription OAuth.");
+      return;
     }
+    setLoginDialog({ open: true, ...(provider ? { provider } : {}) });
   }
 
   async function logoutFromSlash(argv: string): Promise<void> {
     if (!api.logout) {
-      setNotice("This server does not support browser logout. Run /logout in the Pi TUI.");
+      setNotice("This server does not support logout. Run /logout in the Pi TUI.");
       return;
     }
     const provider = argv.trim().split(/\s+/)[0] ?? "";
+    // `/logout <provider>` stays a one-shot for scripting; bare `/logout`
+    // opens the interactive provider selector, mirroring the TUI.
     if (!provider) {
+      if (api.listAuthProviders) {
+        setLogoutDialogOpen(true);
+        return;
+      }
       setView("settings");
       setNotice("Usage: /logout <provider>.");
       return;
     }
     try {
-      const result = await api.logout(provider);
-      setNotice(`Logged out of ${result.provider.provider}.`);
+      // Capture the credential type before logout so we can phrase the result
+      // the same way the TUI does (subscription vs. stored API key).
+      let priorType: "oauth" | "api_key" | undefined;
+      let displayName = provider;
+      if (api.listAuthProviders) {
+        const before = (await api.listAuthProviders()).providers.find((entry) => entry.provider === provider);
+        priorType = before?.credentialType;
+        displayName = before?.name ?? provider;
+      }
+      await api.logout(provider);
+      const message = priorType === "api_key"
+        ? `Removed stored API key for ${displayName}. Environment variables and models.json config are unchanged.`
+        : `Logged out of ${displayName}.`;
+      setNotice(message);
       if (api.getExtensionSettings) void refreshExtensionSettings();
     } catch (caught) {
       setNotice(errorMessage(caught));
@@ -1464,6 +1496,31 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
 
       <ShortcutHelp {...(backendGitSha ? { backendInfo: { gitSha: backendGitSha } } : {})} />
 
+      {api.startOAuthLogin && api.pollOAuthLogin && api.submitOAuthLogin && api.cancelOAuthLogin && api.listAuthProviders && api.login ? (
+        <LoginDialog
+          open={loginDialog.open}
+          api={api as unknown as LoginDialogApi}
+          {...(loginDialog.provider ? { initialProvider: loginDialog.provider } : {})}
+          onClose={() => setLoginDialog({ open: false })}
+          onLoggedIn={(provider, authType, message) => {
+            // Mirror the TUI's one-time Anthropic subscription billing warning.
+            const warn = provider === "anthropic" && authType === "oauth";
+            setNotice(warn ? `${message} ${ANTHROPIC_SUBSCRIPTION_AUTH_WARNING}` : message);
+            if (api.getExtensionSettings) void refreshExtensionSettings();
+          }}
+        />
+      ) : null}
+      {api.listAuthProviders && api.logout ? (
+        <LogoutDialog
+          open={logoutDialogOpen}
+          api={api as unknown as LogoutDialogApi}
+          onClose={() => setLogoutDialogOpen(false)}
+          onLoggedOut={(_provider, message) => {
+            setNotice(message);
+            if (api.getExtensionSettings) void refreshExtensionSettings();
+          }}
+        />
+      ) : null}
       <ModelPicker
         open={modelPickerOpen}
         loadModels={async () => (api.listModels ? api.listModels() : [])}

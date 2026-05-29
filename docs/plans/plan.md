@@ -894,7 +894,12 @@ Use this as a final cross-check before calling the pi-crust feature-complete rel
 
 ## Built-in command parity
 
-- [ ] `/login` and `/logout` equivalents.
+- [x] `/login` and `/logout` equivalents, mirroring the TUI's login page feature-for-feature:
+  - `/login` opens the interactive dialog: auth-type selector (subscription vs API key) → searchable provider selector with per-provider status indicators (configured / other-type credential / env / runtime / models.json / unconfigured) → OAuth or API-key flow. Providers that support both (e.g. Anthropic) appear in both lists.
+  - OAuth dialog: shows + auto-opens the auth URL, instructions, progress, prompts (with `e.g.` hints), interactive selects, and the optional manual-code paste race for callback-server providers; GitHub Copilot shows a waiting message. Success reports "Logged in to <name>"; closing mid-flow cancels server-side.
+  - API-key dialog: empty-key error, "Saved API key for <name>"; Amazon Bedrock shows an AWS-credentials info panel instead of a key prompt. Anthropic subscription login surfaces the extra-usage billing warning.
+  - `/logout` opens a selector of stored-credential providers only, with subscription vs API-key result wording and an empty-state message. `/login <provider> [key]` / `/logout <provider>` stay one-shots.
+  - Server: `/api/auth/providers` classifies providers (`oauthLogin`/`apiKeyLogin`/`credentialType`); the OAuth flow is driven by `OAuthLoginManager` over `/api/auth/oauth/*`.
 - [ ] `/model` equivalent.
 - [ ] `/scoped-models` equivalent.
 - [ ] `/settings` equivalent.
