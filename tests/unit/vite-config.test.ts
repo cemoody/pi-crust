@@ -36,6 +36,7 @@ describe("vite.config", () => {
   });
   afterEach(() => {
     delete process.env.VITE_PI_CRUST_HMR;
+    delete process.env.VITE_PI_CRUST_PROXY_TARGET;
     vi.resetModules();
   });
 
@@ -57,6 +58,32 @@ describe("vite.config", () => {
     const value = await loadConfig();
     const proxy = (value as { server?: { proxy?: Record<string, unknown> } }).server?.proxy ?? {};
     expect(proxy["/api"]).toBeDefined();
+  });
+
+  it("proxies Socket.IO through the same Vite origin in dev", async () => {
+    const value = await loadConfig();
+    const proxy = (value as { server?: { proxy?: Record<string, unknown> } }).server?.proxy ?? {};
+
+    // Regression guard for pi-crust-dev's default same-origin mode:
+    // the browser connects to /socket.io/ on the Vite origin (:5173), not to
+    // the API port directly. If this proxy is missing, Socket.IO silently fails
+    // and the app drops into SSE fallback with a possible missed-event gap.
+    expect(proxy["/socket.io"]).toMatchObject({
+      target: "http://127.0.0.1:8787",
+      changeOrigin: true,
+      ws: true,
+    });
+  });
+
+  it("uses VITE_PI_CRUST_PROXY_TARGET for every dev proxy route", async () => {
+    process.env.VITE_PI_CRUST_PROXY_TARGET = "http://127.0.0.1:9999";
+    const value = await loadConfig();
+    const proxy = (value as { server?: { proxy?: Record<string, { target?: string }> } }).server?.proxy ?? {};
+
+    // Avoid split-brain dev configs where /api points at one API while
+    // /socket.io points at another or falls back to the default port.
+    expect(proxy["/api"]?.target).toBe("http://127.0.0.1:9999");
+    expect(proxy["/socket.io"]?.target).toBe("http://127.0.0.1:9999");
   });
 });
 

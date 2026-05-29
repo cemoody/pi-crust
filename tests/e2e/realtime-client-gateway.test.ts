@@ -36,6 +36,21 @@ async function socketIoTransport(baseUrl: string): Promise<RealtimeTransport> {
 }
 
 describe("client realtime connection ↔ real gateway", () => {
+  it("connects to the real gateway over polling as well as websocket", async () => {
+    const harness = await setup();
+    const { io } = await import("socket.io-client") as any;
+    const socket = io(harness.baseUrl, { path: "/socket.io/", transports: ["polling"], reconnection: false, timeout: 1_000 });
+    rawSockets.push(socket);
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timed out connecting to Socket.IO polling transport")), 1_500);
+      socket.once("connect", () => { clearTimeout(timer); resolve(); });
+      socket.once("connect_error", (error: unknown) => { clearTimeout(timer); reject(error); });
+    });
+
+    expect(socket.connected).toBe(true);
+  });
+
   it("multiplexes two live sessions over one real socket and routes events", async () => {
     const harness = await setup();
     const one = await harness.createSession({ id: "one" });

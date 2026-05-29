@@ -9,7 +9,7 @@
  *
  *   1. Both api (on PI_CRUST_API_PORT) and vite (on PI_CRUST_WEB_PORT)
  *      come up healthy.
- *   2. Vite's `/api/*` proxy reaches the api.
+ *   2. Vite's `/api/*` and `/socket.io/*` proxies reach the api.
  *   3. SIGTERM to the launcher tears down BOTH children atomically, and
  *      both ports are freed afterwards. (If this regresses, the next npx
  *      invocation would fail with EADDRINUSE.)
@@ -126,6 +126,41 @@ describe("bin/pi-crust-dev.mjs", () => {
     expect(proxiedRes.status).toBe(200);
     const proxied = await proxiedRes.json() as Record<string, unknown>;
     expect(proxied.ok).toBe(true);
+
+    // vite must also proxy Socket.IO. This is what the browser uses in the
+    // default pi-crust-dev same-origin setup when VITE_PI_CRUST_API_BASE is not
+    // set. A 404 HTML response here means Socket.IO can never connect through
+    // :5173 and the app will silently fall back to SSE.
+    const socketRes = await fetch(`http://127.0.0.1:${ports.web}/socket.io/?EIO=4&transport=polling`);
+    expect(socketRes.status).toBe(200);
+    expect(socketRes.headers.get("content-type") ?? "").toContain("text/plain");
+    expect(await socketRes.text()).toMatch(/^0\{/);
+
+    // And the full Socket.IO client must be able to connect through the web
+    // origin, including websocket upgrade. This is a direct guard against the
+    // app falling back to SSE in normal pi-crust-dev usage.
+    const { io } = await import("socket.io-client") as typeof import("socket.io-client");
+    const socket = io(`http://127.0.0.1:${ports.web}`, {
+      path: "/socket.io/",
+      transports: ["websocket"],
+      reconnection: false,
+      timeout: 1_500,
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Timed out connecting to Socket.IO through Vite")), 2_000);
+        socket.once("connect", () => { clearTimeout(timer); resolve(); });
+        socket.once("connect_error", (error: unknown) => { clearTimeout(timer); reject(error); });
+      });
+      expect(socket.connected).toBe(true);
+
+      const statsRes = await fetch(`http://127.0.0.1:${ports.web}/api/realtime/stats`);
+      expect(statsRes.status).toBe(200);
+      const stats = await statsRes.json() as { connections?: number };
+      expect(stats.connections).toBeGreaterThanOrEqual(1);
+    } finally {
+      socket.disconnect();
+    }
   }, 60_000);
 
   it("SIGTERM to the launcher tears down BOTH children and frees both ports", async () => {

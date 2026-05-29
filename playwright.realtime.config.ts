@@ -29,7 +29,7 @@ export default defineConfig({
       timeout: 20_000,
     },
     {
-      command: 'VITE_PI_CRUST_API_BASE=http://127.0.0.1:9789 VITE_PI_CRUST_REALTIME=socketio npm run dev -- --host 127.0.0.1 --port 5176',
+      command: 'VITE_PI_CRUST_API_BASE=http://127.0.0.1:9789 VITE_PI_CRUST_PROXY_TARGET=http://127.0.0.1:9789 VITE_PI_CRUST_REALTIME=socketio npm run dev -- --host 127.0.0.1 --port 5176',
       url: 'http://127.0.0.1:5176/',
       reuseExistingServer: false,
       timeout: 20_000,

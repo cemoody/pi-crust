@@ -51,6 +51,12 @@ export function createStreamEvents(options: CreateStreamEventsOptions): StreamEv
   interface ActiveSub { sessionId: string; onEvent: (event: unknown) => void; off: () => void; sse?: () => void; }
   const active = new Set<ActiveSub>();
 
+  const emitReconnectMarker = (sub: ActiveSub, reason: string) => {
+    try {
+      sub.onEvent({ type: "stream_reconnected", reason });
+    } catch { /* host listener must never break fallback */ }
+  };
+
   const switchAllToSse = (reason: string) => {
     if (fellBack) return;
     fellBack = true;
@@ -58,6 +64,7 @@ export function createStreamEvents(options: CreateStreamEventsOptions): StreamEv
     for (const sub of active) {
       try { sub.off(); } catch { /* ignore */ }
       sub.sse = options.sse(sub.sessionId, sub.onEvent);
+      emitReconnectMarker(sub, `socketio-fallback-${reason}`);
     }
     connection?.dispose();
     connection = null;
@@ -86,6 +93,7 @@ export function createStreamEvents(options: CreateStreamEventsOptions): StreamEv
         if (!sub.sse) {
           try { sub.off(); } catch { /* ignore */ }
           sub.sse = options.sse(sessionId, onEvent);
+          emitReconnectMarker(sub, "socketio-session-fallback-stream_unavailable");
         }
         return;
       }
