@@ -58,6 +58,16 @@ describe("HTTP dynamic Pi command routes", () => {
     expect(handle.runPiSlashCommand).toHaveBeenCalledWith("/litellm-refresh --force  now");
   });
 
+  it("returns an empty command list when a session adapter does not support dynamic Pi commands", async () => {
+    const { baseUrl, projectRoot } = await makeServer();
+    const created = await createSession(baseUrl, projectRoot);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(created.id)}/commands`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ commands: [] });
+  });
+
   it("rejects invalid generic slash command requests", async () => {
     const { baseUrl, projectRoot } = await makeServer();
     const created = await createSession(baseUrl, projectRoot);

@@ -286,11 +286,11 @@ describe("SessionRegistry", () => {
     expect(handle.runPiSlashCommand).toHaveBeenCalledWith("/litellm-refresh");
   });
 
-  it("rejects generic slash execution when adapter support is missing or text is not a slash command", async () => {
+  it("returns no dynamic commands and rejects generic slash execution when adapter support is missing", async () => {
     const { registry, projectA } = await makeRegistry();
     const created = await registry.createSession({ cwd: projectA });
 
-    await expect(registry.getCommands(created.id)).rejects.toThrow(/does not support dynamic Pi commands/i);
+    await expect(registry.getCommands(created.id)).resolves.toEqual([]);
     await expect(registry.runPiSlashCommand(created.id, "hello")).rejects.toThrow(/slash command/i);
     await expect(registry.runPiSlashCommand(created.id, "")).rejects.toThrow(/slash command/i);
     await expect(registry.runPiSlashCommand(created.id, "/litellm-refresh")).rejects.toThrow(/does not support generic Pi slash commands/i);

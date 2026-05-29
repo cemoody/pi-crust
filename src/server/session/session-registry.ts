@@ -168,7 +168,7 @@ export class SessionRegistry {
 
   async getCommands(sessionId: string) {
     const handle = this.getSession(sessionId).handle;
-    if (!handle.getCommands) throw new Error("Session adapter does not support dynamic Pi commands");
+    if (!handle.getCommands) return [];
     return sanitizePiDynamicCommands(await handle.getCommands());
   }
 
