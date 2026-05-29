@@ -260,3 +260,46 @@ jobs:
           path: test-results/
           if-no-files-found: ignore
 
+
+  # ─────────────────────────────────────────────────────────────────────────
+  playwright-realtime:
+    name: playwright (realtime leader-election)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: resolve playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: cache playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: install chromium + deps
+        run: npx playwright install --with-deps chromium
+
+      - name: playwright test (realtime config)
+        # Builds the web app with VITE_PI_CRUST_REALTIME=socketio so the
+        # cross-tab BroadcastChannel leader-election path is exercised
+        # end-to-end: N tabs must collapse to ONE server socket.
+        run: npx playwright test --config=playwright.realtime.config.ts --reporter=list
+
+      - name: upload realtime failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-realtime-failure-artifacts
+          path: test-results/
+          if-no-files-found: ignore

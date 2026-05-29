@@ -58,6 +58,8 @@
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "tsx": "^4.21.0",
     "typebox": "^1.1.24",
     "vega-embed": "^7.1.0",

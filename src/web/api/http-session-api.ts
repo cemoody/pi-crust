@@ -1,10 +1,17 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import type { AppBrandingInfo, AppBrandingSettings, AuthMutationResponse, AuthProviderListResponse, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, GetMessagesOptions, ModelOption, NewSessionInput, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
 import { recordClientEvent, getTabSessionId } from "../utils/client-telemetry.js";
+import { createStreamEvents, selectRealtimeTransport, type StreamEvents } from "./session-streamer.js";
+import { createRealtimeConnection, type RealtimeConnection, type RealtimeTransport } from "./realtime-connection.js";
+import { io as socketIoClient } from "socket.io-client";
 
 const API_BASE = import.meta.env.VITE_PI_CRUST_API_BASE ?? "";
 
+const lazyIo = () => socketIoClient;
+
 export class HttpSessionDashboardApi implements SessionDashboardApi {
+  /** Lazily-built streamer; selects SSE (default) or the Socket.IO gateway. */
+  private streamer?: StreamEvents;
   async request<T = unknown>(path: string, options: { readonly method?: string; readonly body?: unknown } = {}): Promise<T> {
     return request<T>(path, options);
   }
@@ -129,6 +136,49 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
   }
 
   streamEvents(sessionId: string, onEvent: (event: unknown) => void): () => void {
+    if (!this.streamer) {
+      this.streamer = createStreamEvents({
+        transport: selectRealtimeTransport(import.meta.env as unknown as Record<string, string | undefined>),
+        sse: (id, cb) => this.streamEventsViaSse(id, cb),
+        socketio: () => this.buildRealtimeConnection(),
+        onClientEvent: (event) => recordClientEvent(event),
+      });
+    }
+    return this.streamer(sessionId, onEvent);
+  }
+
+  /** Build the multiplexed Socket.IO connection (one per tab) used when the
+   *  VITE_PI_CRUST_REALTIME=socketio flag is set. Falls back to SSE on repeated
+   *  connect failures. */
+  private buildRealtimeConnection(): RealtimeConnection {
+    const transportFactory = (): RealtimeTransport => {
+      const socket = lazyIo()(API_BASE || undefined, { path: "/socket.io/", transports: ["websocket", "polling"], autoConnect: false });
+      return {
+        get connected() { return socket.connected; },
+        connect() { socket.connect(); },
+        disconnect() { socket.disconnect(); },
+        on: (event, handler) => { socket.on(event as never, handler as never); },
+        off: (event, handler) => { socket.off(event as never, handler as never); },
+        emit: (event, payload, ack) => { if (ack) socket.emit(event as never, payload as never, ack as never); else socket.emit(event as never, payload as never); },
+      };
+    };
+    const broadcast = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("pi-crust-realtime") : undefined;
+    const visibility = typeof document !== "undefined" ? {
+      isVisible: () => document.visibilityState === "visible",
+      subscribe: (cb: () => void) => { document.addEventListener("visibilitychange", cb); return () => document.removeEventListener("visibilitychange", cb); },
+    } : undefined;
+    return createRealtimeConnection({
+      transportFactory,
+      // May be "" before telemetry init; the connection self-assigns a unique
+      // id in that case (empty/duplicate ids break leader election).
+      tabId: getTabSessionId() || undefined,
+      broadcast,
+      visibility,
+      onClientEvent: (event) => recordClientEvent(event),
+    } as Parameters<typeof createRealtimeConnection>[0]);
+  }
+
+  private streamEventsViaSse(sessionId: string, onEvent: (event: unknown) => void): () => void {
     const openedAt = Date.now();
     // Pass the per-tab id so the server can evict an older SSE for the same
     // tab when this tab re-opens one (e.g. on rapid session-switching). Without

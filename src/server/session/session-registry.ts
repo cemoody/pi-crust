@@ -249,6 +249,18 @@ export class SessionRegistry {
     return this.subscribeWithSeq(sessionId, listener);
   }
 
+  /** Greatest seq delivered for a session (0 if nothing emitted yet). */
+  lastSeq(sessionId: string): number {
+    return this.getInternal(sessionId).lastSeq;
+  }
+
+  /** Number of live realtime subscribers for a session. Used by the realtime
+   *  gateway's leak tests and operator health snapshots. */
+  subscriberCount(sessionId: string): number {
+    const internal = this.sessions.get(sessionId);
+    return internal ? internal.subscribers.size : 0;
+  }
+
   /** Explicit session delete: RPC-shutdown the worker and forget. */
   async disposeSession(sessionId: string): Promise<void> {
     const internal = this.getInternal(sessionId);

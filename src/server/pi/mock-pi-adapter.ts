@@ -218,6 +218,15 @@ class MockPiSessionHandle implements PiSessionHandle {
   }
 
   async prompt(message: string, attachments: readonly PromptAttachment[] = []): Promise<void> {
+    // Test/load directive: `@@burst <intervalMs> <durationMs>` drives a
+    // sustained synthetic token stream (one text_delta every intervalMs for
+    // durationMs) without any LLM. Used by the multi-tab pressure test to
+    // prove concurrent, long-lived streaming + per-session isolation.
+    const burst = /^@@burst\s+(\d+)\s+(\d+)\s*$/.exec(message.trim());
+    if (burst) {
+      await this.runBurst(Number(burst[1]), Number(burst[2]));
+      return;
+    }
     this.status = "running";
     this.emit({ type: "agent_start" });
     const timestamp = Date.now();
@@ -252,6 +261,34 @@ class MockPiSessionHandle implements PiSessionHandle {
     await this.persist();
     this.status = "idle";
     this.emit({ type: "agent_end", messages: [userMessage, assistantMessage] });
+  }
+
+  private async runBurst(intervalMs: number, durationMs: number): Promise<void> {
+    this.status = "running";
+    this.lastActivity = Date.now();
+    this.emit({ type: "agent_start" });
+    const start = Date.now();
+    let ticks = 0;
+    while (Date.now() - start < durationMs) {
+      await new Promise((resolve) => setTimeout(resolve, Math.max(1, intervalMs)));
+      ticks += 1;
+      this.lastActivity = Date.now();
+      this.emit({
+        type: "message_update",
+        message: { role: "assistant", content: [] },
+        assistantMessageEvent: { type: "text_delta", delta: `tick-${ticks}` },
+      } as PiEvent);
+    }
+    const assistantMessage: SessionMessage = {
+      role: "assistant",
+      content: `burst complete: ${ticks} ticks over ${durationMs}ms`,
+      timestamp: Date.now(),
+    };
+    this.messages.push(assistantMessage);
+    this.lastActivity = Date.now();
+    await this.persist();
+    this.status = "idle";
+    this.emit({ type: "agent_end", messages: [assistantMessage] });
   }
 
   async abort(): Promise<void> {

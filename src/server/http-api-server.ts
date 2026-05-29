@@ -15,6 +15,7 @@ import type { PromptAttachment, SessionListItem, SessionMessage } from "./pi/typ
 import { PathPolicy, isPathWithinRoot } from "./security/path-policy.js";
 import { resolveGitSha, createLiveGitSha } from "./git-sha.js";
 import { SessionRegistry } from "./session/session-registry.js";
+import { attachRealtimeGateway } from "./protocol/realtime-gateway.js";
 import { WorkerRegistry } from "./session/worker-registry.js";
 import type { PrcExtensionHost } from "../extensions/registry.js";
 import { defaultPrcConfigDir } from "../extensions/bootstrap.js";
@@ -81,6 +82,8 @@ interface HttpApiServerContext extends HttpApiServerOptions {
    * from the page stalls indefinitely.
    */
   readonly activeSseByTab: Map<string, http.ServerResponse>;
+  /** Set after the realtime gateway is mounted; exposes live connection stats. */
+  realtimeGateway?: import("./protocol/realtime-gateway.js").RealtimeGateway;
 }
 
 const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
@@ -357,12 +360,22 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
     activeSseByTab: new Map(),
     ...(options.clientEventLogPath ? { clientEventLog: createClientEventLog(options.clientEventLogPath) } : {}),
   };
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     void handle(req, res, context).catch((error) => {
       if (error instanceof HttpBodyError) return sendJson(res, error.status, { error: error.message });
       return sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
     });
   });
+  // Mount the multiplexed Socket.IO realtime gateway on the same server. It
+  // claims only its own `/socket.io/` path + the WS upgrade for that path, so
+  // REST and the legacy SSE stream keep working untouched. Cold-session open
+  // parity is provided by reusing getOrOpenSession.
+  context.realtimeGateway = attachRealtimeGateway({
+    server,
+    registry: context.registry,
+    resolveSession: (sessionId) => getOrOpenSession(context, sessionId),
+  });
+  return server;
 }
 
 function createDefaultRegistry(adapterKind: string, sessionRoot: string, projectRoot: string): SessionRegistry {
@@ -478,6 +491,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && url.pathname === "/api/models") {
     return sendJson(res, 200, await context.registry.listModels());
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/realtime/stats") {
+    return sendJson(res, 200, context.realtimeGateway?.stats() ?? { connections: 0 });
   }
 
   if (req.method === "GET" && url.pathname === "/api/health") {
