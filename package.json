@@ -69,6 +69,7 @@
   "devDependencies": {
     "@cemoody/pi-crust-ext-artifacts": "^0.1.1",
     "@cemoody/pi-crust-ext-branching": "^0.1.1",
+    "@cemoody/pi-crust-ext-pr-story": "https://github.com/cemoody/pi-crust-ext-pr-story.git#18cf7c2170640db91ed8bd682850847b58bf9154",
     "@cemoody/pi-crust-ext-presentations": "^0.1.1",
     "@cemoody/pi-crust-ext-schedule": "^0.1.1",
     "@playwright/test": "^1.59.1",

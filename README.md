@@ -31,7 +31,7 @@
   <a href="https://pi.dev/"><img alt="Built for pi.dev" src="https://img.shields.io/badge/built%20for-pi.dev-7c3aed.svg"></a>
   <img alt="Mobile-first, desktop-friendly" src="https://img.shields.io/badge/mobile--first-%2B%20desktop--friendly-ff69b4.svg">
   <img alt="Self-modifying" src="https://img.shields.io/badge/self--modifying-live%20HMR-9c27b0.svg">
-  <img alt="4 official extensions" src="https://img.shields.io/badge/extensions-4%20official-2ea44f.svg">
+  <img alt="5 official extensions" src="https://img.shields.io/badge/extensions-5%20official-2ea44f.svg">
   <img alt="Node 22+" src="https://img.shields.io/badge/node-22%2B-3c873a.svg">
   <a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-yellow.svg"></a>
 </p>
@@ -44,7 +44,7 @@ Three things make it different from running `pi` in a terminal:
 
 - 📱 **Mobile-first, desktop-friendly.** One layout, no "mobile site" vs "desktop site" — runs the same on a phone over Tailscale and on a 32" monitor.
 - 🔁 **Self-modifying.** Edit pi-crust's own source while it's running; changes propagate to the server and every connected browser in ~1 s without killing your chat session.
-- 🧩 **Four bundled extensions.** Inline rich artifacts (`show_artifact`), slide decks (`show_presentation`), session fork/clone, cron-scheduled prompts — plus `spawn_prc_session` for parallel agent runs.
+- 🧩 **Five bundled extensions.** Inline rich artifacts (`show_artifact`), slide decks (`show_presentation`), PR Story review tours (`show_pr_story`), session fork/clone, cron-scheduled prompts — plus `spawn_prc_session` for parallel agent runs.
 
 ## 🚀 Quick start
 
@@ -98,12 +98,13 @@ The API server and the `pi` workers are separate processes. The API is the cheap
 
 ## 🧩 Official extensions
 
-The four official extensions are independent npm packages auto-discovered from `node_modules`. `npx pi-crust-full` pulls them all in; `npx pi-crust` runs lean with none. pi-crust also auto-loads [`@cemoody/pi-artifact`](https://github.com/cemoody/pi-artifact) when present.
+The five official extensions are independent npm packages auto-discovered from `node_modules`. `npx pi-crust-full` pulls them all in; `npx pi-crust` runs lean with none. pi-crust also auto-loads [`@cemoody/pi-artifact`](https://github.com/cemoody/pi-artifact) when present.
 
 | package | tools / features | what the agent can do |
 |---|---|---|
 | [`@cemoody/pi-crust-ext-artifacts`](https://github.com/cemoody/pi-crust-ext-artifacts) | `show_artifact` | Render `image`, `html` (sandboxed iframe), `vega-lite`, `markdown`, `json`, `table` inline in the conversation. |
 | [`@cemoody/pi-crust-ext-presentations`](https://github.com/cemoody/pi-crust-ext-presentations) | `show_presentation`, `list_presentation_templates` | Generate slide decks with brand template packs (e.g. `brainco`) — preview, present, download — from a tool call. |
+| [`@cemoody/pi-crust-ext-pr-story`](https://github.com/cemoody/pi-crust-ext-pr-story) | `show_pr_story` | Render PR code-review tours inline: narrative beside the relevant diff/code, with draft comments submitted back as one session turn. |
 | [`@cemoody/pi-crust-ext-branching`](https://github.com/cemoody/pi-crust-ext-branching) | `/fork`, `/clone` slash commands | Fork a session from any previous user message, or clone the whole conversation. |
 | [`@cemoody/pi-crust-ext-schedule`](https://github.com/cemoody/pi-crust-ext-schedule) | Cron UI + `/api/cron` endpoints | Schedule recurring prompts. **Run now** spawns and jumps into the live session. |
 | `@cemoody/pi-artifact` *(optional, auto-loaded)* | `display()` | Multi-MIME inline artifacts — point at a PNG / HTML / Plotly figure / Vega-Lite spec and it renders. |
@@ -127,6 +128,14 @@ await tools.spawn_prc_session({
 
 <p align="center">
   <img src="promo-screenshots/animations/showcase-tour.gif" alt="One session containing a markdown report, a live D3 sparkline, a seaborn figure, and an interactive signal-generator widget" width="720" />
+</p>
+
+### PR Story review tours
+
+`show_pr_story` turns a PR review into an inline walkthrough inside the conversation. The agent can present the PR one frame at a time, with narrative beside the relevant code, while reviewers draft line-level comments in the widget. Submitting those comments creates one batched user turn in the same LLM session instead of posting directly to GitHub.
+
+<p align="center">
+  <img src="docs/assets/pr-story-artifact-card.png" alt="PR Story rendered as an inline pi-crust tool artifact with code-review navigation" width="720" />
 </p>
 
 One session, four artifact kinds: a markdown pitch, a live D3 streaming sparkline, a seaborn statistical figure (violin + regression + KDE + correlation heatmap), and an interactive signal-generator widget — all rendered inline via `show_artifact`.
@@ -162,7 +171,7 @@ export default function activate(ctx) {
 }
 ```
 
-The four official extensions are the worked examples — each lives in its own repo: a static-file route ([`pi-crust-ext-artifacts`](https://github.com/cemoody/pi-crust-ext-artifacts)), slash commands ([`pi-crust-ext-branching`](https://github.com/cemoody/pi-crust-ext-branching)), template-pack discovery + dynamic API routes ([`pi-crust-ext-presentations`](https://github.com/cemoody/pi-crust-ext-presentations)), and an extension with its own pi-crust panel ([`pi-crust-ext-schedule`](https://github.com/cemoody/pi-crust-ext-schedule)).
+The five official extensions are the worked examples — each lives in its own repo: a static-file route ([`pi-crust-ext-artifacts`](https://github.com/cemoody/pi-crust-ext-artifacts)), slash commands ([`pi-crust-ext-branching`](https://github.com/cemoody/pi-crust-ext-branching)), template-pack discovery + dynamic API routes ([`pi-crust-ext-presentations`](https://github.com/cemoody/pi-crust-ext-presentations)), PR review artifact rendering ([`pi-crust-ext-pr-story`](https://github.com/cemoody/pi-crust-ext-pr-story)), and an extension with its own pi-crust panel ([`pi-crust-ext-schedule`](https://github.com/cemoody/pi-crust-ext-schedule)).
 
 ---
 
@@ -332,7 +341,7 @@ npm run build           # vite build of the UI bundle
 
 ## 📖 Further reading
 
-- Official extensions (each in its own repo): [`pi-crust-ext-artifacts`](https://github.com/cemoody/pi-crust-ext-artifacts), [`pi-crust-ext-branching`](https://github.com/cemoody/pi-crust-ext-branching), [`pi-crust-ext-presentations`](https://github.com/cemoody/pi-crust-ext-presentations), [`pi-crust-ext-schedule`](https://github.com/cemoody/pi-crust-ext-schedule)
+- Official extensions (each in its own repo): [`pi-crust-ext-artifacts`](https://github.com/cemoody/pi-crust-ext-artifacts), [`pi-crust-ext-branching`](https://github.com/cemoody/pi-crust-ext-branching), [`pi-crust-ext-presentations`](https://github.com/cemoody/pi-crust-ext-presentations), [`pi-crust-ext-pr-story`](https://github.com/cemoody/pi-crust-ext-pr-story), [`pi-crust-ext-schedule`](https://github.com/cemoody/pi-crust-ext-schedule)
 - [`docs/telemetry.md`](docs/telemetry.md) — client/server event log format
 - [`docs/plans/`](docs/plans/) — design notes & implementation plans (SSE hardening, extension framework, slash-command UI, presentations…)
 - [pi.dev coding agent docs](https://pi.dev/) — the upstream agent this wraps

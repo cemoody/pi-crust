@@ -82,6 +82,18 @@ describe("bundled pi-crust extension packages", () => {
     await expect(response.text()).resolves.toContain("Deck");
   });
 
+  it("loads the bundled PR Story extension", async () => {
+    const { baseUrl } = await startBundledServer(["pr-story"]);
+
+    const extensionsView = await fetchJson<{ routes: unknown[]; activities: Array<{ extensionId: string }>; diagnostics: unknown[] }>(`${baseUrl}/api/extensions`);
+    expect(extensionsView).toMatchObject({ diagnostics: [] });
+    expect(extensionsView.activities.find((a) => a.extensionId === "@cemoody/pi-crust-ext-pr-story")).toBeUndefined();
+    expect(extensionsView.routes).toEqual(expect.arrayContaining([
+      { extensionId: "@cemoody/pi-crust-ext-pr-story", method: "GET", path: "/api/sessions/:sessionId/pr-story/:storyId", mount: "api" },
+      { extensionId: "@cemoody/pi-crust-ext-pr-story", method: "POST", path: "/api/sessions/:sessionId/pr-story/:storyId/comments/submit", mount: "api" },
+    ]));
+  });
+
   it("serves fork and clone routes from the bundled branching extension", async () => {
     const { baseUrl, home } = await startBundledServer(["branching"]);
     const session = await fetchJson<{ id: string }>(`${baseUrl}/api/sessions`, {

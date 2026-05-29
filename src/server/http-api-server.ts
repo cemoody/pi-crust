@@ -2198,11 +2198,11 @@ async function tryServeStatic(rootDir: string, pathname: string, res: http.Serve
 }
 
 /**
- * Resolve the four official pi-crust extension packages from node_modules.
+ * Resolve the official pi-crust extension packages from node_modules.
  *
  * Each one is an independently published npm package (`@cemoody/pi-crust-ext-*`).
  * When `pi-crust` is installed alone (`npx pi-crust`) none of these are present
- * and pi-crust runs lean. When `pi-crust-full` is installed it pulls all four
+ * and pi-crust runs lean. When `pi-crust-full` is installed it pulls them all
  * in transitively, so they show up here and get auto-loaded as bundled
  * extensions — same UX as the old `extensions/` directory used to provide.
  *
@@ -2215,6 +2215,7 @@ function resolveOfficialExtensionPackages(): string[] {
     "@cemoody/pi-crust-ext-branching",
     "@cemoody/pi-crust-ext-artifacts",
     "@cemoody/pi-crust-ext-presentations",
+    "@cemoody/pi-crust-ext-pr-story",
   ];
   const require = createRequire(import.meta.url);
   const resolved: string[] = [];
