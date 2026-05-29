@@ -539,13 +539,13 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
   return server;
 }
 
-function createDefaultRegistry(adapterKind: string, sessionRoot: string, projectRoot: string): SessionRegistry {
+function createDefaultRegistry(adapterKind: string, sessionRoot: string, projectRoot: string, extraPiArgs: readonly string[] = []): SessionRegistry {
   const workerRegistry = new WorkerRegistry();
   return new SessionRegistry({
     adapter: adapterKind === "mock"
       ? new MockPiAdapter({ sessionRoot })
       : adapterKind === "pirpc"
-        ? new PiRpcAdapter({ sessionDir: sessionRoot, runtimeDir: workerRegistry.runtimeDir })
+        ? new PiRpcAdapter({ sessionDir: sessionRoot, runtimeDir: workerRegistry.runtimeDir, extraArgs: extraPiArgs })
         : new SdkPiAdapter({ sessionDir: sessionRoot }),
     pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
     workerRegistry,
@@ -562,7 +562,6 @@ async function startDefaultServer(): Promise<void> {
     : process.env.PI_CRUST_ADAPTER === "pi-sdk"
       ? "pi-sdk"
       : "pirpc";
-  const registry = createDefaultRegistry(adapterKind, sessionRoot, projectRoot);
   const serverDefaultCwd = isPathWithinRoot(process.cwd(), projectRoot) ? process.cwd() : projectRoot;
   const extensionRuntime = await createPrcExtensionRuntime({
     configDir: defaultPrcConfigDir(process.env),
@@ -570,11 +569,11 @@ async function startDefaultServer(): Promise<void> {
     env: process.env,
     dataDir: path.resolve(process.env.PI_CRUST_DATA_DIR ?? path.join(os.homedir(), ".pi-crust", "data")),
     bundledPackagePaths: resolveOfficialExtensionPackages(),
-    sessions: createExtensionSessionApi(registry),
   });
   if (extensionRuntime.current.diagnostics.length > 0) {
     for (const diagnostic of extensionRuntime.current.diagnostics) console.warn(`[extensions] ${diagnostic.extensionId}: ${diagnostic.message}`);
   }
+  const registry = createDefaultRegistry(adapterKind, sessionRoot, projectRoot, extensionRuntime.getPiExtensionArgs());
   const clientEventLogPath = process.env.PI_CRUST_CLIENT_EVENT_LOG
     ?? path.resolve(process.cwd(), "logs", "client-events.jsonl");
   // Live SHA: recomputed when .git/HEAD changes so /api/health doesn't lie
@@ -2182,11 +2181,11 @@ async function tryServeStatic(rootDir: string, pathname: string, res: http.Serve
 }
 
 /**
- * Resolve the four official pi-crust extension packages from node_modules.
+ * Resolve the official pi-crust extension packages from node_modules.
  *
  * Each one is an independently published npm package (`@cemoody/pi-crust-ext-*`).
  * When `pi-crust` is installed alone (`npx pi-crust`) none of these are present
- * and pi-crust runs lean. When `pi-crust-full` is installed it pulls all four
+ * and pi-crust runs lean. When `pi-crust-full` is installed it pulls them all
  * in transitively, so they show up here and get auto-loaded as bundled
  * extensions — same UX as the old `extensions/` directory used to provide.
  *
@@ -2199,6 +2198,7 @@ function resolveOfficialExtensionPackages(): string[] {
     "@cemoody/pi-crust-ext-branching",
     "@cemoody/pi-crust-ext-artifacts",
     "@cemoody/pi-crust-ext-presentations",
+    "@cemoody/pi-crust-ext-pr-story",
   ];
   const require = createRequire(import.meta.url);
   const resolved: string[] = [];

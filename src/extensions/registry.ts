@@ -15,6 +15,7 @@ import type {
   PrcSessionsApi,
   PrcSettingsSectionContribution,
 } from "./api.js";
+import type { ResolvedPrcExtensionContribution } from "./bootstrap.js";
 
 import { optional } from "../shared/util.js";
 export interface ExtensionDiagnostic {
@@ -204,6 +205,7 @@ export class PrcExtensionHost implements Disposable {
   readonly settings = new SettingsRegistry();
   readonly serverRoutes = new ServerRouteRegistry();
   readonly diagnostics: ExtensionDiagnostic[] = [];
+  contributionPlan?: readonly ResolvedPrcExtensionContribution[];
   private readonly disposables: Disposable[] = [];
   private readonly webAssets = new Map<string, ExtensionWebAsset>();
   private readonly options: PrcExtensionHostOptions;
