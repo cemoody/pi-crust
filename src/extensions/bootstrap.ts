@@ -38,6 +38,7 @@ export interface ResolvedPrcExtensionContribution {
   readonly enabled: boolean;
   readonly serverEntry?: string;
   readonly webEntry?: string;
+  readonly piExtensionEntries?: readonly string[];
 }
 
 export interface BootstrapPrcExtensionsResult {
@@ -71,6 +72,7 @@ export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOpti
   const globalPlan = await resolveExtensionContributionPlan(global.extensions, global.webExtensions, packageDiagnostics, disabledExtensionIds);
   const bundledPlan = await resolveExtensionContributionPlan(bundled.extensions, bundled.webExtensions, packageDiagnostics, disabledExtensionIds);
   const contributionPlan = [...explicitPlan, ...projectPlan, ...globalPlan, ...bundledPlan];
+  host.contributionPlan = contributionPlan;
   await registerPlannedWebAssets(host, contributionPlan);
   const extensionInputs = await loadPlannedServerInputs(contributionPlan, packageDiagnostics);
   const builtInInputs = (options.builtIns ?? [])
@@ -127,21 +129,29 @@ async function resolveExtensionContributionPlan(
   inferId: (filePath: string, entry: ResolvedExtensionEntry) => string | Promise<string> = defaultExtensionId,
 ): Promise<ResolvedPrcExtensionContribution[]> {
   const plan = new Map<string, ResolvedPrcExtensionContribution>();
-  const update = (id: string, packageSource: string, scope: ResolvedPrcExtensionContribution["scope"], patch: Partial<Pick<ResolvedPrcExtensionContribution, "serverEntry" | "webEntry">>) => {
+  const piExtensionEntriesByPackage = new Map<string, readonly string[]>();
+  const getPiExtensionEntries = async (packageSource: string): Promise<readonly string[]> => {
+    if (!piExtensionEntriesByPackage.has(packageSource)) {
+      piExtensionEntriesByPackage.set(packageSource, await readPackagePiExtensionEntries(packageSource));
+    }
+    return piExtensionEntriesByPackage.get(packageSource)!;
+  };
+  const update = async (id: string, packageSource: string, scope: ResolvedPrcExtensionContribution["scope"], patch: Partial<Pick<ResolvedPrcExtensionContribution, "serverEntry" | "webEntry">>) => {
     const key = `${scope}:${packageSource}:${id}`;
     const current = plan.get(key) ?? { id, packageSource, scope, enabled: !disabledExtensionIds.has(id) };
-    plan.set(key, { ...current, ...patch });
+    const piExtensionEntries = await getPiExtensionEntries(packageSource);
+    plan.set(key, { ...current, ...patch, ...(piExtensionEntries.length === 0 ? {} : { piExtensionEntries }) });
   };
   for (const entry of serverEntries) {
     try {
-      update(await inferId(entry.path, entry), entry.packageSource, entry.scope, { serverEntry: entry.path });
+      await update(await inferId(entry.path, entry), entry.packageSource, entry.scope, { serverEntry: entry.path });
     } catch (error) {
       diagnostics.push({ source: entry.path, level: "error", message: error instanceof Error ? error.message : String(error) });
     }
   }
   for (const entry of webEntries) {
     try {
-      update(await defaultWebExtensionId(entry), entry.packageSource, entry.scope, { webEntry: entry.path });
+      await update(await defaultWebExtensionId(entry), entry.packageSource, entry.scope, { webEntry: entry.path });
     } catch (error) {
       diagnostics.push({ source: entry.path, level: "error", message: error instanceof Error ? error.message : String(error) });
     }
@@ -166,6 +176,18 @@ async function registerPlannedWebAssets(host: PrcExtensionHost, plan: readonly R
   for (const contribution of plan) {
     if (contribution.enabled && contribution.webEntry) host.registerWebAsset(contribution.id, contribution.webEntry);
   }
+}
+
+async function readPackagePiExtensionEntries(packageSource: string): Promise<readonly string[]> {
+  try {
+    const manifest = JSON.parse(await fs.readFile(path.join(packageSource, "package.json"), "utf8")) as { pi?: unknown };
+    const pi = manifest.pi;
+    if (typeof pi === "object" && pi !== null && "extensions" in pi && Array.isArray((pi as { extensions?: unknown }).extensions)) {
+      const extensions = (pi as { extensions: unknown[] }).extensions;
+      return extensions.every((entry) => typeof entry === "string") ? extensions as string[] : [];
+    }
+  } catch { /* no pi-side extension entries */ }
+  return [];
 }
 
 async function defaultExtensionId(_filePath: string, entry: ResolvedExtensionEntry): Promise<string> {

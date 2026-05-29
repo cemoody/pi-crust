@@ -1,4 +1,5 @@
-import type { BootstrapPrcExtensionsOptions } from "./bootstrap.js";
+import path from "node:path";
+import type { BootstrapPrcExtensionsOptions, ResolvedPrcExtensionContribution } from "./bootstrap.js";
 import { bootstrapPrcExtensions } from "./bootstrap.js";
 import type { PrcExtensionHost } from "./registry.js";
 
@@ -30,6 +31,10 @@ export class PrcExtensionRuntime {
     return this.options.cwd;
   }
 
+  getPiExtensionArgs(): readonly string[] {
+    return piExtensionArgsFromPlan(this.activeHost.contributionPlan ?? []);
+  }
+
   async reload(): Promise<PrcExtensionReloadResult> {
     const boot = await bootstrapPrcExtensions(this.options);
     const diagnostics = boot.host.diagnostics;
@@ -50,4 +55,21 @@ export class PrcExtensionRuntime {
 
 export async function createPrcExtensionRuntime(options: BootstrapPrcExtensionsOptions): Promise<PrcExtensionRuntime> {
   return PrcExtensionRuntime.create(options);
+}
+
+function piExtensionArgsFromPlan(plan: readonly ResolvedPrcExtensionContribution[]): string[] {
+  const args: string[] = [];
+  const seen = new Set<string>();
+  for (const contribution of plan) {
+    if (!contribution.enabled) continue;
+    for (const extensionPath of contribution.piExtensionEntries ?? []) {
+      const absolute = path.isAbsolute(extensionPath)
+        ? extensionPath
+        : path.resolve(contribution.packageSource, extensionPath);
+      if (seen.has(absolute)) continue;
+      seen.add(absolute);
+      args.push("--extension", absolute);
+    }
+  }
+  return args;
 }
