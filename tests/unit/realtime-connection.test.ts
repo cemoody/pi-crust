@@ -126,6 +126,22 @@ describe("client realtime connection — reconnect / resume", () => {
     expect(seen).toContainEqual(expect.objectContaining({ type: "stream_reconnected" }));
   });
 
+  it("delivers a synthetic stream_reconnected marker even if reconnect happens before any data event", () => {
+    const transport = new FakeTransport();
+    const conn = track(createRealtimeConnection({ transportFactory: () => transport }));
+    const seen: unknown[] = [];
+    conn.subscribe("s1", (e) => seen.push(e));
+    transport.simulateConnect();
+
+    transport.simulateDisconnect();
+    transport.simulateConnect();
+
+    // Regression guard for startup/connectivity flaps: a connection can fail
+    // before the first message frame. The UI still needs a catch-up signal so
+    // it refetches persisted messages that may have arrived during the gap.
+    expect(seen).toContainEqual(expect.objectContaining({ type: "stream_reconnected" }));
+  });
+
   it("passes a server session_resync marker through to the listener", () => {
     const transport = new FakeTransport();
     const conn = track(createRealtimeConnection({ transportFactory: () => transport }));

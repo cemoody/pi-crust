@@ -10,9 +10,15 @@
  * Run: npx playwright test --config=playwright.realtime.config.ts
  */
 import { test, expect, type APIRequestContext, type BrowserContext, type ConsoleMessage, type Page } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
 
 const API_BASE = "http://127.0.0.1:9789";
 const SESSION_ID = "seeded-session-0001";
+const SOCKET_IO_CLIENT = path.resolve(
+  process.cwd(),
+  "node_modules/socket.io-client/dist/socket.io.min.js",
+);
 
 function isBenign(text: string, url: string): boolean {
   // Telemetry beacon 502 (dev-proxy default port) is unrelated noise.
@@ -54,6 +60,23 @@ async function background(page: Page): Promise<void> {
     document.dispatchEvent(new Event("visibilitychange"));
   });
 }
+
+test("normal Socket.IO startup does not fall back to SSE", async ({ browser }) => {
+  const context = await browser.newContext();
+  await freshBaseline(context);
+
+  const page = await context.newPage();
+  const errors = trackErrors(page);
+  await page.goto(`/?session=${SESSION_ID}`);
+
+  await expect.poll(() => connections(page.request), { timeout: 20_000 }).toBe(1);
+  const stats = await page.request.get(`${API_BASE}/api/client-event/stats?windowMs=60000`).then((r) => r.json());
+  expect(stats.byKind["realtime-fallback"] ?? 0).toBe(0);
+  expect(stats.byKind["realtime-fallback-active"] ?? 0).toBe(0);
+  expect(errors.pageErrors).toEqual([]);
+  expect(errors.consoleErrors).toEqual([]);
+  await context.close();
+});
 
 test("backgrounding the leader hands off to a visible follower; streaming continues", async ({ browser }) => {
   const context = await browser.newContext();
@@ -114,6 +137,35 @@ test("closing the leader tab promotes a follower (ungraceful loss)", async ({ br
   await context.close();
 });
 
+test("same-origin /socket.io endpoint connects from the browser", async ({ browser }) => {
+  const context = await browser.newContext();
+  await freshBaseline(context);
+  const page = await context.newPage();
+  const errors = trackErrors(page);
+  await page.goto(`/?session=${SESSION_ID}`);
+  await page.addScriptTag({ content: fs.readFileSync(SOCKET_IO_CLIENT, "utf8") });
+
+  const connected = await page.evaluate(async () => {
+    const io = (window as unknown as { io?: any }).io;
+    if (!io) throw new Error("socket.io-client failed to load");
+    const socket = io(window.location.origin, { path: "/socket.io/", transports: ["websocket"], reconnection: false, timeout: 1_500 });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("socket.io same-origin timeout")), 2_000);
+        socket.once("connect", () => { clearTimeout(timer); resolve(); });
+        socket.once("connect_error", (error: unknown) => { clearTimeout(timer); reject(error); });
+      });
+      return socket.connected;
+    } finally {
+      socket.disconnect();
+    }
+  });
+
+  expect(connected).toBe(true);
+  expect(errors.pageErrors).toEqual([]);
+  await context.close();
+});
+
 test("falls back to SSE and still streams when the Socket.IO gateway is unreachable", async ({ browser }) => {
   const context = await browser.newContext();
   await freshBaseline(context);
@@ -135,5 +187,52 @@ test("falls back to SSE and still streams when the Socket.IO gateway is unreacha
   await expect(page.getByText("Mock response to: hello-over-sse", { exact: true })).toBeVisible({ timeout: 15_000 });
 
   expect(errors.pageErrors, "no uncaught exceptions during fallback").toEqual([]);
+  await context.close();
+});
+
+// This is the production-ish race from the 2026-05-29 incident: Socket.IO is
+// unavailable at startup, the user sends a prompt before SSE fallback is fully
+// active, and the final answer is persisted server-side. The UI must eventually
+// catch up without a manual reload; fallback needs to behave like a reconnect
+// boundary and refetch /messages if live events may have been missed.
+test("fallback catches up when a prompt is sent before SSE is fully established", async ({ browser }) => {
+  const context = await browser.newContext();
+  await freshBaseline(context);
+  await context.route("**/socket.io/**", (route) => route.abort());
+
+  const page = await context.newPage();
+  const errors = trackErrors(page, /socket\.io/);
+  await page.goto(`/?session=${SESSION_ID}`);
+
+  await page.getByLabel("Prompt draft").fill("hello-during-fallback-race");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("Mock response to: hello-during-fallback-race", { exact: true }))
+    .toBeVisible({ timeout: 20_000 });
+
+  expect(errors.pageErrors, "no uncaught exceptions during fallback race").toEqual([]);
+  await context.close();
+});
+
+test("Socket.IO fallback recovers every visible tab on the same session", async ({ browser }) => {
+  const context = await browser.newContext();
+  await freshBaseline(context);
+  await context.route("**/socket.io/**", (route) => route.abort());
+
+  const first = await context.newPage();
+  const second = await context.newPage();
+  const firstErrors = trackErrors(first, /socket\.io/);
+  const secondErrors = trackErrors(second, /socket\.io/);
+  await first.goto(`/?session=${SESSION_ID}`);
+  await second.goto(`/?session=${SESSION_ID}`);
+
+  await first.getByLabel("Prompt draft").fill("hello-fallback-all-tabs");
+  await first.getByRole("button", { name: "Send" }).click();
+
+  await expect(first.getByText("Mock response to: hello-fallback-all-tabs", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(second.getByText("Mock response to: hello-fallback-all-tabs", { exact: true })).toBeVisible({ timeout: 20_000 });
+
+  expect(firstErrors.pageErrors).toEqual([]);
+  expect(secondErrors.pageErrors).toEqual([]);
   await context.close();
 });
