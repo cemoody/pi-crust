@@ -1,6 +1,7 @@
 import type http from "node:http";
 import { Server as SocketIoServer } from "socket.io";
 import type { PiEvent } from "../pi/types.js";
+import type { PtyManager } from "../pty/pty-manager.js";
 import type { RegisteredSession, SessionRegistry } from "../session/session-registry.js";
 
 /**
@@ -14,6 +15,9 @@ export interface AttachRealtimeGatewayOptions {
   readonly server: http.Server;
   readonly registry: SessionRegistry;
   readonly resolveSession: ResolveSession;
+  /** Optional PTY manager enabling the browser Terminal tab (`pty:*` events).
+   *  When omitted, `pty:open` is rejected via ack (terminal disabled). */
+  readonly ptyManager?: PtyManager;
   /** Socket.IO mount path. Defaults to the library default `/socket.io/`. */
   readonly path?: string;
 }
@@ -130,11 +134,81 @@ export function attachRealtimeGateway(options: AttachRealtimeGatewayOptions): Re
       ack?.({ ok: true });
     });
 
+    // --- PTY (browser Terminal tab) --------------------------------------
+    // Each socket owns the ptys it opened so a disconnect tears them down (no
+    // orphan shells). pty:data/pty:exit are forwarded only to the owning
+    // socket, keyed by ptyId — zero cross-talk between terminals.
+    const ownedPtys = new Set<string>();
+    const ptyManager = options.ptyManager;
+    let ptyDataUnsub: (() => void) | undefined;
+    let ptyExitUnsub: (() => void) | undefined;
+    if (ptyManager) {
+      ptyDataUnsub = ptyManager.onData((event) => {
+        if (ownedPtys.has(event.ptyId) && socket.connected) socket.emit("pty:data", event);
+      });
+      ptyExitUnsub = ptyManager.onExit((event) => {
+        if (!ownedPtys.has(event.ptyId)) return;
+        ownedPtys.delete(event.ptyId);
+        if (socket.connected) socket.emit("pty:exit", event);
+      });
+    }
+
+    socket.on("pty:open", async (payload: { sessionId?: unknown; cols?: unknown; rows?: unknown }, ack?: (response: unknown) => void) => {
+      if (!ptyManager) { ack?.({ ok: false, error: "terminal disabled: no pty manager" }); return; }
+      const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : undefined;
+      if (!sessionId) { ack?.({ ok: false, error: "pty:open requires a sessionId" }); return; }
+      let session: RegisteredSession;
+      try {
+        session = await resolveSession(sessionId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ack?.({ ok: false, error: /unknown session/i.test(message) ? `unknown session: ${sessionId}` : message });
+        return;
+      }
+      try {
+        const cols = typeof payload.cols === "number" ? payload.cols : 80;
+        const rows = typeof payload.rows === "number" ? payload.rows : 24;
+        const ptyId = ptyManager.open({ cwd: session.cwd, cols, rows });
+        ownedPtys.add(ptyId);
+        ack?.({ ok: true, ptyId });
+      } catch (error) {
+        ack?.({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    });
+
+    socket.on("pty:input", (payload: { ptyId?: unknown; data?: unknown }, ack?: (response: unknown) => void) => {
+      const ptyId = typeof payload?.ptyId === "string" ? payload.ptyId : undefined;
+      if (!ptyManager || !ptyId || !ownedPtys.has(ptyId)) { ack?.({ ok: false, error: "unknown pty" }); return; }
+      ptyManager.input(ptyId, typeof payload.data === "string" ? payload.data : "");
+      ack?.({ ok: true });
+    });
+
+    socket.on("pty:resize", (payload: { ptyId?: unknown; cols?: unknown; rows?: unknown }, ack?: (response: unknown) => void) => {
+      const ptyId = typeof payload?.ptyId === "string" ? payload.ptyId : undefined;
+      if (!ptyManager || !ptyId || !ownedPtys.has(ptyId)) { ack?.({ ok: false, error: "unknown pty" }); return; }
+      ptyManager.resize(ptyId, Number(payload.cols), Number(payload.rows));
+      ack?.({ ok: true });
+    });
+
+    socket.on("pty:close", (payload: { ptyId?: unknown }, ack?: (response: unknown) => void) => {
+      const ptyId = typeof payload?.ptyId === "string" ? payload.ptyId : undefined;
+      if (ptyManager && ptyId && ownedPtys.has(ptyId)) {
+        ownedPtys.delete(ptyId);
+        ptyManager.close(ptyId);
+      }
+      ack?.({ ok: true });
+    });
+
     socket.on("disconnect", () => {
       for (const unsubscribe of subscriptions.values()) {
         try { unsubscribe(); } catch { /* listener teardown must not throw */ }
       }
       subscriptions.clear();
+      // Kill any ptys this socket owned so a closed tab leaves no orphan shell.
+      if (ptyManager) for (const ptyId of [...ownedPtys]) { try { ptyManager.close(ptyId); } catch { /* ignore */ } }
+      ownedPtys.clear();
+      ptyDataUnsub?.();
+      ptyExitUnsub?.();
     });
   });
 

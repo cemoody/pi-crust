@@ -1,0 +1,57 @@
+.session-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border, #2a2a35);
+  margin-bottom: 8px;
+}
+.session-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted, #9aa0ac);
+  padding: 6px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.session-tab[aria-selected="true"] {
+  color: var(--text, #e8e8ee);
+  border-bottom-color: var(--accent, #7c3aed);
+}
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 360px;
+  height: 100%;
+}
+.terminal-host {
+  flex: 1 1 auto;
+  min-height: 320px;
+  background: #0b0b10;
+  border-radius: 8px;
+  padding: 8px;
+  overflow: auto;
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #d6d6e0;
+}
+.terminal-exit-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #2a1a1a;
+  color: #ffd0d0;
+  border-radius: 6px;
+  margin-top: 8px;
+}
+.terminal-exit-banner button {
+  appearance: none;
+  border: 1px solid #7c3aed;
+  background: #7c3aed;
+  color: white;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}

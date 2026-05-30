@@ -29,6 +29,7 @@ function isTransientPromptTransportError(message: string): boolean {
 }
 
 import { MessageTimeline, type TimelineMessage } from "./MessageTimeline.js";
+import { SessionTerminal } from "./SessionTerminal.js";
 import { SessionContentErrorBoundary } from "./SessionContentErrorBoundary.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { LoginDialog, type LoginDialogApi } from "./LoginDialog.js";
@@ -117,6 +118,8 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   }, [notify]);
   const [sessions, setSessions] = useState<readonly SessionCardData[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => readSessionFromUrl());
+  // Active workspace tab for the current session: chat timeline vs. terminal.
+  const [workspaceTab, setWorkspaceTab] = useState<"chat" | "terminal">("chat");
   const [defaultCwd, setDefaultCwd] = useState("");
   // Path-policy allowed project root, surfaced via /api/health. Used to
   // decide whether $HOME is a safe default for new sessions or whether
@@ -1429,6 +1432,31 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
             </header>
 
             <div className="active-session-workspace">
+              <div className="session-tabs" role="tablist" aria-label="Session views">
+                <button
+                  type="button"
+                  role="tab"
+                  className="session-tab"
+                  aria-selected={workspaceTab === "chat"}
+                  onClick={() => setWorkspaceTab("chat")}
+                >
+                  Chat
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  className="session-tab"
+                  aria-selected={workspaceTab === "terminal"}
+                  onClick={() => setWorkspaceTab("terminal")}
+                >
+                  Terminal
+                </button>
+              </div>
+              {workspaceTab === "terminal" ? (
+                <SessionContentErrorBoundary resetKey={`${activeSession.id}:terminal`}>
+                  <SessionTerminal sessionId={activeSession.id} active />
+                </SessionContentErrorBoundary>
+              ) : (
               <SessionContentErrorBoundary resetKey={activeSession.id}>
                 <MessageTimeline
                   messages={messagesBySession[activeSession.id] ?? []}
@@ -1440,6 +1468,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
                   onLoadOlder={() => { void loadOlderMessages(activeSession.id); }}
                 />
               </SessionContentErrorBoundary>
+              )}
               <ExtensionUiHost
                 requests={extensionUiBySession[activeSession.id] ?? []}
                 onValueResponse={(id, value) => respondToExtensionUi({ id, value })}

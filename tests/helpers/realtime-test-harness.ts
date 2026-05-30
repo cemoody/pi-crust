@@ -19,6 +19,7 @@ import type {
   Unsubscribe,
 } from "../../src/server/pi/types.js";
 import { PathPolicy } from "../../src/server/security/path-policy.js";
+import { PtyManager, type PtyChild, type PtySpawnOptions } from "../../src/server/pty/pty-manager.js";
 import { SessionRegistry } from "../../src/server/session/session-registry.js";
 
 export interface RealtimeHarness {
@@ -39,7 +40,32 @@ export interface RealtimeHarness {
   dispose(): Promise<void>;
 }
 
-export async function createRealtimeHarness(options: { readonly eventRingSize?: number } = {}): Promise<RealtimeHarness> {
+/** In-memory fake pty: deterministic, no real shell. Echoes a synthetic prompt
+ *  on open and a line of output per input so the e2e suite can assert ordered,
+ *  lossless streaming over the real socket without timing flakiness. */
+class FakePtyChild implements PtyChild {
+  readonly pid = Math.floor(Math.random() * 1e6);
+  private dataListeners = new Set<(d: string) => void>();
+  private exitListeners = new Set<(e: { exitCode: number; signal?: number }) => void>();
+  constructor(_o: PtySpawnOptions) { setTimeout(() => this.emit("$ "), 0); }
+  write(data: string): void {
+    const cmd = data.replace(/[\r\n]+$/, "");
+    if (/^burst (\d+)/.test(cmd)) {
+      const n = Number(/^burst (\d+)/.exec(cmd)![1]);
+      for (let i = 1; i <= n; i += 1) this.emit(`line ${i}\r\n`);
+      this.emit("$ ");
+      return;
+    }
+    this.emit(`${cmd}\r\n$ `);
+  }
+  resize(): void { /* no-op */ }
+  onData(l: (d: string) => void): () => void { this.dataListeners.add(l); return () => this.dataListeners.delete(l); }
+  onExit(l: (e: { exitCode: number; signal?: number }) => void): () => void { this.exitListeners.add(l); return () => this.exitListeners.delete(l); }
+  kill(): void { for (const l of [...this.exitListeners]) l({ exitCode: 0, signal: 0 }); }
+  private emit(d: string): void { for (const l of [...this.dataListeners]) l(d); }
+}
+
+export async function createRealtimeHarness(options: { readonly eventRingSize?: number; readonly withPty?: boolean } = {}): Promise<RealtimeHarness> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-crust-realtime-test-"));
   const projectRoot = path.join(root, "project");
   const sessionRoot = path.join(root, "sessions");
@@ -52,7 +78,8 @@ export async function createRealtimeHarness(options: { readonly eventRingSize?: 
     pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
     ...(options.eventRingSize === undefined ? {} : { eventRingSize: options.eventRingSize }),
   });
-  const server = createHttpApiServer({ registry, adapterKind: "test", projectRoot, sessionRoot, defaultCwd: projectRoot });
+  const ptyManager = options.withPty ? new PtyManager({ spawn: (o) => new FakePtyChild(o) }) : undefined;
+  const server = createHttpApiServer({ registry, adapterKind: "test", projectRoot, sessionRoot, defaultCwd: projectRoot, ...(ptyManager ? { ptyManager } : {}) });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Expected TCP server address");
@@ -86,6 +113,7 @@ export async function createRealtimeHarness(options: { readonly eventRingSize?: 
       await registry.disposeSession(id);
     },
     async dispose() {
+      ptyManager?.disposeAll();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       await registry.disposeAll().catch(() => undefined);
       await fs.rm(root, { recursive: true, force: true });
@@ -233,11 +261,17 @@ const REALTIME_TIMEOUT = Symbol("realtime-timeout");
 export interface RealtimeSocket {
   readonly socket: any;
   readonly queue: any[];
+  readonly ptyData: any[];
+  readonly ptyExits: any[];
   subscribe(sessionId: string, fromSeq: number | null): Promise<any>;
   unsubscribe(sessionId: string): Promise<any>;
   nextEvent(sessionId: string, predicate?: (event: any) => boolean): Promise<any>;
   noEvent(timeoutMs: number): Promise<boolean>;
   noEventWithSeq(seq: number, timeoutMs: number): Promise<boolean>;
+  ptyOpen(sessionId: string, cols?: number, rows?: number): Promise<any>;
+  ptyInput(ptyId: string, data: string): Promise<any>;
+  ptyText(ptyId: string): string;
+  waitPtyData(ptyId: string, predicate: (text: string) => boolean, timeoutMs?: number): Promise<void>;
   disconnect(): void;
   close(): void;
 }
@@ -246,7 +280,11 @@ export async function connectRealtimeSocket(baseUrl: string): Promise<RealtimeSo
   const { io } = await import("socket.io-client") as any;
   const socket = io(baseUrl, { path: "/socket.io/", transports: ["websocket"], reconnection: false, timeout: 1_000 });
   const queue: any[] = [];
+  const ptyData: any[] = [];
+  const ptyExits: any[] = [];
   socket.on("session:event", (event: any) => { queue.push(event); });
+  socket.on("pty:data", (event: any) => { ptyData.push(event); });
+  socket.on("pty:exit", (event: any) => { ptyExits.push(event); });
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Timed out connecting to Socket.IO realtime transport")), 1_500);
     socket.once("connect", () => { clearTimeout(timer); resolve(); });
@@ -261,8 +299,22 @@ export async function connectRealtimeSocket(baseUrl: string): Promise<RealtimeSo
   return {
     socket,
     queue,
+    ptyData,
+    ptyExits,
     subscribe: (sessionId, fromSeq) => emitWithAck("session:subscribe", { sessionId, fromSeq }),
     unsubscribe: (sessionId) => emitWithAck("session:unsubscribe", { sessionId }),
+    ptyOpen: (sessionId, cols = 80, rows = 24) => emitWithAck("pty:open", { sessionId, cols, rows }),
+    ptyInput: (ptyId, data) => emitWithAck("pty:input", { ptyId, data }),
+    ptyText(ptyId) { return ptyData.filter((e) => e.ptyId === ptyId).map((e) => e.data).join(""); },
+    async waitPtyData(ptyId, predicate, timeoutMs = 2_000) {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const text = ptyData.filter((e) => e.ptyId === ptyId).map((e) => e.data).join("");
+        if (predicate(text)) return;
+        if (Date.now() > deadline) throw new Error(`Timed out waiting for pty:data on ${ptyId}; got: ${JSON.stringify(text)}`);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    },
     async nextEvent(sessionId, predicate = () => true) {
       const deadline = Date.now() + 2_000;
       for (;;) {
