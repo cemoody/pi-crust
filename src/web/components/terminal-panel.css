@@ -55,3 +55,8 @@
   padding: 4px 10px;
   cursor: pointer;
 }
+.terminal-empty {
+  padding: 24px;
+  color: var(--muted, #9aa0a6);
+  font-size: 14px;
+}

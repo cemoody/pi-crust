@@ -77,7 +77,7 @@ import { applyRealtimeEvent, toTimelineMessage } from "./session-dashboard-realt
 // Re-export so the existing test import path keeps working without an update.
 export { imageFaviconDataUrl };
 
-type DashboardView = "sessions" | "settings" | `activity:${string}`;
+type DashboardView = "sessions" | "settings" | "terminal" | `activity:${string}`;
 
 export interface SessionDashboardProps {
   readonly api: SessionDashboardApi;
@@ -119,7 +119,6 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   const [sessions, setSessions] = useState<readonly SessionCardData[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => readSessionFromUrl());
   // Active workspace tab for the current session: chat timeline vs. terminal.
-  const [workspaceTab, setWorkspaceTab] = useState<"chat" | "terminal">("chat");
   const [defaultCwd, setDefaultCwd] = useState("");
   // Path-policy allowed project root, surfaced via /api/health. Used to
   // decide whether $HOME is a safe default for new sessions or whether
@@ -1266,6 +1265,21 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
               </a>
             );
           })}
+          <a
+            href="/"
+            className={`sidebar-menu-item ${view === "terminal" ? "active" : ""}`}
+            data-testid="sidebar-terminal"
+            aria-label="Terminal"
+            aria-pressed={view === "terminal"}
+            onClick={(event) => {
+              if (!isPlainLeftClick(event)) return;
+              event.preventDefault();
+              setView(view === "terminal" ? "sessions" : "terminal");
+            }}
+          >
+            <TerminalGlyph />
+            Terminal
+          </a>
           {api.getExtensionSettings || api.setExtensionEnabled || api.installExtensionPackage || api.reloadExtensions ? (
             <a
               href="/"
@@ -1348,8 +1362,33 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
         </ul>
       </aside>
 
-      <section className="active-session" aria-label={view === "settings" ? "Settings" : activeActivity ? activeActivity.title : "Active session"}>
-        {view === "settings" ? (
+      <section className="active-session" aria-label={view === "settings" ? "Settings" : view === "terminal" ? "Terminal" : activeActivity ? activeActivity.title : "Active session"}>
+        {view === "terminal" ? (
+          (() => {
+            const terminalSession = activeSession ?? sessions[0] ?? null;
+            return (
+              <>
+                <header>
+                  <div className="active-title">
+                    <h2>Terminal</h2>
+                    {terminalSession ? (
+                      <span className="active-subtitle"><code>{terminalSession.cwd ?? shortSessionId(terminalSession.id)}</code></span>
+                    ) : null}
+                  </div>
+                </header>
+                {terminalSession ? (
+                  <SessionContentErrorBoundary resetKey={`${terminalSession.id}:terminal`}>
+                    <SessionTerminal sessionId={terminalSession.id} active />
+                  </SessionContentErrorBoundary>
+                ) : (
+                  <div className="terminal-empty" role="status">
+                    Select or create a session to open a terminal in its working directory.
+                  </div>
+                )}
+              </>
+            );
+          })()
+        ) : view === "settings" ? (
           <ExtensionManagementPanel
             extensions={extensions}
             settings={extensionSettings}
@@ -1432,31 +1471,6 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
             </header>
 
             <div className="active-session-workspace">
-              <div className="session-tabs" role="tablist" aria-label="Session views">
-                <button
-                  type="button"
-                  role="tab"
-                  className="session-tab"
-                  aria-selected={workspaceTab === "chat"}
-                  onClick={() => setWorkspaceTab("chat")}
-                >
-                  Chat
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  className="session-tab"
-                  aria-selected={workspaceTab === "terminal"}
-                  onClick={() => setWorkspaceTab("terminal")}
-                >
-                  Terminal
-                </button>
-              </div>
-              {workspaceTab === "terminal" ? (
-                <SessionContentErrorBoundary resetKey={`${activeSession.id}:terminal`}>
-                  <SessionTerminal sessionId={activeSession.id} active />
-                </SessionContentErrorBoundary>
-              ) : (
               <SessionContentErrorBoundary resetKey={activeSession.id}>
                 <MessageTimeline
                   messages={messagesBySession[activeSession.id] ?? []}
@@ -1468,7 +1482,6 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
                   onLoadOlder={() => { void loadOlderMessages(activeSession.id); }}
                 />
               </SessionContentErrorBoundary>
-              )}
               <ExtensionUiHost
                 requests={extensionUiBySession[activeSession.id] ?? []}
                 onValueResponse={(id, value) => respondToExtensionUi({ id, value })}
@@ -1847,6 +1860,7 @@ function SidebarToggleGlyph() { return <Icon name="sidebar-toggle" />; }
 function NewSessionGlyph() { return <Icon name="new-session" />; }
 function CronGlyph() { return <Icon name="cron" />; }
 function ExtensionGlyph() { return <Icon name="extension" />; }
+function TerminalGlyph() { return <Icon name="terminal" />; }
 
 function LoadingEllipsisIcon() {
   return (
