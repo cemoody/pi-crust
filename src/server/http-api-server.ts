@@ -17,7 +17,7 @@ import { parseSlashCommand } from "../shared/slash-command-parser.js";
 import type { PromptAttachment, SessionListItem, SessionMessage } from "./pi/types.js";
 import { PathPolicy, isPathWithinRoot } from "./security/path-policy.js";
 import { resolveGitSha, createLiveGitSha } from "./git-sha.js";
-import { SessionRegistry } from "./session/session-registry.js";
+import { SessionRegistry, type RegisteredSession } from "./session/session-registry.js";
 import { attachRealtimeGateway } from "./protocol/realtime-gateway.js";
 import { PtyManager } from "./pty/pty-manager.js";
 import { createNodePtySpawner } from "./pty/node-pty-spawner.js";
@@ -60,6 +60,17 @@ export interface HttpApiServerOptions {
   readonly authStorage?: AuthStorage;
   /** Optional PTY manager enabling the browser Terminal tab. */
   readonly ptyManager?: import("./pty/pty-manager.js").PtyManager;
+  /**
+   * Optional callback invoked once the server context exists, handing back a
+   * session resolver that performs the SAME lazy cold-session open + alias
+   * resolution as the HTTP routes (getOrOpenSession). The extension host's
+   * `ctx.sessions.get(...)` is wired to this so extension-served routes (e.g.
+   * the artifacts route GET /api/sessions/:id/artifacts/:file) can resolve a
+   * session's cwd even when it is only listed (cold) and not yet loaded into
+   * the in-memory registry. Without it, `ctx.sessions.get` is undefined and
+   * the artifact route fails with 500 "session has no cwd".
+   */
+  readonly bindSessionResolver?: (resolve: (sessionId: string) => Promise<RegisteredSession>) => void;
 }
 
 interface HttpApiServerContext extends HttpApiServerOptions {
@@ -410,33 +421,62 @@ async function mutateExtensionSettings(
   return { settings, result };
 }
 
-function createExtensionSessionApi(registry: SessionRegistry) {
+/**
+ * Builds the PrcSessionsApi handed to the extension host.
+ *
+ * - `getRegistry` is a getter (not the registry itself) because the extension
+ *   host is constructed before the SessionRegistry exists; the returned API's
+ *   methods only invoke it at request time, by which point it's ready.
+ * - `resolveSession` lazily opens cold sessions (parity with getOrOpenSession),
+ *   so extension routes can resolve a session's cwd for sessions that were
+ *   merely listed and never loaded into the registry's in-memory map. Without
+ *   this, the artifacts route's `ctx.sessions.get(...)` could not find a cwd
+ *   and returned 500 "session has no cwd".
+ */
+export function createExtensionSessionApi(
+  getRegistry: () => SessionRegistry,
+  resolveSession: (sessionId: string) => Promise<RegisteredSession> = async (sessionId) => getRegistry().getSession(sessionId),
+) {
   return {
     create: async (input: { readonly cwd: string; readonly sessionName?: string }) => {
-      const session = await registry.createSession(input);
+      const session = await getRegistry().createSession(input);
       const state = await session.handle.getState();
       return toSessionCard(state);
     },
     prompt: async (sessionId: string, prompt: string) => {
-      await registry.prompt(sessionId, prompt);
+      await getRegistry().prompt(sessionId, prompt);
     },
     createAndPrompt: async (input: { readonly cwd: string; readonly sessionName?: string; readonly prompt: string }) => {
-      const session = await registry.createSession(input);
-      await registry.prompt(session.id, input.prompt);
+      const session = await getRegistry().createSession(input);
+      await getRegistry().prompt(session.id, input.prompt);
       const state = await session.handle.getState();
       return toSessionCard(state);
     },
     get: async (sessionId: string) => {
-      const state = await registry.getSession(sessionId).handle.getState();
+      const session = await resolveSession(sessionId);
+      const state = await session.handle.getState();
       return toSessionCard(state);
     },
-    getForkMessages: async (sessionId: string) => registry.getForkMessages(sessionId),
+    // Branching routes (fork-messages/fork/clone) resolve the source session
+    // through the SAME lazy cold-open resolver as get(), so they work for a
+    // session that was merely listed and never loaded into the in-memory map.
+    // resolveSession opens the cold handle (registering it as hot) before the
+    // registry method re-resolves it by id; an unknown id throws
+    // SessionNotFoundError (-> 404) instead of the registry's generic
+    // "Unknown session" Error (-> 500). Mirrors the artifacts cold-open fix
+    // from PR #205, which only covered get().
+    getForkMessages: async (sessionId: string) => {
+      const session = await resolveSession(sessionId);
+      return getRegistry().getForkMessages(session.id);
+    },
     forkSession: async (sessionId: string, entryId: string) => {
-      const { result, session } = await registry.forkSession(sessionId, entryId);
+      const source = await resolveSession(sessionId);
+      const { result, session } = await getRegistry().forkSession(source.id, entryId);
       return { ...result, session: toSessionCard(await session.handle.getState()) };
     },
     cloneSession: async (sessionId: string) => {
-      const { result, session } = await registry.cloneSession(sessionId);
+      const source = await resolveSession(sessionId);
+      const { result, session } = await getRegistry().cloneSession(source.id);
       return { ...result, session: toSessionCard(await session.handle.getState()) };
     },
   };
@@ -529,6 +569,11 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
   const server = http.createServer((req, res) => {
     void handle(req, res, context).catch((error) => {
       if (error instanceof HttpBodyError) return sendJson(res, error.status, { error: error.message });
+      // A genuinely unknown session must surface as 404, never a 500 stack
+      // leak. This covers extension-served routes (e.g. branching
+      // fork-messages/fork/clone) whose handlers call ctx.sessions.* and let
+      // the resolver's not-found error propagate.
+      if (error instanceof SessionNotFoundError) return sendJson(res, error.status, { error: error.message });
       return sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
     });
   });
@@ -542,6 +587,10 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
     resolveSession: (sessionId) => getOrOpenSession(context, sessionId),
     ...(options.ptyManager ? { ptyManager: options.ptyManager } : {}),
   });
+  // Hand the extension host a session resolver that lazy-opens cold sessions,
+  // matching the HTTP routes. Extension-served routes (e.g. the artifacts
+  // route) depend on this to resolve a session's cwd.
+  options.bindSessionResolver?.((sessionId) => getOrOpenSession(context, sessionId));
   return server;
 }
 
@@ -569,17 +618,38 @@ async function startDefaultServer(): Promise<void> {
       ? "pi-sdk"
       : "pirpc";
   const serverDefaultCwd = isPathWithinRoot(process.cwd(), projectRoot) ? process.cwd() : projectRoot;
+  // Deferred wiring: the extension host is created before the registry (it
+  // can't be — getPiExtensionArgs needs the host) and before the server
+  // context (which owns the lazy cold-open resolver). We hand the host a
+  // sessions API now, but its method bodies read these mutable holders at
+  // request time, by which point both are initialized:
+  //   - registryRef: the SessionRegistry (set right after the runtime).
+  //   - resolveSessionForExtensions: the cold-open resolver, set by
+  //     createHttpApiServer via bindSessionResolver. Until then we fall back
+  //     to a plain (loaded-only) registry lookup.
+  let registryRef: SessionRegistry | undefined;
+  let resolveSessionForExtensions: ((sessionId: string) => Promise<RegisteredSession>) | undefined;
+  const extensionSessionResolver = (sessionId: string): Promise<RegisteredSession> => {
+    if (resolveSessionForExtensions) return resolveSessionForExtensions(sessionId);
+    if (!registryRef) throw new Error("Session registry is not ready");
+    return Promise.resolve(registryRef.getSession(sessionId));
+  };
   const extensionRuntime = await createPrcExtensionRuntime({
     configDir: defaultPrcConfigDir(process.env),
     cwd: projectRoot,
     env: process.env,
     dataDir: path.resolve(process.env.PI_CRUST_DATA_DIR ?? path.join(os.homedir(), ".pi-crust", "data")),
     bundledPackagePaths: resolveOfficialExtensionPackages(),
+    sessions: createExtensionSessionApi(() => {
+      if (!registryRef) throw new Error("Session registry is not ready");
+      return registryRef;
+    }, extensionSessionResolver),
   });
   if (extensionRuntime.current.diagnostics.length > 0) {
     for (const diagnostic of extensionRuntime.current.diagnostics) console.warn(`[extensions] ${diagnostic.extensionId}: ${diagnostic.message}`);
   }
   const registry = createDefaultRegistry(adapterKind, sessionRoot, projectRoot, extensionRuntime.getPiExtensionArgs());
+  registryRef = registry;
   const clientEventLogPath = process.env.PI_CRUST_CLIENT_EVENT_LOG
     ?? path.resolve(process.cwd(), "logs", "client-events.jsonl");
   // Live SHA: recomputed when .git/HEAD changes so /api/health doesn't lie
@@ -605,6 +675,7 @@ async function startDefaultServer(): Promise<void> {
     gitSha,
     extensionRuntime,
     ...(ptyManager ? { ptyManager } : {}),
+    bindSessionResolver: (resolve) => { resolveSessionForExtensions = resolve; },
   });
   // Reattach any detached Pi RPC workers that survived a previous API process.
   try {
@@ -1272,7 +1343,7 @@ async function getOrOpenSession(context: HttpApiServerContext, sessionId: string
   const inflight = context.openingSessions.get(sessionId);
   if (inflight) return inflight;
   const sessionFile = context.coldSessionFiles.get(sessionId) ?? context.coldSessionFiles.get(resolvedId);
-  if (!sessionFile) throw new Error(`Unknown session: ${sessionId}`);
+  if (!sessionFile) throw new SessionNotFoundError(sessionId);
   const pending = context.registry.openSession(sessionFile)
     .then((session) => {
       context.coldSessionFiles.set(session.id, session.sessionFile);
@@ -2080,6 +2151,20 @@ function setCors(res: http.ServerResponse): void {
 class HttpBodyError extends Error {
   constructor(readonly status: 400 | 413, message: string) {
     super(message);
+  }
+}
+
+/**
+ * Thrown by getOrOpenSession when a sessionId resolves to neither a hot handle
+ * nor a known cold session file. Carries a 404 status so the top-level request
+ * handler (and extension-route dispatch) maps an unknown session to a clean
+ * not-found instead of a 500 stack leak. Generic errors still surface as 500.
+ */
+class SessionNotFoundError extends Error {
+  readonly status = 404 as const;
+  constructor(sessionId: string) {
+    super(`Unknown session: ${sessionId}`);
+    this.name = "SessionNotFoundError";
   }
 }
 

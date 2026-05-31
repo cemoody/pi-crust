@@ -74,6 +74,7 @@ const TMP_PREFIXES = [
   "fs-chaos-",
   "pi-test-",
   "pi-crust-test-",
+  "pi-crust-scenario-",
 ];
 
 // argv substrings that identify processes whose leak has historically caused

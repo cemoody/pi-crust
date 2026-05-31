@@ -1035,6 +1035,10 @@ async function findSessionCwd(sessionFile: string, _sessionDir?: string): Promis
 }
 
 function resolvePiCommand(): string {
+  // Test/orchestration seam: allow injecting a fake `pi` binary (see
+  // tests/helpers/live-stack.ts). Harmless in production where the var is unset.
+  const override = process.env.PI_CRUST_PI_COMMAND;
+  if (override && override.length > 0) return override;
   const local = path.resolve(process.cwd(), "node_modules", ".bin", process.platform === "win32" ? "pi.cmd" : "pi");
   return existsSync(local) ? local : "pi";
 }

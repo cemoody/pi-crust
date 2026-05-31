@@ -42,6 +42,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "vitest run tests/e2e",
+    "scenarios": "vitest run --config vitest.scenarios.config.ts",
     "e2e:browser": "playwright test",
     "check": "npm run typecheck && npm test && npm run e2e",
     "promo": "playwright test --config=playwright.promo.config.ts",

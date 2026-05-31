@@ -23,7 +23,12 @@ export default defineConfig({
       timeout: 20_000,
     },
     {
-      command: 'VITE_PI_CRUST_API_BASE=http://127.0.0.1:9787 npm run dev -- --host 127.0.0.1 --port 5174',
+      // VITE_PI_CRUST_API_BASE: absolute base for frontend fetch() calls.
+      // VITE_PI_CRUST_PROXY_TARGET: where vite proxies relative /api requests
+      // (e.g. artifact <img src="/api/sessions/:id/artifacts/:file">). Both must
+      // point at the test API (9787) so relative-URL asset loads don't fall
+      // through to the default 8787 target.
+      command: 'VITE_PI_CRUST_API_BASE=http://127.0.0.1:9787 VITE_PI_CRUST_PROXY_TARGET=http://127.0.0.1:9787 npm run dev -- --host 127.0.0.1 --port 5174',
       url: 'http://127.0.0.1:5174/',
       reuseExistingServer: false,
       timeout: 20_000,

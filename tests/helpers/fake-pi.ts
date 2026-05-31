@@ -62,6 +62,37 @@ export async function makeFakePi(opts: FakePiOptions = {}): Promise<FakePi> {
 let sessionId = ${JSON.stringify(sessionId)};
 let sessionFile = ${JSON.stringify(sessionFile)};
 const initialEvents = ${opts.initialEvents ?? 0};
+
+// Honor the adapter's --session/--session-dir so the reported sessionFile lives
+// in the server's real sessionRoot (makes cold-session discovery + reattach
+// behave like production). Falls back to the fixed path when not provided.
+import fs0 from "node:fs";
+import path0 from "node:path";
+{
+  const argv = process.argv.slice(2);
+  let sDir, sFile;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--session-dir") sDir = argv[i + 1];
+    else if (argv[i] === "--session") sFile = argv[i + 1];
+  }
+  if (sFile) {
+    sessionFile = sFile;
+    sessionId = path0.basename(sFile).replace(/\\.jsonl$/, "");
+  } else if (sDir) {
+    sessionFile = path0.join(sDir, sessionId + ".jsonl");
+  }
+  // Write a real session header line so fastListSessions() can discover this
+  // session (id + cwd + timestamp). An empty file is skipped by the scanner
+  // (size===0), which would make the session invisible to cold-session
+  // discovery after an API restart — exactly the path the scenarios exercise.
+  try {
+    fs0.mkdirSync(path0.dirname(sessionFile), { recursive: true });
+    if (!fs0.existsSync(sessionFile) || fs0.statSync(sessionFile).size === 0) {
+      const header = { type: "session", id: sessionId, cwd: process.cwd(), timestamp: new Date().toISOString() };
+      fs0.writeFileSync(sessionFile, JSON.stringify(header) + "\\n");
+    }
+  } catch {}
+}
 const crashAfterEvents = ${opts.crashAfterEvents ?? -1};
 const hangOnSigterm = ${!!opts.hangOnSigterm};
 const stderrBytes = ${opts.produceStderrBytes ?? 0};
@@ -98,8 +129,18 @@ process.stdin.on("data", (chunk) => {
     buf = buf.slice(i + 1);
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
+    if (!msg || typeof msg.type !== "string") continue;
+    // Respond to every RPC command the adapter issues so request() promises
+    // always resolve (an unanswered command would hang the adapter forever).
     if (msg.type === "get_state") {
       send({ type: "response", id: msg.id, command: "get_state", success: true, data: state() });
+    } else if (msg.type === "get_session_stats") {
+      send({ type: "response", id: msg.id, command: "get_session_stats", success: true, data: { tokens: { total: 0 } } });
+    } else if (msg.type === "get_messages") {
+      send({ type: "response", id: msg.id, command: "get_messages", success: true, data: { messages: [] } });
+    } else {
+      // Generic ack for everything else (prompt, abort, compact, rename, ...).
+      send({ type: "response", id: msg.id, command: msg.type, success: true });
     }
   }
 });

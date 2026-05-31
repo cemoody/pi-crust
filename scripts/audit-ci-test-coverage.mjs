@@ -28,6 +28,14 @@ const testFiles = walk(testsDir)
 
 const buckets = {
   vitest: [],
+  // The scenario tier (tests/scenarios/**) is a separate, heavyweight,
+  // out-of-process suite run via `npm run scenarios`. It intentionally
+  // contains RED specs for not-yet-built robustness features (TDD for infra),
+  // so it is NOT a PR merge gate yet and is deliberately excluded from the
+  // default vitest run (see vitest.config.ts exclude). It is tracked as its
+  // own bucket so these files are still accounted for (not "unowned"); no
+  // ci.yml job is required until the features land and the specs go green.
+  scenarios: [],
   playwrightDefault: [],
   playwrightPromo: [],
   playwrightNpx: [],
@@ -59,6 +67,12 @@ for (const file of testFiles) {
   if (file.startsWith("tests/playwright-production/")) {
     if (/\.spec\.tsx?$/.test(file)) buckets.playwrightProduction.push(file);
     else unowned.push(`${file} is under tests/playwright-production but is not a Playwright .spec.ts/.spec.tsx file`);
+    continue;
+  }
+
+  if (file.startsWith("tests/scenarios/")) {
+    if (/\.test\.tsx?$/.test(file)) buckets.scenarios.push(file);
+    else unowned.push(`${file} is under tests/scenarios but is not a .test.ts/.test.tsx file`);
     continue;
   }
 
@@ -102,6 +116,7 @@ console.log(`- playwright promo: ${buckets.playwrightPromo.length} spec file(s)`
 console.log(`- playwright npx extension: ${buckets.playwrightNpx.length} spec file(s)`);
 console.log(`- playwright production: ${buckets.playwrightProduction.length} spec file(s)`);
 console.log(`- playwright realtime: ${buckets.playwrightRealtime.length} spec file(s)`);
+console.log(`- scenarios (npm run scenarios, not a PR gate yet): ${buckets.scenarios.length} test file(s)`);
 console.log(`- total: ${testFiles.length} test file(s)`);
 
 function walk(dir) {

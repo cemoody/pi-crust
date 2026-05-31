@@ -60,6 +60,57 @@ describe("session dashboard realtime reducer invariants", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0]!.tool).toMatchObject({ id: "abc", name: "bash", args: { command: "pwd" }, status: "success", output: "done" });
   });
+
+  it("renders a custom artifact message delivered live via message_start/message_end", () => {
+    const harness = makeHarness();
+    const artifactMessage = {
+      role: "custom",
+      customType: "artifact",
+      content: "Displayed image/png (12 KB).",
+      timestamp: 1_700_000_111_000,
+      details: {
+        version: 1,
+        artifactGroupId: "grp-1",
+        caption: "my chart",
+        artifacts: [
+          { mime: "image/png", src: { kind: "url", url: "/artifacts/grp-1.png" }, alt: "my chart", bytes: 12000 },
+          { mime: "text/plain", text: "Image: chart.png" },
+        ],
+      },
+    };
+
+    // Live delivery emits paired start/end with identical content.
+    applyRealtimeEvent("s1", { type: "message_start", message: artifactMessage }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent("s1", { type: "message_end", message: artifactMessage }, harness.setMessagesBySession, harness.streamDraftIds);
+
+    const messages = harness.snapshot().s1 ?? [];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: "custom",
+      customType: "artifact",
+      artifact: { artifactGroupId: "grp-1", caption: "my chart", version: 1 },
+    });
+    expect(messages[0]!.artifact?.artifacts).toHaveLength(2);
+  });
+
+  it("still renders the artifact when only message_end is observed (mid-stream subscribe)", () => {
+    const harness = makeHarness();
+    const artifactMessage = {
+      role: "custom",
+      customType: "artifact",
+      content: "Displayed image/png.",
+      timestamp: 1_700_000_222_000,
+      details: {
+        version: 1,
+        artifactGroupId: "grp-2",
+        artifacts: [{ mime: "image/png", src: { kind: "url", url: "/artifacts/grp-2.png" }, alt: "x", bytes: 5 }],
+      },
+    };
+    applyRealtimeEvent("s1", { type: "message_end", message: artifactMessage }, harness.setMessagesBySession, harness.streamDraftIds);
+    const messages = harness.snapshot().s1 ?? [];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ role: "custom", customType: "artifact", artifact: { artifactGroupId: "grp-2" } });
+  });
 });
 
 function makeHarness(): {

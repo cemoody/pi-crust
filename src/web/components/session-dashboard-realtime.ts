@@ -51,6 +51,20 @@ export function applyRealtimeEvent(
       }));
       return true;
     }
+    // Custom messages (e.g. the @cemoody/pi-artifact `display` tool's
+    // `customType: "artifact"` payload) are delivered via sendCustomMessage,
+    // which emits paired message_start/message_end events with role
+    // "custom". The history loader handles these on reload, but the live
+    // path dropped them — so artifacts only appeared after a refresh. Render
+    // on message_start and let message_end dedupe (content is identical).
+    if (message.role === "custom") {
+      const customId = `custom-${message.customType ?? "msg"}-${message.timestamp ?? Date.now()}`;
+      setMessagesBySession((current) => ({
+        ...current,
+        [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], wireMessageToTimeline(customId, message, false)),
+      }));
+      return true;
+    }
   }
 
   if (event.type === "message_update" && isRecord(event.assistantMessageEvent)) {
@@ -77,6 +91,17 @@ export function applyRealtimeEvent(
         [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], wireMessageToTimeline(draftId, message, false)),
       }));
       return false;
+    }
+    // Reconcile the custom message rendered on message_start (same stable id
+    // ⇒ upsert is a no-op replace). Keeps the artifact even if message_start
+    // was missed (e.g. mid-stream subscribe).
+    if (message.role === "custom") {
+      const customId = `custom-${message.customType ?? "msg"}-${message.timestamp ?? Date.now()}`;
+      setMessagesBySession((current) => ({
+        ...current,
+        [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], wireMessageToTimeline(customId, message, false)),
+      }));
+      return true;
     }
   }
 
