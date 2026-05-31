@@ -429,7 +429,7 @@ async function mutateExtensionSettings(
  *   this, the artifacts route's `ctx.sessions.get(...)` could not find a cwd
  *   and returned 500 "session has no cwd".
  */
-function createExtensionSessionApi(
+export function createExtensionSessionApi(
   getRegistry: () => SessionRegistry,
   resolveSession: (sessionId: string) => Promise<RegisteredSession> = async (sessionId) => getRegistry().getSession(sessionId),
 ) {
@@ -453,13 +453,26 @@ function createExtensionSessionApi(
       const state = await session.handle.getState();
       return toSessionCard(state);
     },
-    getForkMessages: async (sessionId: string) => getRegistry().getForkMessages(sessionId),
+    // Branching routes (fork-messages/fork/clone) resolve the source session
+    // through the SAME lazy cold-open resolver as get(), so they work for a
+    // session that was merely listed and never loaded into the in-memory map.
+    // resolveSession opens the cold handle (registering it as hot) before the
+    // registry method re-resolves it by id; an unknown id throws
+    // SessionNotFoundError (-> 404) instead of the registry's generic
+    // "Unknown session" Error (-> 500). Mirrors the artifacts cold-open fix
+    // from PR #205, which only covered get().
+    getForkMessages: async (sessionId: string) => {
+      const session = await resolveSession(sessionId);
+      return getRegistry().getForkMessages(session.id);
+    },
     forkSession: async (sessionId: string, entryId: string) => {
-      const { result, session } = await getRegistry().forkSession(sessionId, entryId);
+      const source = await resolveSession(sessionId);
+      const { result, session } = await getRegistry().forkSession(source.id, entryId);
       return { ...result, session: toSessionCard(await session.handle.getState()) };
     },
     cloneSession: async (sessionId: string) => {
-      const { result, session } = await getRegistry().cloneSession(sessionId);
+      const source = await resolveSession(sessionId);
+      const { result, session } = await getRegistry().cloneSession(source.id);
       return { ...result, session: toSessionCard(await session.handle.getState()) };
     },
   };
@@ -552,6 +565,11 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
   const server = http.createServer((req, res) => {
     void handle(req, res, context).catch((error) => {
       if (error instanceof HttpBodyError) return sendJson(res, error.status, { error: error.message });
+      // A genuinely unknown session must surface as 404, never a 500 stack
+      // leak. This covers extension-served routes (e.g. branching
+      // fork-messages/fork/clone) whose handlers call ctx.sessions.* and let
+      // the resolver's not-found error propagate.
+      if (error instanceof SessionNotFoundError) return sendJson(res, error.status, { error: error.message });
       return sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
     });
   });
@@ -1309,7 +1327,7 @@ async function getOrOpenSession(context: HttpApiServerContext, sessionId: string
   const inflight = context.openingSessions.get(sessionId);
   if (inflight) return inflight;
   const sessionFile = context.coldSessionFiles.get(sessionId) ?? context.coldSessionFiles.get(resolvedId);
-  if (!sessionFile) throw new Error(`Unknown session: ${sessionId}`);
+  if (!sessionFile) throw new SessionNotFoundError(sessionId);
   const pending = context.registry.openSession(sessionFile)
     .then((session) => {
       context.coldSessionFiles.set(session.id, session.sessionFile);
@@ -2117,6 +2135,20 @@ function setCors(res: http.ServerResponse): void {
 class HttpBodyError extends Error {
   constructor(readonly status: 400 | 413, message: string) {
     super(message);
+  }
+}
+
+/**
+ * Thrown by getOrOpenSession when a sessionId resolves to neither a hot handle
+ * nor a known cold session file. Carries a 404 status so the top-level request
+ * handler (and extension-route dispatch) maps an unknown session to a clean
+ * not-found instead of a 500 stack leak. Generic errors still surface as 500.
+ */
+class SessionNotFoundError extends Error {
+  readonly status = 404 as const;
+  constructor(sessionId: string) {
+    super(`Unknown session: ${sessionId}`);
+    this.name = "SessionNotFoundError";
   }
 }
 

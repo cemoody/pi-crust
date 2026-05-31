@@ -9,10 +9,10 @@ const require_ = createRequire(import.meta.url);
 function resolveExtDir(slug: string): string {
   return path.dirname(require_.resolve(`@cemoody/pi-crust-ext-${slug}/package.json`));
 }
-import { createHttpApiServer } from "../../src/server/http-api-server.js";
+import { createHttpApiServer, createExtensionSessionApi } from "../../src/server/http-api-server.js";
 import { MockPiAdapter } from "../../src/server/pi/mock-pi-adapter.js";
 import { PathPolicy } from "../../src/server/security/path-policy.js";
-import { SessionRegistry } from "../../src/server/session/session-registry.js";
+import { SessionRegistry, type RegisteredSession } from "../../src/server/session/session-registry.js";
 import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
 import { writePrcSettings } from "../../src/extensions/packages.js";
 
@@ -639,6 +639,187 @@ describe("bundled pi-crust extension packages", () => {
     expect(statuses).toEqual([200, 409]);
     expect([a.status, b.status]).not.toContain(500);
   });
+
+  // Regression guard for the branching counterpart of the PR #205 cold-open fix.
+  // PR #205 wired the lazy cold-open resolver into the extension session API's
+  // get() so the artifacts route could read a cold session's cwd. The branching
+  // routes (fork-messages/fork/clone) instead call ctx.sessions.getForkMessages /
+  // forkSession / cloneSession, which resolved the source session DIRECTLY through
+  // the registry (getSession -> getInternal), bypassing the cold-open path.
+  //
+  // Broken-first proof (captured before the fix, against the EXACT production
+  // createExtensionSessionApi wiring used here): a cold session returned HTTP 500
+  // "Unknown session: <id>" for all three routes. After routing those methods
+  // through the same resolveSession() cold-open path, they return 200.
+  it("serves fork-messages / fork / clone for a COLD (listed-but-unopened) session", async () => {
+    const { baseUrl, registry, home } = await startProdWiredBranchingServer();
+
+    // Create via the HTTP route so the server records the session file in
+    // coldSessionFiles (the prod cold-resolution source), prompt it so it has a
+    // fork-able user message, then dispose the hot handle to make it cold.
+    const created = await fetchJson<{ id: string }>(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: home.projectRoot, sessionName: "cold-branch" }),
+    });
+    await registry.prompt(created.id, "make a plan");
+    await registry.disposeSession(created.id);
+    expect(registry.hasSession(created.id), "session must be cold (not in the in-memory map)").toBe(false);
+
+    const id = encodeURIComponent(created.id);
+
+    // fork-messages MUST NOT be 500 "Unknown session"; it must lazily open the
+    // cold session and return its fork-able user message.
+    const fmResp = await fetch(`${baseUrl}/api/sessions/${id}/fork-messages`);
+    expect(fmResp.status, `cold fork-messages failed: ${fmResp.status} ${await fmResp.clone().text()}`).toBe(200);
+    const messages = await fmResp.json() as Array<{ entryId: string; text: string }>;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.text).toBe("make a plan");
+
+    // fork against the cold session: re-dispose first so fork itself drives the
+    // cold-open (forkSession resolves the source via resolveSession).
+    await registry.disposeSession(created.id);
+    expect(registry.hasSession(created.id)).toBe(false);
+    const forkResp = await fetch(`${baseUrl}/api/sessions/${id}/fork`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entryId: messages[0]!.entryId }),
+    });
+    expect(forkResp.status, `cold fork failed: ${forkResp.status} ${await forkResp.clone().text()}`).toBe(200);
+    const forked = await forkResp.json() as { cancelled: boolean; text?: string; session: { id: string } };
+    expect(forked.cancelled).toBe(false);
+    expect(forked.text).toBe("make a plan");
+    expect(forked.session.id).not.toBe(created.id);
+
+    // clone against the cold session (drive the cold-open again).
+    await registry.disposeSession(created.id);
+    expect(registry.hasSession(created.id)).toBe(false);
+    const cloneResp = await fetch(`${baseUrl}/api/sessions/${id}/clone`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+    });
+    expect(cloneResp.status, `cold clone failed: ${cloneResp.status} ${await cloneResp.clone().text()}`).toBe(200);
+    const cloned = await cloneResp.json() as { cancelled: boolean; session: { id: string } };
+    expect(cloned.cancelled).toBe(false);
+    expect(cloned.session.id).not.toBe(created.id);
+  });
+
+  // Input validation + error mapping on the branching routes, against the
+  // production wiring. None of these may surface as a 500 stack leak.
+  //
+  // Broken-first proof: with the loaded-only resolver + no SessionNotFoundError
+  // mapping, the unknown-session cases returned 500 "Unknown session"; after the
+  // fix they map to 404. The missing/empty-entryId 400 and the non-matching
+  // entryId error are pinned here as the contract going forward.
+  it("maps fork/clone input + unknown-session errors to sane statuses (never 500)", async () => {
+    const { baseUrl, registry, home } = await startProdWiredBranchingServer();
+    const created = await fetchJson<{ id: string }>(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: home.projectRoot, sessionName: "validate" }),
+    });
+    await registry.prompt(created.id, "make a plan");
+    const id = encodeURIComponent(created.id);
+
+    // POST /fork with missing entryId -> 400 (extension validates before touching
+    // the session adapter).
+    const noEntry = await fetch(`${baseUrl}/api/sessions/${id}/fork`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+    });
+    expect(noEntry.status).toBe(400);
+    await expect(noEntry.json()).resolves.toMatchObject({ error: "entryId is required" });
+
+    // POST /fork with empty-string entryId -> 400.
+    const emptyEntry = await fetch(`${baseUrl}/api/sessions/${id}/fork`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ entryId: "" }),
+    });
+    expect(emptyEntry.status).toBe(400);
+    await expect(emptyEntry.json()).resolves.toMatchObject({ error: "entryId is required" });
+
+    // Unknown session on every branching route -> 404, never 500.
+    const unknownId = encodeURIComponent("no-such-session-id");
+    const unknownFm = await fetch(`${baseUrl}/api/sessions/${unknownId}/fork-messages`);
+    expect(unknownFm.status, `unknown fork-messages: ${unknownFm.status} ${await unknownFm.clone().text()}`).toBe(404);
+    const unknownFork = await fetch(`${baseUrl}/api/sessions/${unknownId}/fork`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ entryId: "x" }),
+    });
+    expect(unknownFork.status, `unknown fork: ${unknownFork.status} ${await unknownFork.clone().text()}`).toBe(404);
+    const unknownClone = await fetch(`${baseUrl}/api/sessions/${unknownId}/clone`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+    });
+    expect(unknownClone.status, `unknown clone: ${unknownClone.status} ${await unknownClone.clone().text()}`).toBe(404);
+
+    // POST /fork against a KNOWN session with a non-matching entryId: the route
+    // forwards the literal entryId to forkSession (it does NOT run
+    // resolveForkSelection), so the adapter rejects it. The contract pinned here
+    // is that this surfaces as a clean JSON error (no HTML stack leak) AND the
+    // server stays alive for the next request — not that the fork silently
+    // succeeds.
+    const badEntry = await fetch(`${baseUrl}/api/sessions/${id}/fork`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ entryId: "no-such-entry-id" }),
+    });
+    expect(badEntry.headers.get("content-type") ?? "").toContain("application/json");
+    await expect(badEntry.json()).resolves.toHaveProperty("error");
+    // Server must remain healthy after the rejected fork.
+    const stillAlive = await fetch(`${baseUrl}/api/sessions/${id}/fork-messages`);
+    expect(stillAlive.status).toBe(200);
+  });
+
+  // The /fork SLASH COMMAND drives resolveForkSelection(messages, argv) inside
+  // the extension. resolveForkSelection is not exported, so we exercise it via
+  // the command-invocation route (POST /commands/core.branching.fork with argv).
+  // This pins: 1-based index selection (and bounds), exact entryId match,
+  // case-insensitive substring match, and no-match -> a clean error (not a 500).
+  it("resolves fork selection by index, entryId, and case-insensitive substring via /fork", async () => {
+    const { baseUrl, registry, home } = await startProdWiredBranchingServer();
+    const created = await fetchJson<{ id: string }>(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: home.projectRoot, sessionName: "selection" }),
+    });
+    await registry.prompt(created.id, "First plan about CACHING");
+    await registry.prompt(created.id, "Second plan about retries");
+    const fmResp = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(created.id)}/fork-messages`);
+    const messages = await fmResp.json() as Array<{ entryId: string; text: string }>;
+    expect(messages).toHaveLength(2);
+
+    const cmdUrl = `${baseUrl}/api/extensions/${encodeURIComponent("@cemoody/pi-crust-ext-branching")}/commands/core.branching.fork`;
+    const runFork = async (argv: string) => {
+      const resp = await fetch(cmdUrl, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: created.id, argv }),
+      });
+      return { status: resp.status, json: await resp.json() as { result?: { prcAction?: string; draftText?: string }; error?: string } };
+    };
+
+    // 1-based index -> selects the FIRST message (its text is propagated as the
+    // editable draft on the forked session).
+    const byIndex = await runFork("1");
+    expect(byIndex.status).toBe(200);
+    expect(byIndex.json.result?.prcAction).toBe("openSession");
+    expect(byIndex.json.result?.draftText).toBe("First plan about CACHING");
+
+    // Exact entryId match -> selects the SECOND message.
+    const byEntryId = await runFork(messages[1]!.entryId);
+    expect(byEntryId.status).toBe(200);
+    expect(byEntryId.json.result?.draftText).toBe("Second plan about retries");
+
+    // Case-insensitive substring match -> selects the message containing it.
+    const bySubstring = await runFork("caching");
+    expect(bySubstring.status).toBe(200);
+    expect(bySubstring.json.result?.draftText).toBe("First plan about CACHING");
+
+    // Out-of-bounds index falls through to substring/entryId matching and finds
+    // nothing -> "No fork message matches". The command throws, which the host
+    // surfaces as a 500 for a thrown extension handler (generic error, distinct
+    // from the resolver's typed not-found). What matters is that the no-match
+    // message is preserved and not swallowed into a successful fork.
+    const noMatch = await runFork("99");
+    expect(noMatch.json.error ?? "").toContain("No fork message matches");
+
+    // Empty argv -> the command short-circuits to the fork DIALOG (does not fork).
+    const dialog = await runFork("   ");
+    expect(dialog.status).toBe(200);
+    expect(dialog.json.result?.prcAction).toBe("openForkDialog");
+  });
 });
 
 async function startBundledServer(
@@ -666,6 +847,49 @@ async function startBundledServer(
     sessionRoot: home.sessionRoot,
     defaultCwd: home.projectRoot,
     extensionRuntime: runtime,
+  });
+  servers.push(server);
+  return { baseUrl: await listen(server), home, registry };
+}
+
+// Boots a server wired EXACTLY like the production startDefaultServer path for
+// extension session resolution: the extension host receives the real
+// createExtensionSessionApi(getRegistry, resolveSession), and createHttpApiServer's
+// bindSessionResolver hands back the lazy cold-open resolver (getOrOpenSession).
+// Unlike startBundledServer's hand-rolled createLazyOpenSessionsApi, this exercises
+// the production extension session API verbatim — so the fork/clone cold-open and
+// the SessionNotFoundError -> 404 mapping are covered by the code that actually
+// ships. A session becomes "cold" the same way it does in prod: created via the
+// HTTP POST /api/sessions route (which records its file in coldSessionFiles), then
+// disposed so the only path back to it is getOrOpenSession.
+async function startProdWiredBranchingServer(): Promise<{ baseUrl: string; home: TempPrcHome; registry: SessionRegistry }> {
+  const home = await createTempPrcHome();
+  homes.push(home);
+  const registry = new SessionRegistry({
+    adapter: new MockPiAdapter({ sessionRoot: home.sessionRoot }),
+    pathPolicy: new PathPolicy({ allowedProjectRoots: [home.projectRoot], allowedSessionRoots: [home.sessionRoot] }),
+  });
+  // Deferred resolver holder, mirroring startDefaultServer: until
+  // createHttpApiServer binds the cold-open resolver we fall back to a plain
+  // (loaded-only) registry lookup.
+  let resolveSessionForExtensions: ((sessionId: string) => Promise<RegisteredSession>) | undefined;
+  const extensionSessionResolver = (sessionId: string): Promise<RegisteredSession> =>
+    resolveSessionForExtensions ? resolveSessionForExtensions(sessionId) : Promise.resolve(registry.getSession(sessionId));
+  const runtime = await createPrcExtensionRuntime({
+    configDir: home.configDir,
+    cwd: home.projectRoot,
+    dataDir: home.dataDir,
+    bundledPackagePaths: [resolveExtDir("branching")],
+    sessions: createExtensionSessionApi(() => registry, extensionSessionResolver),
+  });
+  const server = createHttpApiServer({
+    registry,
+    adapterKind: "test",
+    projectRoot: home.projectRoot,
+    sessionRoot: home.sessionRoot,
+    defaultCwd: home.projectRoot,
+    extensionRuntime: runtime,
+    bindSessionResolver: (resolve) => { resolveSessionForExtensions = resolve; },
   });
   servers.push(server);
   return { baseUrl: await listen(server), home, registry };
