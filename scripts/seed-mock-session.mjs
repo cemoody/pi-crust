@@ -676,3 +676,47 @@ await fs.writeFile(paginationSessionFile, JSON.stringify({
   lastActivity: Date.now(),
 }, null, 2) + '\n');
 console.log(`seeded ${paginationSessionFile}`);
+
+// Eighth seeded session: an artifact-image session used by
+// artifact-image-render.spec.ts to verify that the bundled artifacts
+// extension can SERVE the artifact bytes for a session that is only listed
+// (cold) and not necessarily loaded into the in-memory registry. The
+// custom_message carries an image artifact whose URL points at
+// /api/sessions/:id/artifacts/:file — the route that previously 500'd with
+// "session has no cwd" because the extension host had no sessions API bound.
+const artifactSessionId = 'seeded-session-artifact-image';
+const artifactSessionFile = path.join(root, '0000000000008_seeded-session-artifact-image.mock-session.json');
+const artifactFileName = 'seeded-artifact-image.png';
+const artifactUrl = `/api/sessions/${encodeURIComponent(artifactSessionId)}/artifacts/${artifactFileName}`;
+// A real 1x1-scaled PNG (solid blue 2x2) so naturalWidth > 0 once served.
+const artifactPngBase64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGNkYPj/n4EIwDiqEAAlMQMG0V8XdQAAAABJRU5ErkJggg==';
+const artifactDir = path.join(cwd, '.pi', 'artifacts', artifactSessionId);
+await fs.mkdir(artifactDir, { recursive: true });
+await fs.writeFile(path.join(artifactDir, artifactFileName), Buffer.from(artifactPngBase64, 'base64'));
+await fs.writeFile(artifactSessionFile, JSON.stringify({
+  id: artifactSessionId,
+  cwd,
+  sessionFile: artifactSessionFile,
+  sessionName: 'Artifact image session',
+  messages: [
+    { role: 'user', content: 'Please display the screenshot.', timestamp: 1700000008000 },
+    {
+      role: 'custom',
+      content: 'seeded-artifact-image.png (seeded-artifact-image.png, 0.1 KB)',
+      timestamp: 1700000008001,
+      customType: 'artifact',
+      details: {
+        version: 1,
+        artifactGroupId: 'seeded-image-demo',
+        caption: 'Seeded session artifact image',
+        artifacts: [
+          { mime: 'image/png', src: { kind: 'url', url: artifactUrl }, alt: 'seeded artifact demo image' },
+          { mime: 'text/plain', text: 'Seeded session artifact image' },
+        ],
+      },
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${artifactSessionFile}`);

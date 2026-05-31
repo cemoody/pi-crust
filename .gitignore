@@ -9,6 +9,7 @@ coverage/
 !.env.example
 *.log
 .pi/sessions/
+.pi/artifacts/
 .tmp/
 test-results/
 playwright-report/
