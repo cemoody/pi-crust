@@ -25,6 +25,7 @@ export type IconName =
   | "sidebar-toggle"
   | "new-session"
   | "cron"
+  | "terminal"
   | "extension";
 
 interface IconSpec {
@@ -145,6 +146,14 @@ const ICONS: Record<IconName, IconSpec> = {
       <path d="M13.5 6.5v3" />
       <rect x="4.5" y="4.5" width="7" height="7" rx="1.5" />
       <path d="M7 7h2v2H7z" />
+    </>,
+  },
+  terminal: {
+    width: 14, height: 14,
+    body: <>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M4.5 6.5 6.5 8l-2 1.5" />
+      <path d="M8 9.5h3" />
     </>,
   },
 };

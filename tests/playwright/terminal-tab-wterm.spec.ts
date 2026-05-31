@@ -1,6 +1,6 @@
 /**
- * Headline E2E: open the Terminal tab → wterm reveals a real bash shell →
- * a typed command creates a file on disk → assert the file exists.
+ * Headline E2E: open the Terminal from the sidebar → wterm reveals a real bash
+ * shell → a typed command creates a file on disk → assert the file exists.
  * Spec: docs/terminal-wterm-tdd-plan.md contract items 26–30.
  *
  * Runs against the real server (PI_CRUST_USE_MOCK=1 for the LLM adapter; the
@@ -17,11 +17,15 @@ const SENTINEL = `pi-crust-e2e-${RUN_ID}`;
 
 async function openTerminal(page: import("@playwright/test").Page) {
   await page.goto("/");
+  // Pick the seeded session so the terminal opens in its (repo-root) cwd, then
+  // open the Terminal from the sidebar (above Settings) — not an in-session tab.
   await page.getByRole("link", { name: /^Seeded session\b/ }).click();
-  await page.getByRole("tab", { name: "Terminal" }).click();
+  // Session rows show a cwd path that contains "terminal", so target the
+  // sidebar menu item by its stable test id rather than accessible name.
+  await page.getByTestId("sidebar-terminal").click();
 }
 
-test("Terminal tab reveals wterm and a typed bash command creates a real file", async ({ page }) => {
+test("Terminal (sidebar) reveals wterm and a typed bash command creates a real file", async ({ page }) => {
   test.setTimeout(60_000);
   await openTerminal(page);
 
@@ -38,10 +42,14 @@ test("Terminal tab reveals wterm and a typed bash command creates a real file", 
   const probeAbs = path.join(cwd, PROBE_REL);
   await fs.mkdir(path.dirname(probeAbs), { recursive: true }).catch(() => {});
 
+  // 28: the terminal renders to the DOM (not a canvas), so typed input is real,
+  // selectable text. Prove it with a short marker that won't line-wrap, then run
+  // the (longer) file-creating command whose authoritative proof is the file.
+  await page.keyboard.type("echo wterm-dom-echo");
+  await expect(host).toContainText("wterm-dom-echo", { timeout: 10_000 });
+  await page.keyboard.press("Enter");
+
   await page.keyboard.type(`mkdir -p .tmp && printf '%s' "${SENTINEL}" > "${PROBE_REL}"`);
-  // 28: the typed command is rendered as real, selectable DOM text (wterm's
-  // DOM renderer — not a canvas), so we can assert on it directly.
-  await expect(host).toContainText(SENTINEL, { timeout: 10_000 });
   await page.keyboard.press("Enter");
 
   // 27: the bash side effect is real — poll the file on disk.
@@ -52,7 +60,7 @@ test("Terminal tab reveals wterm and a typed bash command creates a real file", 
   await fs.rm(probeAbs, { force: true });
 });
 
-test("Terminal tab mounts without console or page errors", async ({ page }) => {
+test("Terminal (sidebar) mounts without console or page errors", async ({ page }) => {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
   page.on("console", (m) => {
