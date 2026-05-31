@@ -1,11 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Dedicated config for artifact-image-render.spec.ts so it can run alongside
+// Dedicated config for the artifact rendering specs so they can run alongside
 // other dev servers (uses free ports 9911/5311 instead of the default
 // 9787/5174). Boots the mock API + vite with the bundled artifacts extension.
+// Matches every artifact-*.spec.ts so the static, live, and multi-artifact
+// suites can all be run locally with one command.
 export default defineConfig({
   testDir: "./tests/playwright",
-  testMatch: /artifact-image-render\.spec\.ts$/,
+  testMatch: /artifact-[a-z-]+\.spec\.ts$/,
   timeout: 60_000,
   fullyParallel: false,
   reporter: "list",

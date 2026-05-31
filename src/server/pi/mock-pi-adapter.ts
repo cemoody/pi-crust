@@ -227,6 +227,18 @@ class MockPiSessionHandle implements PiSessionHandle {
       await this.runBurst(Number(burst[1]), Number(burst[2]));
       return;
     }
+    // Test directive: `@@artifact` emits a LIVE image artifact exactly the way
+    // the @cemoody/pi-artifact `display(...)` tool does in production: it writes
+    // a real PNG under <cwd>/.pi/artifacts/<sessionId>/ and emits a paired
+    // message_start/message_end carrying a `role: "custom"`, `customType:
+    // "artifact"` WireMessage whose image src is the extension-served URL
+    // /api/sessions/:id/artifacts/:file. Used by artifact-live-render.spec.ts to
+    // prove the artifact renders AND its bytes load without a page reload
+    // (the PR #204 realtime-reducer + PR #205 byte-serving paths combined).
+    if (message.trim() === "@@artifact") {
+      await this.runArtifact();
+      return;
+    }
     this.status = "running";
     this.emit({ type: "agent_start" });
     const timestamp = Date.now();
@@ -289,6 +301,53 @@ class MockPiSessionHandle implements PiSessionHandle {
     await this.persist();
     this.status = "idle";
     this.emit({ type: "agent_end", messages: [assistantMessage] });
+  }
+
+  private async runArtifact(): Promise<void> {
+    this.status = "running";
+    this.lastActivity = Date.now();
+    this.emit({ type: "agent_start" });
+
+    // Write a real 2x2 PNG so naturalWidth becomes 2 once the bytes load.
+    const groupId = crypto.randomBytes(8).toString("hex");
+    const fileName = `${groupId}.png`;
+    const pngBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGNkYPj/n4EIwDiqEAAlMQMG0V8XdQAAAABJRU5ErkJggg==";
+    const artifactDir = path.join(this.cwd, ".pi", "artifacts", this.id);
+    await fs.mkdir(artifactDir, { recursive: true });
+    await fs.writeFile(path.join(artifactDir, fileName), Buffer.from(pngBase64, "base64"));
+
+    const timestamp = Date.now();
+    const url = `/api/sessions/${encodeURIComponent(this.id)}/artifacts/${fileName}`;
+    const artifactMessage = {
+      role: "custom" as const,
+      content: `live-artifact.png (live-artifact.png, 0.1 KB)`,
+      timestamp,
+      customType: "artifact",
+      details: {
+        version: 1,
+        artifactGroupId: groupId,
+        caption: "Live artifact render",
+        artifacts: [
+          { mime: "image/png", src: { kind: "url", url }, alt: "live artifact demo image" },
+          { mime: "text/plain", text: "Live artifact render" },
+        ],
+      },
+    };
+    // Persist the artifact (production-faithful: the display tool writes a
+    // custom_message line to the jsonl) so it survives the scheduled /messages
+    // refetch that message_end/agent_end trigger, AND emit the live paired
+    // events exactly as sendCustomMessage does. The combination exercises both
+    // the live reducer and the byte-serving route end to end.
+    this.messages.push(artifactMessage as unknown as SessionMessage);
+    await this.persist();
+    this.emit({ type: "message_start", message: artifactMessage } as unknown as PiEvent);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    this.emit({ type: "message_end", message: artifactMessage } as unknown as PiEvent);
+
+    this.status = "idle";
+    this.lastActivity = Date.now();
+    this.emit({ type: "agent_end", messages: [] });
   }
 
   async abort(): Promise<void> {

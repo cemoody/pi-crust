@@ -48,6 +48,91 @@ describe("bundled pi-crust extension packages", () => {
     expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });
 
+  // Regression guard for PR #205: the bundled artifacts extension resolves a
+  // session's cwd via ctx.sessions.get(sessionId) to locate the artifact file
+  // on disk. The production server wires that to a getOrOpenSession-style
+  // resolver that LAZY-OPENS cold sessions (sessions that were listed but never
+  // loaded into the in-memory registry). When the wiring regressed, cold
+  // sessions returned HTTP 500 "session has no cwd". This test boots the
+  // artifacts extension with a lazy-open sessions API, writes a session file
+  // WITHOUT opening it (so it is cold), and asserts the route serves the bytes.
+  it("serves artifact bytes for a COLD (listed-but-unopened) session", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["artifacts"], { lazyOpen: true });
+
+    // Create + persist a session file, then dispose the hot handle so the only
+    // way to resolve its cwd is the lazy cold-open path.
+    const created = await registry.createSession({ cwd: home.projectRoot, sessionName: "cold" });
+    const coldId = created.id;
+    const artifactDir = path.join(home.projectRoot, ".pi", "artifacts", coldId);
+    await fs.mkdir(artifactDir, { recursive: true });
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await fs.writeFile(path.join(artifactDir, "cold.png"), pngBytes);
+    await registry.disposeSession(coldId);
+    expect(registry.hasSession(coldId), "session must be cold (not in the in-memory map)").toBe(false);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(coldId)}/artifacts/cold.png`);
+    // The exact regression: this MUST NOT be 500 "session has no cwd".
+    expect(response.status, `cold artifact request failed: ${response.status} ${await response.clone().text()}`).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([...pngBytes]);
+  });
+
+  // A missing artifact file for a resolvable session must 404 (not 500), and an
+  // entirely unknown session id must 404 (not 500) — so a regression in cwd
+  // resolution can never masquerade as a generic not-found.
+  it("returns 404 (never 500) for missing files and unknown sessions", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["artifacts"], { lazyOpen: true });
+    const created = await registry.createSession({ cwd: home.projectRoot, sessionName: "present" });
+
+    // Resolvable session, missing file -> 404 "artifact not found".
+    const missing = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(created.id)}/artifacts/does-not-exist.png`);
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.not.toMatchObject({ error: "session has no cwd" });
+
+    // Unknown session id -> 404, never 500.
+    const unknown = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent("no-such-session-id")}/artifacts/whatever.png`);
+    expect(unknown.status).toBe(404);
+    await expect(unknown.json()).resolves.not.toMatchObject({ error: "session has no cwd" });
+  });
+
+  // Path-traversal hardening on the extension-mounted route. The route lives
+  // outside the core security-boundary-matrix, so pin it independently: a
+  // filename containing a path separator or `..` must be rejected and can never
+  // read a sibling file outside the session's artifact dir.
+  it("rejects path-traversal artifact filenames", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["artifacts"], { lazyOpen: true });
+    const created = await registry.createSession({ cwd: home.projectRoot, sessionName: "sec" });
+    // Plant a secret OUTSIDE the artifacts dir that traversal would target.
+    await fs.writeFile(path.join(home.projectRoot, "secret.txt"), "top secret");
+
+    const id = encodeURIComponent(created.id);
+    for (const evil of ["..%2Fsecret.txt", "..%2F..%2Fsecret.txt", "foo%2Fbar.png", "%2Fetc%2Fpasswd"]) {
+      const resp = await fetch(`${baseUrl}/api/sessions/${id}/artifacts/${evil}`);
+      expect([400, 404], `path-traversal '${evil}' must be rejected, got ${resp.status}`).toContain(resp.status);
+      const text = await resp.text();
+      expect(text).not.toContain("top secret");
+    }
+  });
+
+  // A valid artifact filename in session A must never be served from session B's
+  // directory: the route keys the on-disk path by the URL's sessionId, so a
+  // mismatched session must 404 rather than leak another session's bytes.
+  it("does not serve one session's artifact bytes under another session's id", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["artifacts"], { lazyOpen: true });
+    const owner = await registry.createSession({ cwd: home.projectRoot, sessionName: "owner" });
+    const other = await registry.createSession({ cwd: home.projectRoot, sessionName: "other" });
+    const ownerDir = path.join(home.projectRoot, ".pi", "artifacts", owner.id);
+    await fs.mkdir(ownerDir, { recursive: true });
+    await fs.writeFile(path.join(ownerDir, "only-owner.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+    // Owner can read it.
+    const ok = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(owner.id)}/artifacts/only-owner.png`);
+    expect(ok.status).toBe(200);
+    // The other session cannot — the file does not exist under its own dir.
+    const leak = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(other.id)}/artifacts/only-owner.png`);
+    expect(leak.status).toBe(404);
+  });
+
   it("serves presentation files from the bundled presentations extension", async () => {
     const { baseUrl, home } = await startBundledServer(["presentations"]);
     const session = await fetchJson<{ id: string; cwd: string }>(`${baseUrl}/api/sessions`, {
@@ -142,7 +227,10 @@ describe("bundled pi-crust extension packages", () => {
   });
 });
 
-async function startBundledServer(packageNames: readonly string[]): Promise<{ baseUrl: string; home: TempPrcHome }> {
+async function startBundledServer(
+  packageNames: readonly string[],
+  options: { readonly lazyOpen?: boolean } = {},
+): Promise<{ baseUrl: string; home: TempPrcHome; registry: SessionRegistry }> {
   const home = await createTempPrcHome();
   homes.push(home);
   const registry = new SessionRegistry({
@@ -154,7 +242,7 @@ async function startBundledServer(packageNames: readonly string[]): Promise<{ ba
     cwd: home.projectRoot,
     dataDir: home.dataDir,
     bundledPackagePaths: packageNames.map((name) => resolveExtDir(name)),
-    sessions: createSessionsApi(registry),
+    sessions: options.lazyOpen ? createLazyOpenSessionsApi(registry) : createSessionsApi(registry),
   });
   const server = createHttpApiServer({
     registry,
@@ -165,7 +253,26 @@ async function startBundledServer(packageNames: readonly string[]): Promise<{ ba
     extensionRuntime: runtime,
   });
   servers.push(server);
-  return { baseUrl: await listen(server), home };
+  return { baseUrl: await listen(server), home, registry };
+}
+
+// Mirrors the production wiring (startDefaultServer -> bindSessionResolver ->
+// getOrOpenSession): resolve a session's card, lazily OPENING it from disk when
+// it is cold (listed but not in the in-memory map). This is the exact behavior
+// PR #205 added so the artifacts route can read a cold session's cwd.
+function createLazyOpenSessionsApi(registry: SessionRegistry) {
+  const resolve = async (sessionId: string) => {
+    if (registry.hasSession(sessionId)) return registry.getSession(sessionId);
+    // Cold path: find the persisted file via listSessions and open it.
+    const listed = await registry.listSessions();
+    const match = listed.find((s) => s.id === sessionId);
+    if (!match) throw new Error(`Unknown session: ${sessionId}`);
+    return registry.openSession(match.sessionFile);
+  };
+  return {
+    ...createSessionsApi(registry),
+    get: async (sessionId: string) => toCard(await (await resolve(sessionId)).handle.getState()),
+  };
 }
 
 function createSessionsApi(registry: SessionRegistry) {

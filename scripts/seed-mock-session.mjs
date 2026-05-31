@@ -720,3 +720,80 @@ await fs.writeFile(artifactSessionFile, JSON.stringify({
   lastActivity: Date.now(),
 }, null, 2) + '\n');
 console.log(`seeded ${artifactSessionFile}`);
+
+// Ninth seeded session: a MULTI-ARTIFACT session used by
+// artifact-multi-render.spec.ts. It contains:
+//   - two separate image artifact custom_messages (each its own group + file),
+//     to prove multiple artifact images all load (not just the first), and
+//   - one non-image (application/json) artifact, to prove the artifact
+//     renderer handles a non-image representation alongside images without
+//     breaking the image loads.
+const multiSessionId = 'seeded-session-artifact-multi';
+const multiSessionFile = path.join(root, '0000000000009_seeded-session-artifact-multi.mock-session.json');
+const multiPngBase64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGNkYPj/n4EIwDiqEAAlMQMG0V8XdQAAAABJRU5ErkJggg==';
+const multiDir = path.join(cwd, '.pi', 'artifacts', multiSessionId);
+await fs.mkdir(multiDir, { recursive: true });
+const multiFileA = 'multi-a.png';
+const multiFileB = 'multi-b.png';
+const multiJsonFile = 'multi-data.json';
+await fs.writeFile(path.join(multiDir, multiFileA), Buffer.from(multiPngBase64, 'base64'));
+await fs.writeFile(path.join(multiDir, multiFileB), Buffer.from(multiPngBase64, 'base64'));
+await fs.writeFile(path.join(multiDir, multiJsonFile), JSON.stringify({ ok: true, items: [1, 2, 3] }, null, 2));
+const multiUrl = (file) => `/api/sessions/${encodeURIComponent(multiSessionId)}/artifacts/${file}`;
+await fs.writeFile(multiSessionFile, JSON.stringify({
+  id: multiSessionId,
+  cwd,
+  sessionFile: multiSessionFile,
+  sessionName: 'Artifact multi session',
+  messages: [
+    { role: 'user', content: 'Show both charts and the data.', timestamp: 1700000009000 },
+    {
+      role: 'custom',
+      content: 'multi-a.png (multi-a.png, 0.1 KB)',
+      timestamp: 1700000009001,
+      customType: 'artifact',
+      details: {
+        version: 1,
+        artifactGroupId: 'multi-image-a',
+        caption: 'Multi artifact image A',
+        artifacts: [
+          { mime: 'image/png', src: { kind: 'url', url: multiUrl(multiFileA) }, alt: 'multi artifact image A' },
+          { mime: 'text/plain', text: 'Multi artifact image A' },
+        ],
+      },
+    },
+    {
+      role: 'custom',
+      content: 'multi-b.png (multi-b.png, 0.1 KB)',
+      timestamp: 1700000009002,
+      customType: 'artifact',
+      details: {
+        version: 1,
+        artifactGroupId: 'multi-image-b',
+        caption: 'Multi artifact image B',
+        artifacts: [
+          { mime: 'image/png', src: { kind: 'url', url: multiUrl(multiFileB) }, alt: 'multi artifact image B' },
+          { mime: 'text/plain', text: 'Multi artifact image B' },
+        ],
+      },
+    },
+    {
+      role: 'custom',
+      content: 'multi-data.json (multi-data.json, 0.1 KB)',
+      timestamp: 1700000009003,
+      customType: 'artifact',
+      details: {
+        version: 1,
+        artifactGroupId: 'multi-json',
+        caption: 'Multi artifact data',
+        artifacts: [
+          { mime: 'application/json', src: { kind: 'url', url: multiUrl(multiJsonFile) }, alt: 'multi artifact data' },
+          { mime: 'text/plain', text: 'Multi artifact data' },
+        ],
+      },
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${multiSessionFile}`);
