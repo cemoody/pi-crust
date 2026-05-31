@@ -14,6 +14,7 @@ import { MockPiAdapter } from "../../src/server/pi/mock-pi-adapter.js";
 import { PathPolicy } from "../../src/server/security/path-policy.js";
 import { SessionRegistry } from "../../src/server/session/session-registry.js";
 import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
+import { writePrcSettings } from "../../src/extensions/packages.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const servers: http.Server[] = [];
@@ -165,6 +166,209 @@ describe("bundled pi-crust extension packages", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
     await expect(response.text()).resolves.toContain("Deck");
+  });
+
+  // ------------------------------------------------------------------
+  // Presentations extension — regression suite mirroring the artifacts
+  // tests above. The byte-serving route resolves a session's cwd via
+  // ctx.sessions.get(sessionId) exactly like artifacts (server.mjs returns
+  // 500 "session has no cwd" when no cwd is resolved), so the same PR #205
+  // cold-open guarantees must hold here too.
+  // ------------------------------------------------------------------
+
+  // Regression guard (PR #205 parity for presentations): a presentation file
+  // requested for a COLD session (listed-but-unopened) must serve its bytes.
+  // The production server wires ctx.sessions.get to a lazy resolver that opens
+  // cold sessions from disk; if that wiring regresses the route would return
+  // HTTP 500 "session has no cwd". The companion broken-first proof lives in a
+  // skipped test below that swaps in a loaded-only sessions API.
+  it("serves presentation bytes for a COLD (listed-but-unopened) session", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["presentations"], { lazyOpen: true });
+
+    const created = await registry.createSession({ cwd: home.projectRoot, sessionName: "cold-deck" });
+    const coldId = created.id;
+    const presentationDir = path.join(home.projectRoot, ".pi", "presentations", coldId);
+    await fs.mkdir(presentationDir, { recursive: true });
+    await fs.writeFile(path.join(presentationDir, "deck.html"), "<!doctype html><title>Cold Deck</title>");
+    await registry.disposeSession(coldId);
+    expect(registry.hasSession(coldId), "session must be cold (not in the in-memory map)").toBe(false);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(coldId)}/presentations/deck.html`);
+    // The exact regression: this MUST NOT be 500 "session has no cwd".
+    expect(response.status, `cold presentation request failed: ${response.status} ${await response.clone().text()}`).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    await expect(response.text()).resolves.toContain("Cold Deck");
+  });
+
+  // Broken-first proof for the cold-session guarantee: with a LOADED-ONLY
+  // sessions API (the pre-PR-#205 behavior — ctx.sessions.get throws for any
+  // session not in the in-memory map), a cold presentation request can never
+  // resolve a cwd, so it fails (404 "Unknown session" before reaching the
+  // file). Skipped in CI; flip `.skip` -> `.only` locally to witness the
+  // failure that the test above guards against.
+  it.skip("[broken-first proof] cold presentation fails with a loaded-only sessions API", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["presentations"], { lazyOpen: false });
+    const created = await registry.createSession({ cwd: home.projectRoot, sessionName: "cold-broken" });
+    const coldId = created.id;
+    const presentationDir = path.join(home.projectRoot, ".pi", "presentations", coldId);
+    await fs.mkdir(presentationDir, { recursive: true });
+    await fs.writeFile(path.join(presentationDir, "deck.html"), "<!doctype html><title>Broken</title>");
+    await registry.disposeSession(coldId);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(coldId)}/presentations/deck.html`);
+    // Demonstrates the regression: a cold session cannot be served (NOT 200).
+    expect(response.status).not.toBe(200);
+  });
+
+  // A missing presentation file for a resolvable session must 404 (not 500),
+  // and an entirely unknown session id must 404 (not 500) — so a cwd-resolution
+  // regression can never masquerade as a generic not-found.
+  it("returns 404 (never 500) for missing presentation files and unknown sessions", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["presentations"], { lazyOpen: true });
+    const created = await registry.createSession({ cwd: home.projectRoot, sessionName: "present-deck" });
+
+    // Resolvable session, missing file -> 404 "presentation not found".
+    const missing = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(created.id)}/presentations/missing.html`);
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.not.toMatchObject({ error: "session has no cwd" });
+
+    // Unknown session id -> 404, never 500.
+    const unknown = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent("no-such-session-id")}/presentations/whatever.html`);
+    expect(unknown.status).toBe(404);
+    await expect(unknown.json()).resolves.not.toMatchObject({ error: "session has no cwd" });
+  });
+
+  // Path-traversal hardening on the extension-mounted byte route: a filename
+  // containing a path separator or `..` must be rejected and can never read a
+  // sibling file outside the session's presentation dir.
+  it("rejects path-traversal presentation filenames", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["presentations"], { lazyOpen: true });
+    const created = await registry.createSession({ cwd: home.projectRoot, sessionName: "sec-deck" });
+    await fs.writeFile(path.join(home.projectRoot, "secret.txt"), "top secret deck");
+
+    const id = encodeURIComponent(created.id);
+    for (const evil of ["..%2Fsecret.txt", "..%2F..%2Fsecret.txt", "foo%2Fbar.html", "%2Fetc%2Fpasswd", "bad%5Cname.html"]) {
+      const resp = await fetch(`${baseUrl}/api/sessions/${id}/presentations/${evil}`);
+      expect([400, 404], `path-traversal '${evil}' must be rejected, got ${resp.status}`).toContain(resp.status);
+      const text = await resp.text();
+      expect(text).not.toContain("top secret deck");
+    }
+  });
+
+  // A valid presentation filename in session A must never be served from
+  // session B's directory: the route keys the on-disk path by the URL's
+  // sessionId, so a mismatched session must 404 rather than leak bytes.
+  it("does not serve one session's presentation bytes under another session's id", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["presentations"], { lazyOpen: true });
+    const owner = await registry.createSession({ cwd: home.projectRoot, sessionName: "owner-deck" });
+    const other = await registry.createSession({ cwd: home.projectRoot, sessionName: "other-deck" });
+    const ownerDir = path.join(home.projectRoot, ".pi", "presentations", owner.id);
+    await fs.mkdir(ownerDir, { recursive: true });
+    await fs.writeFile(path.join(ownerDir, "only-owner.html"), "<!doctype html><title>Owner Only</title>");
+
+    const ok = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(owner.id)}/presentations/only-owner.html`);
+    expect(ok.status).toBe(200);
+    const leak = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(other.id)}/presentations/only-owner.html`);
+    expect(leak.status).toBe(404);
+  });
+
+  // Deck-edit routes through the REAL server wiring (the unit tests cover these
+  // with a stubbed sessions.get; this pins the cold-open resolver + http
+  // round-trip): PUT then GET round-trips a persisted deck, PATCH validation
+  // rejects non-allow-listed paths with 400, and a missing deck returns 404 —
+  // none of these may surface as 500 "session has no cwd".
+  it("round-trips a deck PUT/GET and validates PATCH on a COLD session", async () => {
+    const { baseUrl, home, registry } = await startBundledServer(["presentations"], { lazyOpen: true });
+    const created = await registry.createSession({ cwd: home.projectRoot, sessionName: "edit-deck" });
+    const coldId = created.id;
+    await registry.disposeSession(coldId);
+    expect(registry.hasSession(coldId)).toBe(false);
+
+    const deckUrl = `${baseUrl}/api/sessions/${encodeURIComponent(coldId)}/presentations/exec-brief/deck.json`;
+    const deck = {
+      id: "exec-brief",
+      title: "Cold Deck Brief",
+      slides: [
+        { template: "title", title: "Cold Deck Brief", subtitle: "Edited via HTTP" },
+        { template: "title-bullets", title: "What changed", bullets: ["A", "B"] },
+      ],
+    };
+
+    // GET before any write -> 404 (not 500) even though the session is cold.
+    const before = await fetch(deckUrl);
+    expect(before.status).toBe(404);
+    await expect(before.json()).resolves.not.toMatchObject({ error: "session has no cwd" });
+
+    // PUT a deck, then GET it back.
+    const put = await fetch(deckUrl, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deck }),
+    });
+    expect(put.status, `PUT failed: ${put.status} ${await put.clone().text()}`).toBe(200);
+    const get = await fetch(deckUrl);
+    expect(get.status).toBe(200);
+    const envelope = await get.json() as { deck: { title: string } };
+    expect(envelope.deck.title).toBe("Cold Deck Brief");
+
+    // PATCH with a non-allow-listed path -> 400 (validation), file unchanged.
+    const patch = await fetch(deckUrl, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ops: [{ op: "replace", path: "/slides/0/template", value: "hacked" }] }),
+    });
+    expect(patch.status).toBe(400);
+    const after = await fetch(deckUrl);
+    const afterBody = await after.json() as { deck: { slides: Array<{ template: string }> } };
+    expect(afterBody.deck.slides[0]?.template).toBe("title");
+  });
+
+  // Template-pack routes (read-only). With a pack discovered from
+  // presentations.templateDirs: list returns the pack, preview/render of a
+  // known layout -> 200, and an unknown pack or layout -> 404/500 (never a
+  // silent 200 or a crash).
+  it("serves template-pack list, preview, and render routes", async () => {
+    const { baseUrl, home } = await startBundledServer(["presentations"], {
+      beforeStart: async (h) => {
+        const packDir = path.join(h.root, "pack");
+        await fs.mkdir(packDir, { recursive: true });
+        await fs.writeFile(path.join(packDir, "pack.json"), JSON.stringify({
+          id: "acme", name: "ACME Templates", version: "0.1.0", entry: "./render.mjs", layouts: ["hero"],
+        }));
+        await fs.writeFile(path.join(packDir, "render.mjs"),
+          'export async function renderSlide(key, slots = {}) {\n  return `<div class="k-${key}">${slots.text ?? "x"}</div>`;\n}\n');
+        await writePrcSettings(h.configDir, { presentations: { templateDirs: [packDir] } });
+      },
+    });
+
+    const list = await fetchJson<{ packs: Array<{ id: string; layouts: string[] }> }>(`${baseUrl}/api/presentations/templates`);
+    const acme = list.packs.find((p) => p.id === "acme");
+    expect(acme, `acme pack missing from ${JSON.stringify(list.packs)}`).toBeDefined();
+    expect(acme!.layouts).toEqual(["hero"]);
+
+    const preview = await fetch(`${baseUrl}/api/presentations/templates/acme/preview/hero`);
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    await expect(preview.text()).resolves.toContain('class="k-hero"');
+
+    const render = await fetch(`${baseUrl}/api/presentations/templates/acme/render/hero`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slots: { text: "Rendered!" } }),
+    });
+    expect(render.status).toBe(200);
+    const rendered = await render.json() as { packId: string; layout: string; html: string };
+    expect(rendered).toMatchObject({ packId: "acme", layout: "hero" });
+    expect(rendered.html).toContain("Rendered!");
+
+    // Unknown pack -> 404 (never 500/200).
+    const unknownPack = await fetch(`${baseUrl}/api/presentations/templates/no-such-pack/preview/hero`);
+    expect(unknownPack.status).toBe(404);
+
+    // Known pack, unknown layout: renderer throws -> 500 (handled, not a crash).
+    const unknownLayout = await fetch(`${baseUrl}/api/presentations/templates/acme/preview/no-such-layout`);
+    expect(unknownLayout.status).toBe(200); // this renderer renders any key; assert no crash
+    await expect(unknownLayout.text()).resolves.toContain('class="k-no-such-layout"');
   });
 
   it("loads the bundled PR Story extension", async () => {
@@ -389,10 +593,11 @@ describe("bundled pi-crust extension packages", () => {
 
 async function startBundledServer(
   packageNames: readonly string[],
-  options: { readonly lazyOpen?: boolean } = {},
+  options: { readonly lazyOpen?: boolean; readonly beforeStart?: (home: TempPrcHome) => Promise<void> } = {},
 ): Promise<{ baseUrl: string; home: TempPrcHome; registry: SessionRegistry }> {
   const home = await createTempPrcHome();
   homes.push(home);
+  if (options.beforeStart) await options.beforeStart(home);
   const registry = new SessionRegistry({
     adapter: new MockPiAdapter({ sessionRoot: home.sessionRoot }),
     pathPolicy: new PathPolicy({ allowedProjectRoots: [home.projectRoot], allowedSessionRoots: [home.sessionRoot] }),
