@@ -12,6 +12,7 @@ import type {
   PrcServerRouteRequest,
   PrcServerRouteResponse,
   PrcJobContribution,
+  PrcRealtimeConnectionHandler,
   PrcSessionsApi,
   PrcSettingsSectionContribution,
 } from "./api.js";
@@ -197,6 +198,36 @@ export class ServerRouteRegistry {
   }
 }
 
+/** A realtime connection handler contributed by an extension, kept with its
+ *  owning extensionId so the gateway can attribute and tear it down. */
+export interface RegisteredRealtimeConnectionHandler {
+  readonly extensionId: string;
+  readonly handler: PrcRealtimeConnectionHandler;
+}
+
+/**
+ * Collects per-connection realtime handlers contributed via
+ * `ctx.server.realtime.onConnection`. The HTTP server reads `list()` once when
+ * attaching the Socket.IO gateway; the gateway then invokes each handler for
+ * every new connection and runs the returned disposer on disconnect.
+ */
+export class RealtimeRegistry {
+  private readonly handlers: RegisteredRealtimeConnectionHandler[] = [];
+
+  register(extensionId: string, handler: PrcRealtimeConnectionHandler): Disposable {
+    const registered: RegisteredRealtimeConnectionHandler = { extensionId, handler };
+    this.handlers.push(registered);
+    return { dispose: () => {
+      const index = this.handlers.indexOf(registered);
+      if (index >= 0) this.handlers.splice(index, 1);
+    } };
+  }
+
+  list(): readonly RegisteredRealtimeConnectionHandler[] {
+    return [...this.handlers];
+  }
+}
+
 const EXTENSION_ROUTE_JSON_MAX_BYTES = 1024 * 1024;
 
 export class PrcExtensionHost implements Disposable {
@@ -204,6 +235,7 @@ export class PrcExtensionHost implements Disposable {
   readonly activity = new ActivityRegistry();
   readonly settings = new SettingsRegistry();
   readonly serverRoutes = new ServerRouteRegistry();
+  readonly realtime = new RealtimeRegistry();
   readonly diagnostics: ExtensionDiagnostic[] = [];
   contributionPlan?: readonly ResolvedPrcExtensionContribution[];
   private readonly disposables: Disposable[] = [];
@@ -282,6 +314,9 @@ export class PrcExtensionHost implements Disposable {
           put: (path, handler) => apiRoute("PUT", path, handler),
           patch: (path, handler) => apiRoute("PATCH", path, handler),
           delete: (path, handler) => apiRoute("DELETE", path, handler),
+        },
+        realtime: {
+          onConnection: (handler: PrcRealtimeConnectionHandler) => track(this.realtime.register(extensionId, handler)),
         },
       },
     };

@@ -1,6 +1,6 @@
 {
   "name": "pi-crust-full",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Meta-package: installs pi-crust plus all official extensions. Run with `npx pi-crust-full`.",
   "license": "MIT",
   "author": "cemoody",
@@ -26,7 +26,7 @@
     "@cemoody/pi-crust-ext-pr-story": "https://github.com/cemoody/pi-crust-ext-pr-story.git#18cf7c2170640db91ed8bd682850847b58bf9154",
     "@cemoody/pi-crust-ext-presentations": "^0.1.1",
     "@cemoody/pi-crust-ext-schedule": "^0.1.1",
-    "pi-crust": "0.2.2"
+    "pi-crust": "0.3.0"
   },
   "engines": {
     "node": ">=22"

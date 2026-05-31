@@ -101,6 +101,40 @@ export interface PrcSessionsApi {
   cloneSession?(sessionId: string): Promise<PrcCloneSessionResult>;
 }
 
+/**
+ * A single live realtime (Socket.IO) connection, scoped to one client socket.
+ * Mirrors the subset of the underlying socket an extension needs: register
+ * inbound event handlers, emit outbound events to THIS connection, and read a
+ * stable id. The host wires teardown automatically — when the connection drops,
+ * the disposer returned from `onConnection` runs and all `on(...)` handlers are
+ * detached, so extensions cannot leak per-socket listeners.
+ */
+export interface PrcRealtimeConnection {
+  /** Stable per-connection id (the Socket.IO socket id). */
+  readonly id: string;
+  /** Register an inbound event handler for this connection. The optional second
+   *  argument is the Socket.IO ack callback when the client emits with one. */
+  on(event: string, handler: (payload: unknown, ack?: (response: unknown) => void) => void): void;
+  /** Emit an event to THIS connection only. */
+  emit(event: string, payload: unknown): void;
+}
+
+/** Disposer returned by a connection handler; run when the connection closes. */
+export type PrcRealtimeConnectionDisposer = void | (() => void);
+
+/** Called once per new realtime connection. */
+export type PrcRealtimeConnectionHandler = (
+  connection: PrcRealtimeConnection,
+) => PrcRealtimeConnectionDisposer;
+
+export interface PrcRealtimeApi {
+  /** Register a handler invoked for every realtime connection (including ones
+   *  already open when the extension activates is NOT guaranteed; treat this as
+   *  "for each new connection"). Returns a Disposable that stops future
+   *  invocations and tears down currently-attached connections. */
+  onConnection(handler: PrcRealtimeConnectionHandler): Disposable;
+}
+
 export interface PrcExtensionContext {
   readonly extensionId: string;
   readonly commands: {
@@ -135,6 +169,10 @@ export interface PrcExtensionContext {
       patch(path: string, handler: PrcServerRouteHandler): Disposable;
       delete(path: string, handler: PrcServerRouteHandler): Disposable;
     };
+    /** Register handlers on the shared Socket.IO realtime gateway. Lets an
+     *  extension own a real-time protocol (e.g. a PTY stream) without core
+     *  needing to know about it. */
+    readonly realtime: PrcRealtimeApi;
   };
 }
 

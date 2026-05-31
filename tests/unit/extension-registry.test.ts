@@ -104,6 +104,21 @@ describe("pi-crust extension registry harness", () => {
     expect(host.activity.list()).toEqual([]);
   });
 
+  it("collects realtime connection handlers and drops them on dispose", async () => {
+    const host = createPrcExtensionHost();
+    const handler = () => () => {};
+    await host.activate({
+      id: "rt",
+      factory: (prc) => { prc.server.realtime.onConnection(handler); },
+    });
+
+    expect(host.realtime.list().map((entry) => entry.extensionId)).toEqual(["rt"]);
+    expect(host.realtime.list()[0]?.handler).toBe(handler);
+
+    await host.dispose();
+    expect(host.realtime.list()).toEqual([]);
+  });
+
   it("activates built-in extensions through the same host path as external extensions", async () => {
     const host = createPrcExtensionHost();
     await host.activateAll([

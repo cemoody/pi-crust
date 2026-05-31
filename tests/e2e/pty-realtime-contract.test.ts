@@ -101,4 +101,23 @@ describe("PTY realtime contract", () => {
     expect(ack).toMatchObject({ ok: false, error: expect.stringMatching(/unknown session/i) });
     expect(socket.socket.connected).toBe(true);
   });
+
+  it("26. registers NO pty:* handler when core has no pty manager, leaving the protocol to an extension", async () => {
+    // When the in-core Terminal is disabled (base pi-crust distribution),
+    // core must not answer pty:open at all — otherwise it would race the ack
+    // of an extension that owns pty:* via ctx.server.realtime. We assert no
+    // ack arrives within a window, i.e. core stayed silent.
+    const harness = await createRealtimeHarness({ withPty: false });
+    harnesses.push(harness);
+    const socket = await connect(harness.baseUrl);
+    const acked = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false); } }, 400);
+      socket.socket.emit("pty:open", { sessionId: "any-session", cols: 80, rows: 24 }, () => {
+        if (!settled) { settled = true; clearTimeout(timer); resolve(true); }
+      });
+    });
+    expect(acked).toBe(false);
+    expect(socket.socket.connected).toBe(true);
+  });
 });
