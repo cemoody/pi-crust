@@ -592,17 +592,20 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
   // claims only its own `/socket.io/` path + the WS upgrade for that path, so
   // REST and the legacy SSE stream keep working untouched. Cold-session open
   // parity is provided by reusing getOrOpenSession.
-  // Realtime handlers contributed by extensions via ctx.server.realtime — read
-  // once here and handed to the gateway, which invokes them per connection.
-  const realtimeConnectionHandlers = getExtensionHost(context)
-    ?.realtime.list()
-    .map((registered) => registered.handler) ?? [];
+  // Realtime handlers contributed by extensions via ctx.server.realtime. We
+  // resolve them LIVE per connection (not a boot-time snapshot) so an extension
+  // installed/reloaded at runtime via the Settings UI is picked up by sockets
+  // that connect afterwards — without this, `pty:open` (and any extension
+  // realtime protocol) would silently time out until a server restart.
   context.realtimeGateway = attachRealtimeGateway({
     server,
     registry: context.registry,
     resolveSession: (sessionId) => getOrOpenSession(context, sessionId),
     ...(options.ptyManager ? { ptyManager: options.ptyManager } : {}),
-    ...(realtimeConnectionHandlers.length > 0 ? { connectionHandlers: realtimeConnectionHandlers } : {}),
+    resolveConnectionHandlers: () =>
+      getExtensionHost(context)
+        ?.realtime.list()
+        .map((registered) => registered.handler) ?? [],
   });
   // Hand the extension host a session resolver that lazy-opens cold sessions,
   // matching the HTTP routes. Extension-served routes (e.g. the artifacts

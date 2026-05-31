@@ -87,6 +87,69 @@ describe("extension realtime API (ctx.server.realtime)", () => {
     await waitFor(() => closed === 2);
     expect(closed).toBe(2);
   });
+
+  it("picks up a handler registered AFTER the gateway mounted (runtime install via Settings)", async () => {
+    // Regression for the `pty:open ack timeout` bug: the gateway used to read
+    // extension connection-handlers ONCE at boot. An extension installed at
+    // runtime (its host swapped into extensionRuntime.current by reload())
+    // then never got its handlers invoked, so its realtime protocol silently
+    // timed out until a restart. The gateway must resolve handlers LIVE.
+    const home = await createTempPrcHome();
+    homes.push(home);
+
+    // Host BEFORE install: no extension realtime handlers.
+    const emptyHost = createPrcExtensionHost();
+    // Host AFTER install: an extension that handles ext:ping.
+    const installedHost = createPrcExtensionHost();
+    await installedHost.activate({
+      id: "rt-runtime",
+      factory: (prc) => {
+        prc.server.realtime.onConnection((conn) => {
+          conn.on("ext:ping", (payload: any, ack?: (response: unknown) => void) => {
+            ack?.({ ok: true, doubled: (payload?.n ?? 0) * 2 });
+          });
+        });
+      },
+    });
+
+    // A minimal mutable runtime whose `current` we can swap, mimicking reload().
+    let current = emptyHost;
+    const extensionRuntime = {
+      get current() { return current; },
+      configDir: home.configDir,
+      cwd: home.projectRoot,
+    } as unknown as import("../../src/extensions/runtime.js").PrcExtensionRuntime;
+
+    const registry = new SessionRegistry({
+      adapter: new MockPiAdapter({ sessionRoot: home.sessionRoot }),
+      pathPolicy: new PathPolicy({ allowedProjectRoots: [home.projectRoot], allowedSessionRoots: [home.sessionRoot] }),
+    });
+    const server = createHttpApiServer({
+      registry,
+      adapterKind: "test",
+      projectRoot: home.projectRoot,
+      sessionRoot: home.sessionRoot,
+      defaultCwd: home.projectRoot,
+      extensionRuntime,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("Expected TCP address");
+    const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    // BEFORE install: a connection's ext:ping is unhandled -> ack never comes.
+    const before = await connectRaw(baseUrl);
+    await expect(before.emitWithAck("ext:ping", { n: 21 })).rejects.toThrow(/ack timeout/);
+
+    // Simulate the runtime install: swap the active host.
+    current = installedHost;
+
+    // A NEW connection (opened after install) MUST get the handler.
+    const after = await connectRaw(baseUrl);
+    const ack = await after.emitWithAck("ext:ping", { n: 21 });
+    expect(ack).toEqual({ ok: true, doubled: 42 });
+  });
 });
 
 async function startExtensionServer(extensionId: string, factory: PrcExtensionFactory): Promise<string> {

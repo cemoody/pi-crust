@@ -27,8 +27,17 @@ export interface AttachRealtimeGatewayOptions {
   readonly ptyManager?: PtyManager;
   /** Per-connection handlers contributed by extensions via
    *  `ctx.server.realtime.onConnection`. Each runs for every new connection;
-   *  the disposer it returns runs on disconnect. */
+   *  the disposer it returns runs on disconnect.
+   *
+   *  NOTE: this is a *static snapshot*. Prefer `resolveConnectionHandlers` when
+   *  extensions can be installed/reloaded at runtime, so connections opened
+   *  after an install still pick up newly-registered handlers. */
   readonly connectionHandlers?: readonly RealtimeConnectionHandler[];
+  /** Live resolver for extension-contributed connection handlers. Called once
+   *  per new connection so handlers registered AFTER the gateway was mounted
+   *  (e.g. an extension installed at runtime via the Settings UI) are picked
+   *  up. When provided, this takes precedence over `connectionHandlers`. */
+  readonly resolveConnectionHandlers?: () => readonly RealtimeConnectionHandler[];
   /** Socket.IO mount path. Defaults to the library default `/socket.io/`. */
   readonly path?: string;
 }
@@ -93,7 +102,13 @@ export function attachRealtimeGateway(options: AttachRealtimeGatewayOptions): Re
     // the disposer the handler returns runs then too — no per-socket leaks.
     const extDisposers: Array<() => void> = [];
     const extSocketListeners: Array<[string, (...args: unknown[]) => void]> = [];
-    for (const handler of options.connectionHandlers ?? []) {
+    // Read handlers LIVE per connection (via the resolver) so an extension
+    // installed at runtime is picked up by sockets that connect afterwards.
+    // Fall back to the static snapshot for callers/tests that pass it directly.
+    const activeConnectionHandlers = options.resolveConnectionHandlers
+      ? options.resolveConnectionHandlers()
+      : (options.connectionHandlers ?? []);
+    for (const handler of activeConnectionHandlers) {
       const connection: PrcRealtimeConnection = {
         id: socket.id,
         on(event, listener) {
