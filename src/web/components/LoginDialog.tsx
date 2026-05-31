@@ -427,6 +427,7 @@ function OAuthStep({
 
   const authEvent = useMemo(() => [...events].reverse().find((event) => event.type === "auth") as Extract<OAuthLoginEvent, { type: "auth" }> | undefined, [events]);
   const lastProgress = useMemo(() => [...events].reverse().find((event) => event.type === "progress") as Extract<OAuthLoginEvent, { type: "progress" }> | undefined, [events]);
+  const deviceCodeEvent = useMemo(() => [...events].reverse().find((event) => event.type === "deviceCode") as Extract<OAuthLoginEvent, { type: "deviceCode" }> | undefined, [events]);
 
   // Auto-open the auth URL in a new tab, like the TUI's exec(open/xdg-open).
   useEffect(() => {
@@ -495,6 +496,14 @@ function OAuthStep({
         </div>
       ) : status === "active" ? (
         <p className="login-dialog-muted">Starting login…</p>
+      ) : null}
+
+      {deviceCodeEvent ? (
+        <div className="login-dialog-device-code">
+          <p>Enter this code at <a href={deviceCodeEvent.verificationUri} target="_blank" rel="noreferrer noopener">{deviceCodeEvent.verificationUri}</a>:</p>
+          <code className="login-dialog-user-code">{deviceCodeEvent.userCode}</code>
+          <button type="button" className="login-dialog-copy" onClick={() => void navigator.clipboard?.writeText(deviceCodeEvent.userCode).catch(() => undefined)}>Copy code</button>
+        </div>
       ) : null}
 
       {lastProgress && status === "active" ? <p className="login-dialog-muted">{lastProgress.message}</p> : null}

@@ -22,6 +22,7 @@ import type { AuthStorage } from "@earendil-works/pi-coding-agent";
 
 export type OAuthFlowEvent =
   | { readonly type: "auth"; readonly url: string; readonly instructions?: string }
+  | { readonly type: "deviceCode"; readonly userCode: string; readonly verificationUri: string; readonly intervalSeconds?: number; readonly expiresInSeconds?: number }
   | { readonly type: "progress"; readonly message: string }
   | { readonly type: "prompt"; readonly requestId: string; readonly message: string; readonly placeholder?: string; readonly allowEmpty?: boolean }
   | { readonly type: "manualCode"; readonly requestId: string; readonly message: string }
@@ -124,6 +125,14 @@ export class OAuthLoginManager {
             ...(prompt.placeholder ? { placeholder: prompt.placeholder } : {}),
             ...(prompt.allowEmpty ? { allowEmpty: true } : {}),
           })),
+        onDeviceCode: (info) =>
+          this.emit(flow, {
+            type: "deviceCode",
+            userCode: info.userCode,
+            verificationUri: info.verificationUri,
+            ...(info.intervalSeconds !== undefined ? { intervalSeconds: info.intervalSeconds } : {}),
+            ...(info.expiresInSeconds !== undefined ? { expiresInSeconds: info.expiresInSeconds } : {}),
+          }),
         onProgress: (message) => this.emit(flow, { type: "progress", message }),
         onSelect: async (prompt) => {
           const choice = await this.request(flow, (requestId) => ({

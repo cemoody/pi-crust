@@ -54,11 +54,11 @@
   },
   "dependencies": {
     "@cemoody/pi-artifact": "github:cemoody/pi-artifact",
+    "@earendil-works/pi-ai": "^0.78.0",
+    "@earendil-works/pi-coding-agent": "^0.78.0",
     "@wterm/core": "^0.1.0",
     "@wterm/dom": "^0.1.0",
     "node-pty": "^1.0.0",
-    "@earendil-works/pi-ai": "^0.74.0",
-    "@earendil-works/pi-coding-agent": "^0.74.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",

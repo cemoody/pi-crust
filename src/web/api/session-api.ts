@@ -278,6 +278,7 @@ export interface AuthProviderInfo {
 
 export type OAuthLoginEvent =
   | { readonly type: "auth"; readonly url: string; readonly instructions?: string }
+  | { readonly type: "deviceCode"; readonly userCode: string; readonly verificationUri: string; readonly intervalSeconds?: number; readonly expiresInSeconds?: number }
   | { readonly type: "progress"; readonly message: string }
   | { readonly type: "prompt"; readonly requestId: string; readonly message: string; readonly placeholder?: string; readonly allowEmpty?: boolean }
   | { readonly type: "manualCode"; readonly requestId: string; readonly message: string }
