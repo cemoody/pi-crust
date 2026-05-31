@@ -1091,6 +1091,18 @@ a.sidebar-menu-item:visited {
   .active-session > header {
     margin-top: max(0px, calc(env(safe-area-inset-top) - 6px));
   }
+
+  /* Bottom safe-area handling. The root reserves padding-bottom for the
+     home-indicator inset, but that padding sits BELOW the composer, so its
+     surface stops short of the screen edge and the dashboard background
+     shows through as a gap under the composer. Collapse the root's bottom
+     inset to the plain floor here; the composer (in prompt-composer.css)
+     absorbs the inset into its own padding so its surface reaches the
+     screen edge while controls stay above the home indicator. Scoped to
+     standalone so browser tabs are untouched. */
+  .session-dashboard {
+    padding-bottom: 6px;
+  }
 }
 
 /* Inline 'name this session' row that appears above the prompt composer

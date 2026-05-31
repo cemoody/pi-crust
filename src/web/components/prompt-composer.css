@@ -10,6 +10,19 @@
   gap: 4px;
 }
 
+/* Installed PWA (standalone): the root no longer reserves the bottom
+   safe-area inset (see session-dashboard.css), so the composer absorbs it.
+   Its --background-1 surface extends to the screen edge — closing the gap
+   that previously showed dashboard background under the composer — while
+   the extra padding keeps the input/buttons clear of the home indicator.
+   max() preserves the 4px floor on devices reporting a 0 inset, and the
+   rule is inert in normal browser tabs (display-mode: browser). */
+@media (display-mode: standalone) {
+  .prompt-composer {
+    padding-bottom: max(4px, env(safe-area-inset-bottom));
+  }
+}
+
 .prompt-composer::before {
   content: "";
   position: absolute;
