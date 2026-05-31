@@ -2,7 +2,14 @@ import type http from "node:http";
 import { Server as SocketIoServer } from "socket.io";
 import type { PiEvent } from "../pi/types.js";
 import type { PtyManager } from "../pty/pty-manager.js";
+import type { PrcRealtimeConnection, PrcRealtimeConnectionDisposer } from "../../extensions/api.js";
 import type { RegisteredSession, SessionRegistry } from "../session/session-registry.js";
+
+/** A per-connection realtime handler contributed by an extension. Invoked for
+ *  every new Socket.IO connection; the returned disposer (if any) runs when
+ *  that connection closes. Kept structurally minimal so the gateway does not
+ *  depend on the extension registry types. */
+export type RealtimeConnectionHandler = (connection: PrcRealtimeConnection) => PrcRealtimeConnectionDisposer;
 
 /**
  * Resolve a session by the id a client subscribed with, opening it from disk
@@ -18,6 +25,10 @@ export interface AttachRealtimeGatewayOptions {
   /** Optional PTY manager enabling the browser Terminal tab (`pty:*` events).
    *  When omitted, `pty:open` is rejected via ack (terminal disabled). */
   readonly ptyManager?: PtyManager;
+  /** Per-connection handlers contributed by extensions via
+   *  `ctx.server.realtime.onConnection`. Each runs for every new connection;
+   *  the disposer it returns runs on disconnect. */
+  readonly connectionHandlers?: readonly RealtimeConnectionHandler[];
   /** Socket.IO mount path. Defaults to the library default `/socket.io/`. */
   readonly path?: string;
 }
@@ -75,6 +86,38 @@ export function attachRealtimeGateway(options: AttachRealtimeGatewayOptions): Re
     // the id the client used so re-subscribe is idempotent and disconnect can
     // tear everything down without leaking listeners.
     const subscriptions = new Map<string, () => void>();
+
+    // --- Extension-contributed realtime handlers -------------------------
+    // Each contributed handler gets a minimal per-connection facade. Inbound
+    // `on(...)` listeners are tracked so we can detach them on disconnect, and
+    // the disposer the handler returns runs then too — no per-socket leaks.
+    const extDisposers: Array<() => void> = [];
+    const extSocketListeners: Array<[string, (...args: unknown[]) => void]> = [];
+    for (const handler of options.connectionHandlers ?? []) {
+      const connection: PrcRealtimeConnection = {
+        id: socket.id,
+        on(event, listener) {
+          const wrapped = (payload: unknown, ack?: (response: unknown) => void) => {
+            try {
+              listener(payload, typeof ack === "function" ? ack : undefined);
+            } catch {
+              /* an extension handler must not take down the gateway */
+            }
+          };
+          socket.on(event, wrapped as (...args: unknown[]) => void);
+          extSocketListeners.push([event, wrapped as (...args: unknown[]) => void]);
+        },
+        emit(event, payload) {
+          if (socket.connected) socket.emit(event, payload);
+        },
+      };
+      try {
+        const disposer = handler(connection);
+        if (typeof disposer === "function") extDisposers.push(disposer);
+      } catch {
+        /* a faulty extension activation must not break the connection */
+      }
+    }
 
     socket.on("session:subscribe", async (payload: SubscribeRequest, ack?: (response: SubscribeAck) => void) => {
       const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : undefined;
@@ -209,6 +252,15 @@ export function attachRealtimeGateway(options: AttachRealtimeGatewayOptions): Re
       ownedPtys.clear();
       ptyDataUnsub?.();
       ptyExitUnsub?.();
+      // Tear down extension-contributed handlers: detach inbound listeners and
+      // run each disposer so extensions can release per-connection resources.
+      for (const [event, listener] of extSocketListeners) {
+        try { socket.off(event, listener); } catch { /* ignore */ }
+      }
+      extSocketListeners.length = 0;
+      for (const disposer of extDisposers.splice(0)) {
+        try { disposer(); } catch { /* disposer must not throw */ }
+      }
     });
   });
 
