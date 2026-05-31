@@ -17,3 +17,7 @@ logs/
 extension-framework-refactor-plan.md
 node_modules
 scripts/shot-session*.mjs
+
+# Generated Playwright repro screenshots (the input fixture PNG is kept).
+/tests/repro/*-e2e.png
+/tests/repro/artifact-500-repro.png
