@@ -71,7 +71,24 @@ export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOpti
   const projectPlan = await resolveExtensionContributionPlan(project.extensions, project.webExtensions, packageDiagnostics, disabledExtensionIds);
   const globalPlan = await resolveExtensionContributionPlan(global.extensions, global.webExtensions, packageDiagnostics, disabledExtensionIds);
   const bundledPlan = await resolveExtensionContributionPlan(bundled.extensions, bundled.webExtensions, packageDiagnostics, disabledExtensionIds);
-  const contributionPlan = [...explicitPlan, ...projectPlan, ...globalPlan, ...bundledPlan];
+  // Dedupe by extension id across all scopes. The same id can legitimately be
+  // resolved from multiple sources (e.g. an official extension that ships
+  // bundled AND that a user re-adds as an npm/git source). Activating both
+  // copies makes the second registerView/registerRoute call throw "already
+  // registered", which surfaces as an error-level diagnostic and makes EVERY
+  // reload return applied:false (HTTP 400) — so the user can no longer toggle
+  // or remove anything. Keep one copy per id, preferring (highest first):
+  // explicit dev flags > bundled official packages > project > global user
+  // sources. Dropped duplicates become non-fatal warnings.
+  const contributionPlan = dedupeContributionPlanById(
+    [
+      { priority: 3, plan: explicitPlan },
+      { priority: 1, plan: projectPlan },
+      { priority: 0, plan: globalPlan },
+      { priority: 2, plan: bundledPlan },
+    ],
+    packageDiagnostics,
+  );
   host.contributionPlan = contributionPlan;
   await registerPlannedWebAssets(host, contributionPlan);
   const extensionInputs = await loadPlannedServerInputs(contributionPlan, packageDiagnostics);
@@ -85,6 +102,49 @@ export async function bootstrapPrcExtensions(options: BootstrapPrcExtensionsOpti
   }
   return { host, diagnostics: packageDiagnostics };
 }
+
+/**
+ * Collapse duplicate extension ids across scoped plans. Output preserves the
+ * original concatenation order (explicit, project, global, bundled) for the
+ * surviving contributions; `priority` only decides which copy wins a conflict.
+ * Every dropped duplicate emits a non-fatal warning diagnostic.
+ */
+function dedupeContributionPlanById(
+  groups: readonly { readonly priority: number; readonly plan: readonly ResolvedPrcExtensionContribution[] }[],
+  diagnostics: PackageDiagnostic[],
+): ResolvedPrcExtensionContribution[] {
+  const winningPriority = new Map<string, number>();
+  for (const { priority, plan } of groups) {
+    for (const contribution of plan) {
+      const current = winningPriority.get(contribution.id);
+      if (current === undefined || priority > current) winningPriority.set(contribution.id, priority);
+    }
+  }
+  // Emit in original concat order so non-duplicate behavior is unchanged.
+  const order = [...groups].sort((a, b) => a.priority === b.priority ? 0 : OUTPUT_ORDER.indexOf(a.priority) - OUTPUT_ORDER.indexOf(b.priority));
+  const result: ResolvedPrcExtensionContribution[] = [];
+  const taken = new Set<string>();
+  for (const { priority, plan } of order) {
+    for (const contribution of plan) {
+      const winsGroup = priority === winningPriority.get(contribution.id);
+      if (winsGroup && !taken.has(contribution.id)) {
+        result.push(contribution);
+        taken.add(contribution.id);
+      } else {
+        diagnostics.push({
+          source: contribution.packageSource,
+          level: "warning",
+          message: `Skipped duplicate extension "${contribution.id}" from ${contribution.packageSource}; it is already provided by another source.`,
+        });
+      }
+    }
+  }
+  return result;
+}
+
+// Priorities in the order they should appear in the activation plan
+// (explicit=3, project=1, global=0, bundled=2 -> explicit, project, global, bundled).
+const OUTPUT_ORDER = [3, 1, 0, 2];
 
 export function defaultPrcConfigDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.resolve(env.PI_CRUST_CONFIG_DIR ?? path.join(env.HOME ?? process.cwd(), ".pi-crust"));

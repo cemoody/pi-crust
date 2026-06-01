@@ -189,6 +189,44 @@ describe("pi-crust extension bootstrap integration", () => {
     expect(result.diagnostics[0]?.message).toContain("does not export an activate function");
   });
 
+  it("does not fatally error when a bundled extension is also added as a user source (deduped, bundled wins)", async () => {
+    // Mirrors the real report: @cemoody/pi-crust-ext-schedule ships bundled with
+    // the host AND the user re-adds it as an npm source. Both copies register the
+    // same activity view id, which previously threw "Activity view already
+    // registered", produced an error-level diagnostic, and made EVERY reload
+    // return HTTP 400 (so nothing could be toggled/removed).
+    const home = await makeHome();
+    const bundledDir = await writeLocalExtensionPackage(home.root, {
+      name: "dup-extension",
+      extensionFile: "bundled.mjs",
+      extensionCode: "export default function activate(prc) { prc.commands.register({ id: 'dup.hello', title: 'Dup', run: () => 'bundled' }); prc.activity.registerView({ id: 'dup.panel', title: 'Dup' }); }\n",
+      manifest: { name: "dup-extension", version: "0.0.0-bundled", piRemoteControl: { extension: "./bundled.mjs" } },
+    });
+    // A second copy of the SAME extension id, registered as a user (global) source.
+    const userDir = await writeLocalExtensionPackage(home.projectRoot, {
+      name: "dup-extension",
+      extensionFile: "user.mjs",
+      extensionCode: "export default function activate(prc) { prc.commands.register({ id: 'dup.hello', title: 'Dup', run: () => 'user' }); prc.activity.registerView({ id: 'dup.panel', title: 'Dup' }); }\n",
+      manifest: { name: "dup-extension", version: "0.0.0-user", piRemoteControl: { extension: "./user.mjs" } },
+    });
+    await writePrcSettings(home.configDir, { packages: [userDir] });
+
+    const result = await bootstrapPrcExtensions({
+      configDir: home.configDir,
+      cwd: home.projectRoot,
+      bundledPackagePaths: [bundledDir],
+    });
+
+    // No fatal error -> reload would apply. (Activation errors land on the host.)
+    expect(result.host.diagnostics.some((d) => d.level === "error")).toBe(false);
+    // Exactly one activity view registered (no collision).
+    expect(result.host.activity.list().filter((v) => v.id === "dup.panel")).toHaveLength(1);
+    // Bundled official copy wins over the user-added duplicate.
+    await expect(result.host.commands.run("dup.hello")).resolves.toBe("bundled");
+    // The dropped duplicate surfaces a non-fatal warning.
+    expect(result.diagnostics.some((d) => d.level === "warning" && /duplicate extension "dup-extension"/i.test(d.message))).toBe(true);
+  });
+
   it("reports diagnostics for missing explicit extension paths", async () => {
     const home = await makeHome();
     const missing = path.join(home.root, "missing.mjs");
