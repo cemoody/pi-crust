@@ -126,10 +126,16 @@ export function ExtensionManagementPanel(props: ExtensionManagementPanelProps) {
     });
   }, []);
 
+  // Auto-check for updates once on mount. We deliberately read the callback
+  // through a ref and use an empty dependency array: SessionDashboard passes a
+  // fresh inline arrow on every render, so depending on the callback identity
+  // would re-fire this effect forever (a flood of updates?force=1 requests).
   const { onCheckUpdates } = props;
+  const onCheckUpdatesRef = useRef(onCheckUpdates);
+  onCheckUpdatesRef.current = onCheckUpdates;
   useEffect(() => {
-    if (onCheckUpdates) void onCheckUpdates();
-  }, [onCheckUpdates]);
+    void onCheckUpdatesRef.current?.();
+  }, []);
 
   const previewIconChar = (appNameDraft.trim() || "π").charAt(0);
   const previewName = appNameDraft.trim() || "π crust";

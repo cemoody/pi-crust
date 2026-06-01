@@ -102,6 +102,26 @@ describe("ExtensionManagementPanel — update affordances", () => {
     expect(onCheckUpdates).toHaveBeenCalledTimes(1);
   });
 
+  it("auto-checks exactly once even when the onCheckUpdates prop identity changes every render", () => {
+    // Regression: SessionDashboard passes an inline `() => check()` arrow, so
+    // onCheckUpdates is a new function each render. A naive [onCheckUpdates]
+    // effect dep then re-fires forever (observed as a flood of updates?force=1
+    // requests). The mount auto-check must be run-once regardless of identity.
+    const handlers = baseHandlers();
+    const calls: number[] = [];
+    const renderOnce = () => {
+      const onCheckUpdates = vi.fn(() => { calls.push(1); return Promise.resolve(); });
+      return (
+        <ExtensionManagementPanel extensions={makeExtensions()} settings={settingsWith([npmSource])} currentAppName="π" onCheckUpdates={onCheckUpdates} {...handlers} />
+      );
+    };
+    const { rerender } = render(renderOnce());
+    rerender(renderOnce());
+    rerender(renderOnce());
+    rerender(renderOnce());
+    expect(calls).toHaveLength(1);
+  });
+
   it("renders the source list even when no update info is available yet", () => {
     render(
       <ExtensionManagementPanel extensions={makeExtensions()} settings={settingsWith([npmSource])} currentAppName="π" updatesLoading {...baseHandlers()} />,
