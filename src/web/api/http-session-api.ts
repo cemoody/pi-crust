@@ -226,10 +226,28 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     let lastMessageAt = Date.now();
     let silenceWarnedAt = 0;
     let stopped = false;
+    // Highest server seq we've already delivered. The server tags every event
+    // with `id: <seq>`, so the browser's NATIVE EventSource auto-reconnect
+    // (which silently resumes via Last-Event-ID) replays buffered events we
+    // have already seen. Without this guard those replays are re-delivered to
+    // the reducer and produce duplicate messages that only disappear on a full
+    // reload. The Socket.IO path dedupes identically (see
+    // realtime-connection.ts); this brings the SSE fallback to parity.
+    // Reset in openSource() because a MANUAL reconnect opens a fresh stream
+    // from `null` (live-only, no replay) where the seq counter is authoritative.
+    let lastDeliveredSeq = -1;
 
     const wireHandlers = (currentSource: EventSource) => {
       currentSource.onmessage = (event) => {
         lastMessageAt = Date.now();
+        // Drop already-delivered seqs from a transparent auto-reconnect replay.
+        // `lastEventId` is the `id:` of the most recent SSE frame; legacy/test
+        // streams without ids leave it empty, so we fall through and deliver.
+        const seq = Number(event.lastEventId);
+        if (Number.isFinite(seq)) {
+          if (seq <= lastDeliveredSeq) return;
+          lastDeliveredSeq = seq;
+        }
         try {
           onEvent(JSON.parse(event.data));
         } catch {
@@ -258,6 +276,10 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     const isVisible = () => typeof document === "undefined" || document.visibilityState === "visible";
 
     const openSource = () => {
+      // A manual (re)open requests no Last-Event-ID, so the server streams only
+      // live events from its current counter. Reset our high-water mark so we
+      // don't wrongly drop fresh seqs (e.g. after a worker restart reset them).
+      lastDeliveredSeq = -1;
       source = new EventSource(url);
       wireHandlers(source);
       lastMessageAt = Date.now();

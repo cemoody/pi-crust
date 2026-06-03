@@ -476,3 +476,77 @@ describe("mobile background reconnect (visibility change)", () => {
 });
 
 
+
+/**
+ * SSE seq-dedup regression.
+ *
+ * The server tags every SSE frame with `id: <seq>`. The browser's NATIVE
+ * EventSource auto-reconnect transparently resumes via Last-Event-ID, and the
+ * server replays buffered events the client has already seen. Before the fix
+ * those replays were re-delivered to the reducer and produced DUPLICATE
+ * messages that only cleared on a full page reload. The Socket.IO path already
+ * dedupes by seq; this asserts the SSE fallback now does too.
+ */
+describe("SSE seq dedup (auto-reconnect replay)", () => {
+  let mockSource: { onmessage: ((ev: { data: string; lastEventId?: string }) => void) | null; onopen: (() => void) | null; onerror: (() => void) | null; readyState: number; close: Mock };
+
+  beforeEach(() => {
+    mockSource = { onmessage: null, onopen: null, onerror: null, readyState: 1, close: vi.fn() };
+    vi.stubGlobal("EventSource", class MockEventSource {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readyState = 1;
+      onmessage: ((ev: { data: string; lastEventId?: string }) => void) | null = null;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      close = vi.fn();
+      constructor() {
+        setTimeout(() => { mockSource.onmessage = this.onmessage; this.onopen?.(); }, 0);
+      }
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+    vi.stubGlobal("document", { visibilityState: "visible" });
+    vi.stubGlobal("window", undefined);
+    vi.useFakeTimers();
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it("drops events whose seq was already delivered, but keeps new ones", async () => {
+    const events: unknown[] = [];
+    const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
+    const api = new HttpSessionDashboardApi();
+    const unsubscribe = api.streamEvents("sid-dedup", (event) => events.push(event));
+    await vi.advanceTimersByTimeAsync(1);
+
+    // Live frames, increasing seq.
+    mockSource.onmessage?.({ lastEventId: "1", data: JSON.stringify({ type: "message_start" }) });
+    mockSource.onmessage?.({ lastEventId: "2", data: JSON.stringify({ type: "message_end" }) });
+    // Auto-reconnect replay: server resends seq 1 and 2 (already seen).
+    mockSource.onmessage?.({ lastEventId: "1", data: JSON.stringify({ type: "message_start" }) });
+    mockSource.onmessage?.({ lastEventId: "2", data: JSON.stringify({ type: "message_end" }) });
+    // A genuinely new frame after the replay.
+    mockSource.onmessage?.({ lastEventId: "3", data: JSON.stringify({ type: "agent_end" }) });
+
+    expect(events).toEqual([
+      { type: "message_start" },
+      { type: "message_end" },
+      { type: "agent_end" },
+    ]);
+    unsubscribe();
+  });
+
+  it("still delivers frames that carry no id (legacy/un-tagged streams)", async () => {
+    const events: unknown[] = [];
+    const { HttpSessionDashboardApi } = await import("../../src/web/api/http-session-api.js");
+    const api = new HttpSessionDashboardApi();
+    const unsubscribe = api.streamEvents("sid-noid", (event) => events.push(event));
+    await vi.advanceTimersByTimeAsync(1);
+
+    mockSource.onmessage?.({ data: JSON.stringify({ type: "agent_start" }) });
+    mockSource.onmessage?.({ data: JSON.stringify({ type: "agent_end" }) });
+
+    expect(events).toEqual([{ type: "agent_start" }, { type: "agent_end" }]);
+    unsubscribe();
+  });
+});

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { TimelineMessage } from "../../src/web/components/MessageTimeline.js";
 import { applyRealtimeEvent } from "../../src/web/components/session-dashboard-realtime.js";
 
@@ -13,30 +13,48 @@ describe("session dashboard realtime reducer invariants", () => {
     expect(harness.streamDraftIds).toEqual({});
   });
 
-  it("keeps one assistant row through start, deltas, and duplicate end replay", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-26T00:00:00.000Z"));
-    try {
-      const harness = makeHarness();
-      const sessionId = "s1";
-      const end = {
-        type: "message_end",
-        message: { role: "assistant", content: "hello world", timestamp: 1_700_000_000_000 },
-      };
+  it("keeps one assistant row through start, deltas, and duplicate end replay (real time)", () => {
+    // Intentionally use REAL timers. A previous version of this test froze
+    // Date.now() with fake timers, which masked a production bug: a replayed
+    // message_end mints a fresh time-based draft id and appends a duplicate
+    // row. With real timers the second message_end happens at a later Date.now()
+    // so the regression is exercised the way the SSE auto-reconnect replay hits
+    // it in the browser.
+    const harness = makeHarness();
+    const sessionId = "s1";
+    const end = {
+      type: "message_end",
+      message: { role: "assistant", content: "hello world", timestamp: 1_700_000_000_000 },
+    };
 
-      applyRealtimeEvent(sessionId, { type: "message_start", message: { role: "assistant", content: "", timestamp: 1_700_000_000_000 } }, harness.setMessagesBySession, harness.streamDraftIds);
-      applyRealtimeEvent(sessionId, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello " } }, harness.setMessagesBySession, harness.streamDraftIds);
-      applyRealtimeEvent(sessionId, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "world" } }, harness.setMessagesBySession, harness.streamDraftIds);
-      applyRealtimeEvent(sessionId, end, harness.setMessagesBySession, harness.streamDraftIds);
-      applyRealtimeEvent(sessionId, end, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent(sessionId, { type: "message_start", message: { role: "assistant", content: "", timestamp: 1_700_000_000_000 } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent(sessionId, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello " } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent(sessionId, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "world" } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent(sessionId, end, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent(sessionId, end, harness.setMessagesBySession, harness.streamDraftIds);
 
-      const messages = harness.snapshot()[sessionId] ?? [];
-      expect(messages).toHaveLength(1);
-      expect(messages[0]).toMatchObject({ role: "assistant", text: "hello world", provider: "pi" });
-      expect(harness.streamDraftIds).toEqual({});
-    } finally {
-      vi.useRealTimers();
-    }
+    const messages = harness.snapshot()[sessionId] ?? [];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ role: "assistant", text: "hello world", provider: "pi" });
+    expect(harness.streamDraftIds).toEqual({});
+  });
+
+  it("does not merge two distinct assistant turns when an end replays for the second", () => {
+    const harness = makeHarness();
+    const sessionId = "s1";
+    // Turn 1.
+    applyRealtimeEvent(sessionId, { type: "message_start", message: { role: "assistant", content: "", timestamp: 1_700_000_000_000 } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent(sessionId, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "first" } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent(sessionId, { type: "message_end", message: { role: "assistant", content: "first", timestamp: 1_700_000_000_000 } }, harness.setMessagesBySession, harness.streamDraftIds);
+    // Turn 2.
+    applyRealtimeEvent(sessionId, { type: "message_start", message: { role: "assistant", content: "", timestamp: 1_700_000_111_000 } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent(sessionId, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "second" } }, harness.setMessagesBySession, harness.streamDraftIds);
+    const end2 = { type: "message_end", message: { role: "assistant", content: "second", timestamp: 1_700_000_111_000 } };
+    applyRealtimeEvent(sessionId, end2, harness.setMessagesBySession, harness.streamDraftIds);
+    // Replayed end for turn 2 must NOT append a third row or clobber turn 1.
+    applyRealtimeEvent(sessionId, end2, harness.setMessagesBySession, harness.streamDraftIds);
+
+    expect((harness.snapshot()[sessionId] ?? []).map((message) => message.text)).toEqual(["first", "second"]);
   });
 
   it("dedupes replayed legacy/user messages while preserving distinct authored turns", () => {

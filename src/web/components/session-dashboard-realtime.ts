@@ -37,7 +37,14 @@ export function applyRealtimeEvent(
   if (event.type === "message_start" && isRecord(event.message)) {
     const message = event.message as unknown as WireMessage;
     if (message.role === "assistant") {
-      const draftId = draftIdForSession(sessionId, streamDraftIds);
+      // Key the streaming row by the turn's timestamp, not Date.now(). A
+      // Date.now()-based id collides when two turns start in the same
+      // millisecond (clobbering the earlier turn) and, more importantly, it
+      // can't be reconstructed when a replayed message_end arrives with no
+      // live draft — which is what produced duplicate assistant rows after an
+      // SSE auto-reconnect. The timestamp is stable across start/end/replay.
+      const draftId = assistantDraftId(sessionId, message.timestamp);
+      streamDraftIds[sessionId] = draftId;
       setMessagesBySession((current) => ({
         ...current,
         [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], wireMessageToTimeline(draftId, message, true)),
@@ -84,11 +91,27 @@ export function applyRealtimeEvent(
   if (event.type === "message_end" && isRecord(event.message)) {
     const message = event.message as unknown as WireMessage;
     if (message.role === "assistant") {
-      const draftId = streamDraftIds[sessionId] ?? draftIdForSession(sessionId, streamDraftIds);
+      const draftId = streamDraftIds[sessionId];
       delete streamDraftIds[sessionId];
+      if (draftId) {
+        // Normal finalize: replace the in-progress streaming row in place.
+        setMessagesBySession((current) => ({
+          ...current,
+          [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], wireMessageToTimeline(draftId, message, false)),
+        }));
+        return false;
+      }
+      // No live draft for this session ⇒ this message_end is a replay (e.g. an
+      // SSE auto-reconnect re-delivering buffered events) or a turn we joined
+      // mid-stream. The old code minted a FRESH Date.now() draft id here and
+      // appended — silently duplicating the assistant message on every replay
+      // (the unit test only "passed" because fake timers froze Date.now()).
+      // Re-key to the SAME timestamp-stable id message_start used, so upsert
+      // replaces the finalized row in place and the replay is idempotent.
+      const finalId = assistantDraftId(sessionId, message.timestamp);
       setMessagesBySession((current) => ({
         ...current,
-        [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], wireMessageToTimeline(draftId, message, false)),
+        [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], wireMessageToTimeline(finalId, message, false)),
       }));
       return false;
     }
@@ -162,6 +185,17 @@ export function applyRealtimeEvent(
   }
 
   return false;
+}
+
+/**
+ * Stable, replay-safe id for an assistant turn's streaming row. Derived from
+ * the turn timestamp so message_start, message_end, and any replayed
+ * message_end all resolve to the SAME timeline row (no duplicates, no
+ * cross-turn clobbering). Falls back to a session-scoped marker only when the
+ * timestamp is missing.
+ */
+export function assistantDraftId(sessionId: string, timestamp: number | undefined): string {
+  return `assistant-${sessionId}-${timestamp ?? "live"}`;
 }
 
 export function draftIdForSession(sessionId: string, streamDraftIds: Record<string, string>): string {
