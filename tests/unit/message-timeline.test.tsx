@@ -617,6 +617,66 @@ describe("MessageTimeline", () => {
     expect(screen.queryByTestId("artifact-fallback")).not.toBeInTheDocument();
   });
 
+  it("renders an iframe (not the JSON fallback) for a file-backed kind=html artifact", () => {
+    // REPRO for the path-backed HTML artifact bug. When show_artifact is called
+    // with kind:"html" and a `path` (no inline `html`), the server resolves the
+    // file to an artifact-file `url` but does NOT inline the HTML. The renderer
+    // only draws the <iframe> when `artifact.html` is present, so this falls
+    // through to ArtifactFallback and dumps the raw JSON descriptor.
+    const { container } = render(<MessageTimeline messages={[{
+      id: "html-path",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_html",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed html artifact: Draft email to Amira.",
+        artifact: {
+          kind: "html",
+          title: "Draft email to Amira",
+          // Resolved file-backing fields the server emits for path-backed html…
+          path: "/tmp/amira_email.html",
+          url: "/api/artifact-file?path=%2Ftmp%2Famira_email.html",
+          mimeType: "text/html",
+          // …but NO inline `html` field (the cause of the bug).
+        },
+      },
+    }]} />);
+
+    // The artifact must render inside an iframe.
+    expect(container.querySelector("iframe.artifact-html, figure.artifact-html iframe")).toBeTruthy();
+    // And the raw JSON descriptor must NOT be dumped into a <pre> fallback.
+    expect(screen.queryByText(/"mimeType": "text\/html"/)).not.toBeInTheDocument();
+  });
+
+  it("renders an iframe for a url-only kind=html artifact (no path, no inline html)", () => {
+    // Smaller variant: only a fetchable `url` is present. The renderer should
+    // still produce an iframe rather than the JSON fallback.
+    const { container } = render(<MessageTimeline messages={[{
+      id: "html-url",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_html_url",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed html artifact: Report.",
+        artifact: {
+          kind: "html",
+          title: "Report",
+          url: "/api/artifact-file?path=%2Ftmp%2Freport.html",
+          mimeType: "text/html",
+        },
+      },
+    }]} />);
+
+    expect(container.querySelector("iframe")).toBeTruthy();
+    expect(screen.queryByText(/"kind": "html"/)).not.toBeInTheDocument();
+  });
+
   function fileBackedMarkdownMessage() {
     return {
       id: "md-edit",
