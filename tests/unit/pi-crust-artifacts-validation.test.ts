@@ -137,6 +137,33 @@ describe("show_artifact path validation", () => {
     expect(artifact.url).toBeUndefined();
   });
 
+  it("emits a fetchable url (not inline html) for kind=html with a valid path", async () => {
+    // Contract the path-backed HTML renderer fix depends on: a kind=html
+    // artifact with a `path` resolves to an absolute path + artifact-file
+    // url + text/html mimeType, and does NOT inline the file body into
+    // `html` (unlike markdown — html is rendered via <iframe src=url>).
+    const tool = makeShowArtifact();
+    const filePath = path.join(workdir, "email.html");
+    await fs.writeFile(filePath, "<!doctype html><html><body><h1>Hi</h1></body></html>", "utf8");
+
+    const result = await tool.execute("call-1", { kind: "html", path: filePath, title: "Email" });
+    const artifact = result.details.piRemoteControlArtifact!;
+    expect(artifact.kind).toBe("html");
+    expect(artifact.path).toBe(filePath);
+    expect(typeof artifact.url).toBe("string");
+    expect(artifact.url as string).toMatch(/^\/api\/artifact-file\?path=/);
+    expect(artifact.url as string).toContain(encodeURIComponent(filePath));
+    expect(artifact.mimeType as string).toMatch(/^text\/html\b/);
+    // The renderer reads the file via the url; the body is not inlined.
+    expect(artifact.html).toBeUndefined();
+  });
+
+  it("throws when kind=html is given a path that doesn't exist (parity with image)", async () => {
+    const tool = makeShowArtifact();
+    const missing = path.join(workdir, "nope.html");
+    await expect(tool.execute("call-1", { kind: "html", path: missing })).rejects.toThrow(/file not found/);
+  });
+
   it("inlines the file contents into details.markdown for kind=markdown with a valid path", async () => {
     const tool = makeShowArtifact();
     const filePath = path.join(workdir, "report.md");

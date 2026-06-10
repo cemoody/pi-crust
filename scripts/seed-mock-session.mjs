@@ -888,3 +888,58 @@ await fs.writeFile(prStoryFile, JSON.stringify({
   lastActivity: Date.now(),
 }, null, 2) + '\n');
 console.log(`seeded ${prStoryFile}`);
+
+// Repro for the "path-backed HTML artifact renders as raw JSON" bug.
+//
+// When show_artifact is called with kind:"html" and a `path` (instead of an
+// inline `html` string), the extension resolves the file into an artifact-file
+// URL and emits a tool result whose artifact looks like:
+//   { version, kind:"html", title, path, url, mimeType:"text/html" }
+// with NO inline `html` field. The MessageTimeline ArtifactPreview only renders
+// the <iframe> when `artifact.html` is present, so the path-backed case falls
+// through to ArtifactFallback and dumps the JSON descriptor into a <pre> block
+// (exactly what the user reported in the screenshot).
+//
+// This seeds that exact tool-result shape and writes the backing HTML file so a
+// fix can fetch it via the artifact-file route. Pinned by
+// tests/playwright/artifact-html-path-render.spec.ts.
+const htmlPathSessionId = 'seeded-session-html-path';
+const htmlPathSessionFile = path.join(root, '0000000000011_seeded-session-html-path.mock-session.json');
+const htmlArtifactAbsPath = path.join(cwd, '.tmp', 'seeded-html-artifact.html');
+const htmlArtifactBody = '<!doctype html><html><head><meta charset="utf-8"><title>Draft email to Amira</title></head><body><h1 id="seeded-html-heading">HD shingle prices (inline plots)</h1><p id="seeded-html-body">This HTML should render inside a sandboxed iframe, not be dumped as JSON.</p></body></html>';
+await fs.mkdir(path.dirname(htmlArtifactAbsPath), { recursive: true });
+await fs.writeFile(htmlArtifactAbsPath, htmlArtifactBody, 'utf8');
+const htmlArtifactUrl = `/api/artifact-file?path=${encodeURIComponent(htmlArtifactAbsPath)}`;
+await fs.writeFile(htmlPathSessionFile, JSON.stringify({
+  id: htmlPathSessionId,
+  cwd,
+  sessionFile: htmlPathSessionFile,
+  sessionName: 'HTML path artifact',
+  messages: [
+    { role: 'user', content: 'Draft the email and render it inline', timestamp: 1700000011000 },
+    {
+      role: 'tool',
+      content: 'Displayed html artifact: Draft email to Amira — HD shingle prices (inline plots).',
+      timestamp: 1700000011100,
+      tool: {
+        id: 'call_show_html_path',
+        name: 'show_artifact',
+        args: { kind: 'html', path: htmlArtifactAbsPath, title: 'Draft email to Amira — HD shingle prices (inline plots)' },
+        status: 'success',
+        output: 'Displayed html artifact: Draft email to Amira — HD shingle prices (inline plots).',
+        startedAt: 1700000011050,
+        completedAt: 1700000011100,
+        artifact: {
+          version: 1,
+          kind: 'html',
+          title: 'Draft email to Amira — HD shingle prices (inline plots)',
+          path: htmlArtifactAbsPath,
+          url: htmlArtifactUrl,
+          mimeType: 'text/html',
+        },
+      },
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${htmlPathSessionFile}`);
