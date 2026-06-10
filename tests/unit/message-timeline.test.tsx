@@ -677,6 +677,66 @@ describe("MessageTimeline", () => {
     expect(screen.queryByText(/"kind": "html"/)).not.toBeInTheDocument();
   });
 
+  it("still renders inline-html artifacts via srcDoc (regression guard for the fix)", () => {
+    // The working path must keep working after the path/url fix: an artifact
+    // that carries an inline `html` string renders in a sandboxed iframe.
+    const { container } = render(<MessageTimeline messages={[{
+      id: "html-inline",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_inline",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed html artifact: Inline.",
+        artifact: {
+          kind: "html",
+          title: "Inline",
+          html: "<!doctype html><html><body><p>inline-ok</p></body></html>",
+        },
+      },
+    }]} />);
+
+    const iframe = container.querySelector("figure.artifact-html iframe") as HTMLIFrameElement | null;
+    expect(iframe).toBeTruthy();
+    expect(iframe?.getAttribute("srcdoc")).toContain("inline-ok");
+    expect(screen.queryByText(/"kind": "html"/)).not.toBeInTheDocument();
+  });
+
+  it("sandboxes a url-backed html iframe without granting same-origin access (security)", () => {
+    // Security invariant for the fix: a url-backed html iframe must carry a
+    // sandbox attribute that never includes allow-same-origin, so artifact
+    // HTML can't read the host app's cookies/DOM.
+    const { container } = render(<MessageTimeline messages={[{
+      id: "html-sandbox",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_sandbox",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed html artifact: Report.",
+        artifact: {
+          kind: "html",
+          title: "Report",
+          path: "/tmp/report.html",
+          url: "/api/artifact-file?path=%2Ftmp%2Freport.html",
+          mimeType: "text/html",
+        },
+      },
+    }]} />);
+
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement | null;
+    expect(iframe).toBeTruthy();
+    // The iframe must point at the resolved artifact-file url…
+    expect(iframe?.getAttribute("src") ?? "").toContain("/api/artifact-file?path=");
+    // …and be sandboxed without same-origin access.
+    expect(iframe?.hasAttribute("sandbox")).toBe(true);
+    expect(iframe?.getAttribute("sandbox") ?? "").not.toContain("allow-same-origin");
+  });
+
   function fileBackedMarkdownMessage() {
     return {
       id: "md-edit",
