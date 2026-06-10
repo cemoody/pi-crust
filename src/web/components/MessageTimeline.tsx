@@ -654,13 +654,31 @@ function ArtifactPreview({ artifact }: { readonly artifact: TimelineArtifact }) 
       </figure>
     ) : <ArtifactFallback artifact={artifact} />;
   }
-  if (artifact.kind === "html" && artifact.html) {
-    return (
-      <figure className="artifact-preview artifact-html">
-        <figcaption>{title}</figcaption>
-        <iframe title={title} sandbox="" srcDoc={artifact.html} />
-      </figure>
-    );
+  if (artifact.kind === "html") {
+    // Inline HTML renders via srcDoc; a file-backed artifact (path/url with no
+    // inline `html`) renders via src pointing at the artifact-file route. In
+    // both cases the iframe is sandboxed WITHOUT allow-same-origin so artifact
+    // HTML can never read the host app's cookies/DOM. (`allow-scripts` lets
+    // interactive content — e.g. embedded plots — run inside the opaque origin.)
+    if (typeof artifact.html === "string") {
+      return (
+        <figure className="artifact-preview artifact-html">
+          <figcaption>{title}</figcaption>
+          <iframe title={title} className="artifact-html" sandbox="" srcDoc={artifact.html} />
+        </figure>
+      );
+    }
+    const src = artifact.url ?? artifact.path;
+    if (typeof src === "string" && src.length > 0) {
+      const base = import.meta.env.VITE_PI_CRUST_API_BASE ?? "";
+      const resolved = src.startsWith("/api/") ? `${base}${src}` : src;
+      return (
+        <figure className="artifact-preview artifact-html">
+          <figcaption>{title}</figcaption>
+          <iframe title={title} className="artifact-html" sandbox="allow-scripts" src={resolved} />
+        </figure>
+      );
+    }
   }
   if (artifact.kind === "markdown" && typeof artifact.markdown === "string") {
     return <MarkdownArtifact artifact={artifact} title={title} />;
