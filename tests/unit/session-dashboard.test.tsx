@@ -349,10 +349,14 @@ describe("SessionDashboard", () => {
     expect(icon).toHaveAttribute("src", "https://example.com/logo-wide.png");
     expect(container.querySelector(".app-brand-icon-text")).not.toBeInTheDocument();
     await waitFor(() => expect(document.title).toBe("Moody Lab"));
+    // The favicon points directly at the image URL. We must NOT wrap a remote
+    // image inside an SVG data-URI (<image href="…">): browsers sandbox
+    // data-URI SVG documents and refuse to fetch external resources from them,
+    // which left the tab showing a broken-image glyph. updateFavicon refines
+    // this to a rasterized PNG data URL once the bitmap loads, but that canvas
+    // step does not run under jsdom, so the direct URL is the expected result.
     const faviconHref = document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href ?? "";
-    expect(faviconHref).toContain("data:image/svg+xml");
-    expect(decodeURIComponent(faviconHref)).toContain('preserveAspectRatio="xMidYMid meet"');
-    expect(decodeURIComponent(faviconHref)).toContain("https://example.com/logo-wide.png");
+    expect(faviconHref).toBe("https://example.com/logo-wide.png");
   });
 
   it("reuses the dashboard's server git SHA when opening shortcut help", async () => {
