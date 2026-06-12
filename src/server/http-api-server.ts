@@ -2084,7 +2084,19 @@ async function readSessionMessagesTail(
     // rather than silently returning an empty timeline.
     let sawSessionShapedRecord = false;
 
-    while (position > 0 && collected.length < options.limit) {
+    // Read backwards until we have collected `limit` *normalized* messages
+    // (or hit the start of the file). We deliberately do NOT stop at
+    // `limit` RAW records: toSessionMessages() merges every
+    // `role:"toolResult"` record into its matching tool row and drops
+    // empty tool-call-only assistant turns, so a window of N raw records
+    // can normalize to fewer than N messages. Stopping at N raw would hand
+    // the client a short page (< limit) even though older history exists;
+    // SessionDashboard reads `messages.length >= limit` as "a full page,
+    // so more probably exist" and would otherwise disable scroll-up
+    // pagination for the rest of the transcript. Regression observed on
+    // tool-heavy sessions that only ever rendered their tail; pinned by
+    // tests/e2e/http-api-tail-read-pagination-shrink.test.ts.
+    while (position > 0) {
       const readSize = Math.min(TAIL_CHUNK_SIZE, position);
       position -= readSize;
       const chunk = Buffer.alloc(readSize);
@@ -2168,6 +2180,10 @@ async function readSessionMessagesTail(
       // end so toSessionMessages's toolCall/toolResult index works
       // across the whole window, not per-chunk.
       collected.unshift(...(fresh as SessionMessage[]));
+      // Count the way the client (and the final return below) does: after
+      // the fan-out. Once we have a full normalized page we can stop
+      // reading older chunks.
+      if (toSessionMessages(collected).length >= options.limit) break;
     }
     if (!sawSessionShapedRecord) return undefined;
     // Run the full raw-JSONL window through toSessionMessages so the

@@ -943,3 +943,64 @@ await fs.writeFile(htmlPathSessionFile, JSON.stringify({
   lastActivity: Date.now(),
 }, null, 2) + '\n');
 console.log(`seeded ${htmlPathSessionFile}`);
+
+// Long TOOL-HEAVY transcript, written as a real on-disk pirpc/Anthropic
+// `.jsonl` (NOT a .mock-session.json), so it flows through the production
+// /messages tail-read path (readSessionMessagesTail + the
+// toSessionMessages fan-out) rather than the mock adapter's pre-shaped
+// in-memory messages.
+//
+// Reproduces the "can't scroll back to the start" bug from session
+// 019ea8e9: readSessionMessagesTail() used to stop after collecting
+// `limit` RAW jsonl records, but tool-call-only assistant turns +
+// separate `role:"toolResult"` records FAN DOWN under normalization (the
+// empty assistant turn is dropped, the toolResult merges into its tool
+// row). A 200-raw tail window therefore normalized to ~130 messages, the
+// client saw `messages.length < INITIAL_MESSAGES_LIMIT`, concluded the
+// transcript was complete, and disabled scroll-up pagination — stranding
+// the user partway down a long session.
+//
+// Records are padded to ~3KB so the file spans many 64KB tail-read chunks
+// (≈1.3MB total), exactly like the real session. Pinned by
+// tests/playwright/long-session-tool-pagination.spec.ts.
+const toolPaginationId = 'seeded-tool-pagination';
+const toolPaginationFile = path.join(root, '0000000000012_seeded-session-tool-pagination.jsonl');
+const TOOL_PAGINATION_TURNS = 160;
+const PAD = 'x'.repeat(3000);
+const jsonlLines = [];
+let toolPgTs = 1700000012000;
+const isoOf = (ms) => new Date(ms).toISOString();
+jsonlLines.push({ type: 'session', id: toolPaginationId, cwd, sessionName: 'Long tool-call session', timestamp: isoOf(toolPgTs) });
+for (let i = 0; i < TOOL_PAGINATION_TURNS; i++) {
+  toolPgTs += 1000;
+  const userText = i === 0
+    ? `FIRST-MESSAGE-MARKER-α: original prompt ${PAD}`
+    : `user turn ${i} please run a command ${PAD}`;
+  jsonlLines.push({
+    type: 'message', id: `tp-u-${i}`, timestamp: isoOf(toolPgTs),
+    message: { role: 'user', content: [{ type: 'text', text: userText }] },
+  });
+  toolPgTs += 1000;
+  const callId = `toolu_tp_${i}`;
+  // Tool-call-only assistant turn (no text block): under fan-out this
+  // produces just a role:"tool" row, and the toolResult below merges into
+  // it — so 2 raw records collapse to 1 normalized message.
+  jsonlLines.push({
+    type: 'message', id: `tp-a-${i}`, timestamp: isoOf(toolPgTs),
+    message: { role: 'assistant', content: [{ type: 'toolCall', id: callId, name: 'bash', arguments: { command: `echo "turn ${i}" # ${PAD}` } }] },
+  });
+  toolPgTs += 100;
+  jsonlLines.push({
+    type: 'message', id: `tp-tr-${i}`, timestamp: isoOf(toolPgTs),
+    message: { role: 'toolResult', toolCallId: callId, content: [{ type: 'text', text: `turn ${i} output ${PAD}` }] },
+  });
+}
+// Final assistant TEXT turn so the tail carries a visible LAST sentinel
+// bubble (the call-only turns above render only as tool rows).
+toolPgTs += 1000;
+jsonlLines.push({
+  type: 'message', id: 'tp-final', timestamp: isoOf(toolPgTs),
+  message: { role: 'assistant', content: [{ type: 'text', text: `LAST-MESSAGE-MARKER-ω: all ${TOOL_PAGINATION_TURNS} turns done.` }] },
+});
+await fs.writeFile(toolPaginationFile, jsonlLines.map((l) => JSON.stringify(l)).join('\n') + '\n', 'utf8');
+console.log(`seeded ${toolPaginationFile} (${jsonlLines.length} jsonl records)`);
