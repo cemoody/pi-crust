@@ -54,28 +54,63 @@ export function updateFavicon(appIcon: string | undefined): void {
   if (typeof document === "undefined") return;
   const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
   if (!link) return;
-  link.type = "image/svg+xml";
   if (!appIcon) {
     delete link.dataset.piRemoteIconSource;
+    link.type = "image/svg+xml";
     link.href = "/favicon.svg";
     return;
   }
 
-  // Start with a safe square SVG wrapper immediately, then refine it after
-  // the browser tells us the image's intrinsic dimensions. Chrome's tab-strip
-  // favicon renderer has historically stretched non-square bitmap favicons;
-  // using explicit SVG image geometry avoids depending on favicon-specific
-  // preserveAspectRatio handling for wide logos.
+  // Point the favicon directly at the image URL as an immediate fallback.
+  // A <link rel="icon"> pointing straight at a PNG/SVG URL loads fine. We must
+  // NOT wrap a remote image inside an SVG data-URI via <image href="…">:
+  // browsers sandbox data-URI SVG documents and refuse to fetch external
+  // resources from them, which leaves the tab showing a broken-image glyph.
   link.dataset.piRemoteIconSource = appIcon;
-  link.href = imageFaviconDataUrl(appIcon);
+  link.removeAttribute("type");
+  link.href = appIcon;
 
+  // Refine to a square, letterboxed favicon so non-square logos are not
+  // stretched by the tab-strip renderer. We rasterize the bitmap onto a
+  // canvas and emit a self-contained PNG data URL (the asset CDN allows CORS).
   const image = new Image();
+  image.crossOrigin = "anonymous";
   image.onload = () => {
     if (link.dataset.piRemoteIconSource !== appIcon) return;
-    if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
-    link.href = imageFaviconDataUrl(appIcon, { width: image.naturalWidth, height: image.naturalHeight });
+    const dataUrl = rasterizeSquareFavicon(image);
+    if (!dataUrl) return;
+    if (link.dataset.piRemoteIconSource !== appIcon) return;
+    link.type = "image/png";
+    link.href = dataUrl;
   };
   image.src = appIcon;
+}
+
+/**
+ * Draw a loaded image into a 64×64 canvas, contained (letterboxed) so the
+ * source aspect ratio is preserved, and return a PNG data URL. Returns
+ * undefined when the image has no intrinsic size or the canvas is tainted.
+ */
+function rasterizeSquareFavicon(image: HTMLImageElement): string | undefined {
+  const naturalWidth = image.naturalWidth;
+  const naturalHeight = image.naturalHeight;
+  if (naturalWidth <= 0 || naturalHeight <= 0) return undefined;
+  const box = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = box;
+  canvas.height = box;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return undefined;
+  const drawn = containedImageBox({ width: naturalWidth, height: naturalHeight }, 56);
+  const dx = (box - drawn.width) / 2;
+  const dy = (box - drawn.height) / 2;
+  ctx.drawImage(image, dx, dy, drawn.width, drawn.height);
+  try {
+    return canvas.toDataURL("image/png");
+  } catch {
+    // Canvas tainted (CORS denied) — keep the direct-URL fallback already set.
+    return undefined;
+  }
 }
 
 export function imageFaviconDataUrl(
