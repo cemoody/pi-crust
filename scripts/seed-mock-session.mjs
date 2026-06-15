@@ -1004,3 +1004,39 @@ jsonlLines.push({
 });
 await fs.writeFile(toolPaginationFile, jsonlLines.map((l) => JSON.stringify(l)).join('\n') + '\n', 'utf8');
 console.log(`seeded ${toolPaginationFile} (${jsonlLines.length} jsonl records)`);
+
+// Repro for the "composer + content shoved off the right edge on mobile" bug.
+//
+// On a phone viewport the active-session header is a grid item with the
+// default `min-width: auto`, so it refuses to shrink below its min-content
+// width. With a LONG session title plus the right-aligned action icons, that
+// min-content exceeds the viewport width, forcing the entire `.active-session`
+// grid column — header, message timeline, AND the prompt composer — wider than
+// the screen. The result: body text is clipped on the right and the composer's
+// right edge + send/stop button hang off the right-hand side (only triggers for
+// long titles, which is why it shows up rarely). Pinned by
+// tests/playwright/mobile-header-rhs-overflow.spec.ts.
+const rhsId = 'seeded-session-rhs-overflow';
+const rhsFile = path.join(root, '0000000000013_seeded-session-rhs-overflow.mock-session.json');
+const rhsBody = [
+  '**Read for your meeting:** He\'s a **strategy/policy/finance executive, not a',
+  'technical or data/ML person.** He\'ll be evaluating the partnership through a',
+  '*strategic-fit, partnership, and growth* lens — "does this advance the',
+  'tech-enabled platform thesis and global growth," not "how does the embedding',
+  'pipeline work." Pitch the *capability and business leverage*, keep ML depth in',
+  'your back pocket unless he pulls in his technical people.',
+].join(' ');
+await fs.writeFile(rhsFile, JSON.stringify({
+  id: rhsId,
+  cwd,
+  sessionFile: rhsFile,
+  // A deliberately long title — long enough that its min-content plus the
+  // header action icons would overflow a 375px phone viewport.
+  sessionName: 'Prep: Acrisure + Vertical Accelerator partner research',
+  messages: [
+    { role: 'user', content: 'Who is in the meeting and how should I prep?', timestamp: 1700000013000 },
+    { role: 'assistant', content: rhsBody, timestamp: 1700000013001 },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${rhsFile}`);

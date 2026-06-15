@@ -575,6 +575,14 @@ a.sidebar-menu-item:visited {
      vertically aligns with the sidebar h1 / collapse toggle. */
   margin-top: 8px;
   background: transparent;
+  /* The header is a grid item of `.active-session` (display: grid). Grid items
+     default to `min-width: auto`, which refuses to shrink below their
+     min-content width. A long session title would therefore force the whole
+     grid column — header, timeline, AND the prompt composer — wider than a
+     phone viewport, pushing the composer's right edge (send/stop button) off
+     the right of the screen. `min-width: 0` lets the title truncate (it already
+     has overflow: hidden + text-overflow: ellipsis) instead of overflowing. */
+  min-width: 0;
 }
 
 .active-title {
