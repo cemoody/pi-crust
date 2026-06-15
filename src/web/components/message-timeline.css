@@ -131,6 +131,12 @@
   padding: 8px 14px;
   max-width: 70%;
   width: fit-content;
+  /* A huge pasted prompt must not take over the whole screen. Cap the bubble
+     to a fraction of the viewport and let the overflowing content scroll
+     internally so the rest of the timeline stays reachable. */
+  max-height: 60vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .message-card.user .markdown-lite p { margin: 0; }
