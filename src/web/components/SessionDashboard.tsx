@@ -640,18 +640,26 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     try {
       const older = await api.getMessages(sessionId, { limit: INITIAL_MESSAGES_LIMIT, before: oldestTs });
       const olderTimeline = older.map(toTimelineMessage);
+      const present = messagesBySession[sessionId] ?? [];
+      const known = new Set(present.map((m) => m.id));
+      const freshCount = olderTimeline.reduce((n, m) => (known.has(m.id) ? n : n + 1), 0);
       setMessagesBySession((current) => {
-        const present = current[sessionId] ?? [];
-        const known = new Set(present.map((m) => m.id));
-        const fresh = olderTimeline.filter((m) => !known.has(m.id));
+        const currentPresent = current[sessionId] ?? [];
+        const currentKnown = new Set(currentPresent.map((m) => m.id));
+        const fresh = olderTimeline.filter((m) => !currentKnown.has(m.id));
         if (fresh.length === 0) return current;
-        return { ...current, [sessionId]: [...fresh, ...present] };
+        return { ...current, [sessionId]: [...fresh, ...currentPresent] };
       });
-      // If the server returned fewer than we asked for we've reached the
-      // start of the transcript — stop triggering future fetches.
+      // Stop paging only on a genuine "reached the start" signal: a page
+      // that yielded no NEW messages. We deliberately do NOT key off
+      // `older.length >= limit` alone — the server's fan-out (toolResult
+      // records merged into tool rows) used to make a full window come
+      // back shorter than `limit`, which tricked this into concluding the
+      // transcript was complete and disabled scroll-up pagination. See
+      // tests/e2e/http-api-tail-read-pagination-shrink.test.ts.
       setHasMoreOlderBySession((current) => ({
         ...current,
-        [sessionId]: older.length >= INITIAL_MESSAGES_LIMIT,
+        [sessionId]: freshCount > 0 && older.length >= INITIAL_MESSAGES_LIMIT,
       }));
     } catch (caught) {
       setError(errorMessage(caught));

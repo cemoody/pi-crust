@@ -88,7 +88,7 @@ export class MockPiAdapter implements PiAdapter {
     const entries = await fs.readdir(this.sessionRoot);
     const items: SessionListItem[] = [];
     for (const entry of entries) {
-      if (!entry.endsWith(".mock-session.json")) continue;
+      if (!entry.endsWith(".mock-session.json") && !entry.endsWith(".jsonl")) continue;
       const sessionFile = path.join(this.sessionRoot, entry);
       const persisted = await readSession(sessionFile);
       if (cwd !== undefined && persisted.cwd !== path.resolve(cwd)) continue;
@@ -442,7 +442,43 @@ function shortId(id: string): string {
 
 async function readSession(sessionFile: string): Promise<PersistedMockSession> {
   const raw = await fs.readFile(sessionFile, "utf8");
+  // Test-infra affordance: a real on-disk pirpc/Anthropic `.jsonl`
+  // transcript can be dropped into the mock session root so Playwright
+  // can exercise the production tail-read code path
+  // (readSessionMessagesTail + the toSessionMessages fan-out) instead of
+  // the mock's pre-shaped in-memory messages. We only need enough
+  // metadata to register the session; the actual messages are served by
+  // the HTTP /messages tail-read straight from this file.
+  if (sessionFile.endsWith(".jsonl")) return readJsonlSessionHeader(sessionFile, raw);
   return JSON.parse(raw) as PersistedMockSession;
+}
+
+function readJsonlSessionHeader(sessionFile: string, raw: string): PersistedMockSession {
+  let id = path.basename(sessionFile, ".jsonl");
+  let cwd = path.dirname(sessionFile);
+  let sessionName: string | undefined;
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      if (entry.type === "session") {
+        if (typeof entry.id === "string") id = entry.id;
+        if (typeof entry.cwd === "string") cwd = entry.cwd;
+        if (typeof entry.sessionName === "string") sessionName = entry.sessionName;
+        break;
+      }
+    } catch {
+      // Ignore non-JSON lines; the header is normally the first record.
+    }
+  }
+  return {
+    id,
+    cwd: path.resolve(cwd),
+    sessionFile,
+    ...optional({ sessionName }),
+    messages: [],
+    lastActivity: Date.now(),
+  };
 }
 
 async function writeSession(session: PersistedMockSession): Promise<void> {

@@ -24,13 +24,15 @@ async function enterEditMode(page: Page) {
   await expect(modal.locator("[contenteditable]").first()).toBeVisible();
 }
 
-/** Navigate to a specific slide index by clicking the deck's `[data-next]`
- *  button N times. Inactive slides are display:none, so the test must
- *  navigate before interacting with anything past slide 0. */
+/** Navigate to a specific slide index by clicking the modal's "Next slide"
+ *  button N times. The iframe runs embedded (its own deck-controls are
+ *  suppressed to avoid competing arrows), so navigation now goes through the
+ *  React modal chrome, which postMessages the iframe. Inactive slides are
+ *  display:none, so the test must navigate before interacting past slide 0. */
 async function gotoSlide(page: Page, target: number) {
   const modal = page.frameLocator('[data-testid="artifact-presentation-modal"]');
   for (let i = 0; i < target; i += 1) {
-    await modal.locator("[data-next]").click();
+    await page.getByRole("button", { name: "Next slide" }).click();
   }
   // Ensure the target slide is now visible.
   await expect(modal.locator(`section.slide.active[data-slide-index="${target}"]`)).toBeVisible();

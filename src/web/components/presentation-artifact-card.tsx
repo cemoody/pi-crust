@@ -238,7 +238,10 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
       return {
         // In-page Present modal stays synchronous — we don't need asset
         // inlining for an iframe that runs inside the same origin.
-        html: compileRevealHtml(absModal, editing ? { editable: true } : {}),
+        // `embedded: true` suppresses the iframe's own bottom-right
+        // nav.deck-controls so only the React modal chrome shows nav
+        // (fixes the "competing arrows" bug). Keyboard + swipe stay live.
+        html: compileRevealHtml(absModal, editing ? { editable: true, embedded: true } : { embedded: true }),
         previewHtml: compileRevealHtml(absStable, { startSlide: 0, title: `${stableDeck.title} preview` }),
         markdown: presentationFallbackMarkdown(stableDeck),
       };
@@ -350,6 +353,16 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
               >
                 ×
               </button>
+              {sessionId && deckId ? (
+                <button
+                  type="button"
+                  className="presentation-modal-swap-edit"
+                  onClick={() => { exitPresentationMode(); setEditing(true); }}
+                  title="Switch to edit mode"
+                >
+                  Edit
+                </button>
+              ) : null}
               <div className="presentation-modal-nav" role="group" aria-label="Slide navigation">
                 <button
                   type="button"
@@ -401,22 +414,27 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
                     ›
                   </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setEditing((v) => !v)}
-                  aria-pressed={editing}
-                  disabled={!sessionId || !deckId}
-                  title={!sessionId || !deckId ? "Editing requires a session and a deck id" : undefined}
-                >
-                  {editing ? "Editing…" : "Edit"}
-                </button>
-                <button
-                  type="button"
-                  onClick={enterPresentationMode}
-                  title="Hide controls and fill the screen"
-                >
-                  Presentation mode
-                </button>
+                <div className="presentation-mode-switch" role="group" aria-label="Slide mode">
+                  <button
+                    type="button"
+                    className={editing ? "is-active" : ""}
+                    aria-pressed={editing}
+                    onClick={() => setEditing(true)}
+                    disabled={!sessionId || !deckId}
+                    title={!sessionId || !deckId ? "Editing requires a session and a deck id" : "Edit slides"}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className={!editing ? "is-active" : ""}
+                    aria-pressed={!editing}
+                    onClick={() => { setEditing(false); enterPresentationMode(); }}
+                    title="Present full screen (hide controls)"
+                  >
+                    Present
+                  </button>
+                </div>
                 <button
                   type="button"
                   className="presentation-modal-close"

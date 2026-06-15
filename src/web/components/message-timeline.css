@@ -763,6 +763,9 @@
 .presentation-modal {
   position: fixed;
   inset: 0;
+  /* dvh tracks the *dynamic* viewport so the deck isn't clipped behind the
+     mobile browser URL bar / home indicator. Falls back to 100% (== inset:0). */
+  height: 100dvh;
   z-index: 1000;
   display: grid;
   grid-template-rows: auto 1fr;
@@ -778,18 +781,50 @@
 
 .presentation-modal-toolbar {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: 8px 12px;
+  /* Clear the iOS status bar / notch so the toolbar (and Close) never tuck
+     under the system clock. */
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
   background: rgba(17,24,39,.96);
   color: white;
 }
 
+/* Deck title shrinks and truncates so it can never push the action buttons
+   (Edit / Presentation mode / Close) off the right edge. */
+.presentation-modal-toolbar > strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .presentation-modal-toolbar-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  /* The close button lives at the end of this group; margin-left:auto keeps
+     it hard-anchored to the right so it stays reachable as things wrap. */
+  flex: 1 1 auto;
+}
+
+.presentation-modal-toolbar-actions .presentation-modal-close {
+  margin-left: auto;
+}
+
+/* Narrow phones: drop the title to its own line and let the actions own the
+   full width so every control (especially Close) stays on-screen. */
+@media (max-width: 480px) {
+  .presentation-modal-toolbar > strong { flex-basis: 100%; }
+  .presentation-modal-toolbar button,
+  .presentation-modal-nav button {
+    min-height: 40px;
+  }
 }
 
 .presentation-modal-toolbar button {
@@ -817,6 +852,80 @@
   width: 32px;
   padding: 0;
   font-size: 22px;
+}
+
+/* Segmented Edit | Present switch — one connected control that replaces the
+   two separate "Edit" and "Presentation mode" buttons (frees top-bar space). */
+.presentation-mode-switch {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.presentation-mode-switch button {
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(255,255,255,.72);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.presentation-mode-switch button + button {
+  border-left: 1px solid rgba(255,255,255,.2);
+}
+
+.presentation-mode-switch button:hover:not(:disabled) {
+  background: rgba(255,255,255,.1);
+  color: white;
+}
+
+.presentation-mode-switch button.is-active {
+  background: rgba(255,255,255,.18);
+  color: white;
+}
+
+.presentation-mode-switch button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 480px) {
+  .presentation-mode-switch button { min-height: 40px; }
+}
+
+/* "Edit" affordance shown inside immersive present mode so the single switch
+   is bidirectional (Present → Edit and back). */
+.presentation-modal-swap-edit {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: calc(max(12px, env(safe-area-inset-right)) + 52px);
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(0,0,0,.35);
+  color: white;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  opacity: .35;
+  transition: opacity .15s ease;
+}
+
+.presentation-modal-swap-edit:hover,
+.presentation-modal-swap-edit:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .presentation-modal-swap-edit { opacity: 1; }
 }
 
 .presentation-modal-nav {
@@ -876,10 +985,10 @@
 
 .presentation-modal-exit {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 36px;
-  height: 36px;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.18);
   background: rgba(0,0,0,.35);
@@ -895,6 +1004,15 @@
 .presentation-modal-exit:hover,
 .presentation-modal-exit:focus-visible {
   opacity: 1;
+}
+
+/* On touch devices there is no hover, so the low-opacity "resting" state of the
+   exit/nav controls reads as disabled. Keep them fully visible there. */
+@media (hover: none), (pointer: coarse) {
+  .presentation-modal-presenting .presentation-modal-nav,
+  .presentation-modal-exit {
+    opacity: 1;
+  }
 }
 
 .presentation-modal iframe {
