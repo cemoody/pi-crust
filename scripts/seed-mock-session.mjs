@@ -145,6 +145,28 @@ await fs.writeFile(toolWrapSessionFile, JSON.stringify({
 }, null, 2) + '\n');
 console.log(`seeded ${toolWrapSessionFile}`);
 
+// Seeded session: a single enormous user prompt. Reproduces the bug where a
+// very long user message bubble grows unbounded and takes over the whole
+// screen instead of being height-capped with an internal scroll region.
+const hugePromptId = 'seeded-session-hugeprompt';
+const hugePromptSessionFile = path.join(root, '0000000000009_seeded-session-hugeprompt.mock-session.json');
+const hugeParagraph = ('Follow-up: here is the most recent conversation with KD and Olivia. ' +
+  'We were introduced to the chief of staff and discussed building a bank partner integration, ' +
+  'leveraging them as a distribution channel, and surfacing the right product at the right time. ').repeat(40);
+const hugePrompt = Array.from({ length: 8 }, () => hugeParagraph).join('\n\n');
+await fs.writeFile(hugePromptSessionFile, JSON.stringify({
+  id: hugePromptId,
+  cwd,
+  sessionFile: hugePromptSessionFile,
+  sessionName: 'Huge prompt session',
+  messages: [
+    { role: 'user', content: hugePrompt, timestamp: 1700000009000 },
+    { role: 'assistant', content: 'Got it — thanks for the detailed context.', timestamp: 1700000009001 },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${hugePromptSessionFile}`);
+
 // Fourth seeded session: presentation artifact preview/present flow.
 const presentationId = 'seeded-session-presentation';
 const presentationSessionFile = path.join(root, '0000000000003_seeded-session-presentation.mock-session.json');
