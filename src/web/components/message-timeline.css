@@ -767,16 +767,26 @@
      mobile browser URL bar / home indicator. Falls back to 100% (== inset:0). */
   height: 100dvh;
   z-index: 1000;
-  display: grid;
-  grid-template-rows: auto 1fr;
+  /* Flex column (not grid): the toolbar + any conditional header rows (the
+     "edit not supported" banner, the edit-error alert) are auto-height and
+     the iframe always flexes to fill the rest. A previous grid
+     `grid-template-rows: auto 1fr` broke in edit mode — the banner became a
+     3rd child, grabbed the 1fr row, and the iframe collapsed to its ~150px
+     intrinsic height (tiny slide pinned to the bottom). */
+  display: flex;
+  flex-direction: column;
   background: #111;
   border-radius: 0;
   overflow: hidden;
   box-shadow: 0 24px 80px rgba(0,0,0,.45);
 }
 
-.presentation-modal-presenting {
-  grid-template-rows: 1fr;
+/* Toolbar + conditional banner/error rows never flex; the iframe owns the
+   remaining space. */
+.presentation-modal > .presentation-modal-toolbar,
+.presentation-modal > .presentation-edit-banner,
+.presentation-modal > .presentation-edit-error {
+  flex: 0 0 auto;
 }
 
 .presentation-modal-toolbar {
@@ -1016,8 +1026,12 @@
 }
 
 .presentation-modal iframe {
+  flex: 1 1 auto;
   width: 100%;
   height: 100%;
+  /* min-height:0 lets the flex item shrink below its intrinsic iframe size so
+     it tracks the flex row instead of forcing overflow. */
+  min-height: 0;
   border: 0;
   background: #111;
 }
