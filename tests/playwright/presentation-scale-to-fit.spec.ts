@@ -3,7 +3,8 @@ import { compileRevealHtml } from "../../src/presentations/reveal.js";
 import type { PresentationDeck } from "../../src/presentations/schema.js";
 
 // ---------------------------------------------------------------------------
-// Reproduces the "presentation does not scale to fit the viewport" bugs.
+// Regression tests for the "presentation does not scale to fit the viewport"
+// bugs (originally RED; green after the scale-to-fit fix in reveal.ts).
 //
 // Template-pack layouts (e.g. the BrainCo pack used by the QXO deck) ship a
 // *fixed* 1920x1080 px canvas:
@@ -25,9 +26,11 @@ import type { PresentationDeck } from "../../src/presentations/schema.js";
 //   3. Embedded PRC iframe: the 1920x1080 canvas renders at 1:1 with no
 //      scaling, so only the top-left corner is visible.
 //
-// The fix is to wrap templated slides in a scaler that computes
-// scale = min(vw/1920, vh/1080) and centers the canvas. Until then the
-// assertions below are RED.
+// The fix wraps templated slides in a `.slide-scaler` whose runtime transform
+// is scale = min(deckW/canvasW, deckH/canvasH), centered, and pins the outer
+// deck/section back to the viewport so a pack's leaked `html,body{width:..}`
+// and `.slide{width:..}` rules can't resize the deck. These assertions verify
+// the whole canvas (incl. footer) fits at any viewport.
 // ---------------------------------------------------------------------------
 
 const FIXED_W = 1920;
@@ -69,7 +72,7 @@ function htmlForDeck(): string {
 const FULLSCREEN_VP = { width: 1512, height: 860 };
 
 test.describe("presentation scale-to-fit (templated 1920x1080 canvas)", () => {
-  test("full screen: footer is clipped because the fixed canvas is not scaled", async ({ page }) => {
+  test("full screen: footer stays inside the viewport (canvas scaled to fit)", async ({ page }) => {
     await page.setViewportSize(FULLSCREEN_VP);
     await page.setContent(htmlForDeck());
 
@@ -83,9 +86,8 @@ test.describe("presentation scale-to-fit (templated 1920x1080 canvas)", () => {
     await page.screenshot({ path: "test-results/scale-repro-1-fullscreen-clip.png" });
 
     // The footer must be fully inside the viewport to be visible to the user.
-    // Today it sits at ~1031px (top of the fixed canvas) which is below an
-    // 860px-tall viewport => clipped. This assertion is RED until templated
-    // slides are scaled to fit.
+    // Before the fix it sat at ~1031px (top-left of the unscaled fixed canvas),
+    // below an 860px-tall viewport => clipped. With scale-to-fit it fits.
     expect(box).not.toBeNull();
     const footerBottom = box!.y + box!.height;
     expect(
@@ -94,10 +96,10 @@ test.describe("presentation scale-to-fit (templated 1920x1080 canvas)", () => {
     ).toBeLessThanOrEqual(vp.height);
   });
 
-  test("embedded iframe: the slide canvas overflows the viewport (no scaling)", async ({ page }) => {
+  test("embedded iframe: the slide canvas shrinks to fit the viewport", async ({ page }) => {
     // Simulate the PRC embedded artifact: a viewport smaller than the fixed
-    // canvas. With scale-to-fit the rendered canvas should shrink to fit; today
-    // it renders at a fixed 1920x1080 and overflows (screenshot #3).
+    // canvas. With scale-to-fit the rendered canvas shrinks to fit; before the
+    // fix it rendered at a fixed 1920x1080 and overflowed (screenshot #3).
     await page.setViewportSize({ width: 1100, height: 620 });
     await page.setContent(htmlForDeck());
 
@@ -109,8 +111,7 @@ test.describe("presentation scale-to-fit (templated 1920x1080 canvas)", () => {
     await page.screenshot({ path: "test-results/scale-repro-3-iframe-overflow.png" });
 
     expect(box).not.toBeNull();
-    // RED today: rendered width is 1920 and height 1080, both larger than the
-    // viewport. A scale-to-fit fix would clamp these to <= viewport.
+    // The scaled canvas must fit within the viewport on both axes.
     expect(box!.width, "canvas width should fit the viewport").toBeLessThanOrEqual(vp.width + 1);
     expect(box!.height, "canvas height should fit the viewport").toBeLessThanOrEqual(vp.height + 1);
   });
@@ -118,8 +119,8 @@ test.describe("presentation scale-to-fit (templated 1920x1080 canvas)", () => {
   test("the whole slide fits regardless of viewport aspect ratio", async ({ page }) => {
     // Three representative aspect ratios. A correctly scaled deck keeps the
     // entire fixed canvas (including the bottom footer) inside the viewport at
-    // every size. Today only viewports >= 1920x1080 CSS px show the footer
-    // (which is why zooming OUT to 90% "fixes" it in screenshot #2).
+    // every size. Before the fix only viewports >= 1920x1080 CSS px showed the
+    // footer (which is why zooming OUT to 90% "fixed" it in screenshot #2).
     const viewports = [
       { width: 1512, height: 860, label: "laptop full screen (16:~9.4, short)" },
       { width: 1280, height: 800, label: "16:10 laptop" },

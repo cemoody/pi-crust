@@ -118,8 +118,10 @@ describe("html passthrough slides", () => {
     expect(html).toMatch(/<section class="slide slide-title-light light active"/);
     expect(html).toMatch(/<section class="slide slide-title-dark dark"/);
     // Templated slides are full-bleed (no gradient, no padding) via a
-    // CSS rule keyed on data-non-editable="templated".
-    expect(html).toMatch(/\.deck>\.slide\[data-non-editable="templated"\]\{background:transparent;padding:0\}/);
+    // CSS rule keyed on data-non-editable="templated". The rule also pins the
+    // wrapper to the deck size so a pack's leaked `.slide{width:1920px}` can't
+    // resize the outer section (see scale-to-fit fix).
+    expect(html).toMatch(/\.deck>\.slide\[data-non-editable="templated"\]\{background:transparent;padding:0;[^}]*width:100%!important;height:100%!important\}/);
   });
 });
 
