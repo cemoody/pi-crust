@@ -106,12 +106,25 @@ export function applyRealtimeEvent(
       // mid-stream. The old code minted a FRESH Date.now() draft id here and
       // appended — silently duplicating the assistant message on every replay
       // (the unit test only "passed" because fake timers froze Date.now()).
-      // Re-key to the SAME timestamp-stable id message_start used, so upsert
-      // replaces the finalized row in place and the replay is idempotent.
-      const finalId = assistantDraftId(sessionId, message.timestamp);
+      //
+      // Re-keying to assistantDraftId(timestamp) is idempotent only when every
+      // copy of the turn carries the SAME timestamp and the live row was keyed
+      // off message_start. Two real-world cases still drifted and produced a
+      // visible duplicate that healed on reload:
+      //   A) the replayed/persisted finalize carries a different timestamp than
+      //      the streaming start used → a second, distinct id;
+      //   B) we joined mid-stream (first event was a text_delta), so the live
+      //      row was keyed assistant-stream-<Date.now()> via draftIdForSession
+      //      and can never match assistant-<sessionId>-<timestamp>.
+      // Reconcile by content first: if an existing assistant row already holds
+      // this turn (same text, or the live row is a prefix of the final text
+      // because the stream was cut short), replace THAT row in place so the
+      // replay is idempotent regardless of id drift. Only when nothing matches
+      // do we append under the stable, timestamp-derived id.
+      const finalRow = wireMessageToTimeline(assistantDraftId(sessionId, message.timestamp), message, false);
       setMessagesBySession((current) => ({
         ...current,
-        [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], wireMessageToTimeline(finalId, message, false)),
+        [sessionId]: reconcileFinalizedAssistant(current[sessionId] ?? [], finalRow),
       }));
       return false;
     }
@@ -224,6 +237,43 @@ export function upsertTimelineMessage(messages: readonly TimelineMessage[], mess
   const index = messages.findIndex((existing) => existing.id === message.id);
   if (index === -1) return [...messages, message];
   return [...messages.slice(0, index), mergeTimelineMessage(messages[index]!, message), ...messages.slice(index + 1)];
+}
+
+/**
+ * Idempotently fold a finalized assistant turn (a message_end with no live
+ * draft — i.e. a replay or a mid-stream join) into the timeline.
+ *
+ * Plain id-keyed upsert is not enough here because the live row may have been
+ * keyed under a different id than this finalize resolves to (timestamp drift,
+ * or a Date.now()-based assistant-stream-* id from draftIdForSession). So we
+ * first reconcile by content against the LAST matching assistant row:
+ *   - exact text match → same turn re-delivered;
+ *   - existing.text is a prefix of the final text → the live stream was cut
+ *     short before this finalize (e.g. disconnect mid-delta).
+ * When a match is found we replace it in place (preserving the existing row's
+ * id so subsequent updates/keys stay stable). Only a genuinely new turn (no
+ * content match) is appended under the finalize's stable id.
+ */
+export function reconcileFinalizedAssistant(
+  messages: readonly TimelineMessage[],
+  finalized: TimelineMessage,
+): TimelineMessage[] {
+  if (messages.some((existing) => existing.id === finalized.id)) {
+    return upsertTimelineMessage(messages, finalized);
+  }
+  const finalText = finalized.text ?? "";
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const existing = messages[index]!;
+    if (existing.role !== "assistant") continue;
+    const existingText = existing.text ?? "";
+    const sameTurn = existingText === finalText
+      || (existingText.length > 0 && finalText.startsWith(existingText))
+      || (finalText.length > 0 && existingText.startsWith(finalText));
+    if (!sameTurn) continue;
+    const merged = mergeTimelineMessage(existing, { ...finalized, id: existing.id });
+    return [...messages.slice(0, index), merged, ...messages.slice(index + 1)];
+  }
+  return [...messages, finalized];
 }
 
 export function mergeTimelineMessage(previous: TimelineMessage, next: TimelineMessage): TimelineMessage {

@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "deckId": "executive-signal-brief",
+  "updatedAt": 1781573419457,
+  "deck": {
+    "id": "executive-signal-brief",
+    "title": "Executive Signal Brief",
+    "subtitle": "Demand, weather, and pricing signals",
+    "theme": "light",
+    "slides": [
+      {
+        "template": "title",
+        "title": "Executive Signal Brief",
+        "subtitle": "Demand, weather, and pricing signals"
+      },
+      {
+        "template": "title-bullets",
+        "title": "HELLO",
+        "bullets": [
+          {
+            "text": "Permit velocity improved",
+            "detail": "Southwest and Southeast branches recovered fastest."
+          },
+          {
+            "text": "Storm exposure shifted east",
+            "detail": "Near-term roofing demand risk is concentrated across coastal metros."
+          },
+          "Edited bullet"
+        ]
+      },
+      {
+        "template": "metric",
+        "title": "Commercial impact",
+        "stats": [
+          {
+            "value": "$25B",
+            "label": "addressable branch spend under monitoring"
+          },
+          {
+            "value": "8%",
+            "label": "weekly signal movement in priority markets"
+          }
+        ]
+      },
+      {
+        "template": "html",
+        "html": "<section style=\"padding:4vw\"><h1>Pre-rendered slide</h1><p>This slide came from a template pack and is read-only in edit mode.</p></section>"
+      }
+    ]
+  }
+}
