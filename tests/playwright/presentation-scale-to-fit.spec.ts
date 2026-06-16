@@ -80,6 +80,7 @@ test.describe("presentation scale-to-fit (templated 1920x1080 canvas)", () => {
     const vp = page.viewportSize()!;
     console.log("viewport =", JSON.stringify(vp));
     console.log("footer box =", JSON.stringify(box));
+    await page.screenshot({ path: "test-results/scale-repro-1-fullscreen-clip.png" });
 
     // The footer must be fully inside the viewport to be visible to the user.
     // Today it sits at ~1031px (top of the fixed canvas) which is below an
@@ -91,8 +92,6 @@ test.describe("presentation scale-to-fit (templated 1920x1080 canvas)", () => {
       footerBottom,
       `footer bottom (${footerBottom}px) should be inside the ${vp.height}px viewport`,
     ).toBeLessThanOrEqual(vp.height);
-
-    await page.screenshot({ path: "test-results/scale-repro-1-fullscreen-clip.png" });
   });
 
   test("embedded iframe: the slide canvas overflows the viewport (no scaling)", async ({ page }) => {
@@ -107,14 +106,13 @@ test.describe("presentation scale-to-fit (templated 1920x1080 canvas)", () => {
     const vp = page.viewportSize()!;
     console.log("viewport =", JSON.stringify(vp));
     console.log("rendered canvas box =", JSON.stringify(box));
+    await page.screenshot({ path: "test-results/scale-repro-3-iframe-overflow.png" });
 
     expect(box).not.toBeNull();
     // RED today: rendered width is 1920 and height 1080, both larger than the
     // viewport. A scale-to-fit fix would clamp these to <= viewport.
     expect(box!.width, "canvas width should fit the viewport").toBeLessThanOrEqual(vp.width + 1);
     expect(box!.height, "canvas height should fit the viewport").toBeLessThanOrEqual(vp.height + 1);
-
-    await page.screenshot({ path: "test-results/scale-repro-3-iframe-overflow.png" });
   });
 
   test("the whole slide fits regardless of viewport aspect ratio", async ({ page }) => {
