@@ -264,9 +264,8 @@ export function ExtensionManagementPanel(props: ExtensionManagementPanelProps) {
                 <h2>Global system prompt</h2>
                 <div className="settings-section-desc">
                   Extra instructions appended to every session's system prompt. Use it to tell the
-                  model which CLI tools are in scope (e.g. <code className="chip">gh</code>,{" "}
-                  <code className="chip">kubectl</code>, <code className="chip">terraform</code>),
-                  along with house conventions. Applies to newly started sessions.
+                  model which CLI tools are in scope, along with any house conventions it should
+                  follow. Applies to newly started sessions.
                 </div>
               </div>
               {props.onSaveSetting ? (
