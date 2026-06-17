@@ -15,6 +15,7 @@ import { SessionDashboard } from "../../src/web/components/SessionDashboard.js";
 import type { ExtensionUiResponse } from "../../src/shared/protocol.js";
 import type { SessionCardData, SessionDashboardApi, NewSessionInput } from "../../src/web/api/session-api.js";
 import type { PiDynamicCommandInfo } from "../../src/shared/slash-command-routing.js";
+import { MAX_PROMPT_CHARS } from "../../src/shared/limits.js";
 
 function renderDashboardCapturingPrompts() {
   const promptCalls: Array<{ readonly sessionId: string; readonly text: string }> = [];
@@ -1529,14 +1530,16 @@ describe("SessionDashboard", () => {
     await screen.findByText("Original");
     fireEvent.click(screen.getByRole("link", { name: /Original/ }));
 
-    const huge = "x".repeat(40_000);
+    const huge = "x".repeat(MAX_PROMPT_CHARS + 1);
     fireEvent.change(screen.getByLabelText("Prompt draft"), { target: { value: huge } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     expect(promptCalls).toBe(0);
     // Prompt errors are surfaced via the unified notification region
     // (see notifications.tsx) rather than the legacy inline banner.
-    expect(screen.getByLabelText("Notifications")).toHaveTextContent(/Prompt failed\..*limit is 32,000/);
+    expect(screen.getByLabelText("Notifications")).toHaveTextContent(
+      new RegExp(`Prompt failed\\..*limit is ${MAX_PROMPT_CHARS.toLocaleString()}`),
+    );
   });
 
   it("does not render the legacy schedule fallback when core.schedule is disabled", async () => {
