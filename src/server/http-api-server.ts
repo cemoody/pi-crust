@@ -629,13 +629,24 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
   return server;
 }
 
-function createDefaultRegistry(adapterKind: string, sessionRoot: string, projectRoot: string, extraPiArgs: readonly string[] = []): SessionRegistry {
+function createDefaultRegistry(
+  adapterKind: string,
+  sessionRoot: string,
+  projectRoot: string,
+  extraPiArgs: readonly string[] = [],
+  getAppendSystemPrompt?: () => Promise<string | undefined>,
+): SessionRegistry {
   const workerRegistry = new WorkerRegistry();
   return new SessionRegistry({
     adapter: adapterKind === "mock"
       ? new MockPiAdapter({ sessionRoot })
       : adapterKind === "pirpc"
-        ? new PiRpcAdapter({ sessionDir: sessionRoot, runtimeDir: workerRegistry.runtimeDir, extraArgs: extraPiArgs })
+        ? new PiRpcAdapter({
+            sessionDir: sessionRoot,
+            runtimeDir: workerRegistry.runtimeDir,
+            extraArgs: extraPiArgs,
+            ...(getAppendSystemPrompt ? { getAppendSystemPrompt } : {}),
+          })
         : new SdkPiAdapter({ sessionDir: sessionRoot }),
     pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
     workerRegistry,
@@ -683,7 +694,23 @@ async function startDefaultServer(): Promise<void> {
   if (extensionRuntime.current.diagnostics.length > 0) {
     for (const diagnostic of extensionRuntime.current.diagnostics) console.warn(`[extensions] ${diagnostic.extensionId}: ${diagnostic.message}`);
   }
-  const registry = createDefaultRegistry(adapterKind, sessionRoot, projectRoot, extensionRuntime.getPiExtensionArgs());
+  const registry = createDefaultRegistry(
+    adapterKind,
+    sessionRoot,
+    projectRoot,
+    extensionRuntime.getPiExtensionArgs(),
+    // Lazily read the workspace-wide system prompt so Settings edits apply to
+    // the next spawned session without an API restart.
+    async () => {
+      try {
+        const settings = await readPrcSettings(extensionRuntime.configDir);
+        const prompt = settings.globalSystemPrompt;
+        return typeof prompt === "string" && prompt.trim().length > 0 ? prompt : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+  );
   registryRef = registry;
   const clientEventLogPath = process.env.PI_CRUST_CLIENT_EVENT_LOG
     ?? path.resolve(process.cwd(), "logs", "client-events.jsonl");

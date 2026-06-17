@@ -40,6 +40,7 @@ interface SubNavSection {
 
 const CORE_SECTIONS: readonly SubNavSection[] = [
   { id: "branding", label: "App branding" },
+  { id: "system-prompt", label: "Global system prompt" },
   { id: "extensions", label: "Extensions" },
 ];
 
@@ -49,6 +50,7 @@ export function ExtensionManagementPanel(props: ExtensionManagementPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [appNameDraft, setAppNameDraft] = useState(props.settings?.appBranding?.appName ?? props.currentAppName);
   const [appIconUrlDraft, setAppIconUrlDraft] = useState(props.settings?.appBranding?.appIconUrl ?? props.currentAppIcon ?? "");
+  const [systemPromptDraft, setSystemPromptDraft] = useState(props.settings?.globalSystemPrompt ?? "");
   const [activeSection, setActiveSection] = useState<string>(CORE_SECTIONS[0]!.id);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -78,6 +80,10 @@ export function ExtensionManagementPanel(props: ExtensionManagementPanelProps) {
     setAppNameDraft(props.settings?.appBranding?.appName ?? props.currentAppName);
     setAppIconUrlDraft(props.settings?.appBranding?.appIconUrl ?? props.currentAppIcon ?? "");
   }, [props.settings?.appBranding?.appName, props.settings?.appBranding?.appIconUrl, props.currentAppName, props.currentAppIcon]);
+
+  useEffect(() => {
+    setSystemPromptDraft(props.settings?.globalSystemPrompt ?? "");
+  }, [props.settings?.globalSystemPrompt]);
 
   const run = async (label: string, action: () => Promise<void>, success?: string) => {
     setBusy(label);
@@ -136,6 +142,13 @@ export function ExtensionManagementPanel(props: ExtensionManagementPanelProps) {
   useEffect(() => {
     void onCheckUpdatesRef.current?.();
   }, []);
+
+  const saveSystemPrompt = async () => {
+    if (!props.onSaveSetting) return;
+    await props.onSaveSetting("globalSystemPrompt", systemPromptDraft.trim());
+  };
+  const systemPromptDisabled = !props.onSaveSetting || busy !== null;
+  const systemPromptDirty = systemPromptDraft.trim() !== (props.settings?.globalSystemPrompt ?? "").trim();
 
   const previewIconChar = (appNameDraft.trim() || "π").charAt(0);
   const previewName = appNameDraft.trim() || "π crust";
@@ -241,6 +254,44 @@ export function ExtensionManagementPanel(props: ExtensionManagementPanelProps) {
                   </div>
                 </div>
               </div>
+            </Row>
+          </section>
+
+          {/* ===================== Global system prompt ===================== */}
+          <section id="system-prompt" className="settings-section" aria-label="Global system prompt">
+            <div className="settings-section-head">
+              <div>
+                <h2>Global system prompt</h2>
+                <div className="settings-section-desc">
+                  Extra instructions appended to every session's system prompt. Use it to tell the
+                  model which CLI tools are in scope (e.g. <code className="chip">gh</code>,{" "}
+                  <code className="chip">kubectl</code>, <code className="chip">terraform</code>),
+                  along with house conventions. Applies to newly started sessions.
+                </div>
+              </div>
+              {props.onSaveSetting ? (
+                <button
+                  type="button"
+                  className="settings-btn primary"
+                  disabled={systemPromptDisabled || !systemPromptDirty}
+                  onClick={() => void run("system-prompt", saveSystemPrompt, "Global system prompt saved.")}
+                >{busy === "system-prompt" ? "Saving…" : "Save prompt"}</button>
+              ) : null}
+            </div>
+
+            <Row
+              label="Prompt"
+              help={<>Plain text. Leave empty to disable. Sent to the model via <code className="chip">--append-system-prompt</code>.</>}
+            >
+              <textarea
+                aria-label="Global system prompt"
+                className="settings-textarea mono"
+                rows={8}
+                placeholder={"In-scope CLI tools: gh, kubectl, terraform, aws.\nPrefer ripgrep (rg) over grep. Never run destructive commands without confirmation."}
+                value={systemPromptDraft}
+                onChange={(event) => setSystemPromptDraft(event.target.value)}
+                disabled={systemPromptDisabled}
+              />
             </Row>
           </section>
 

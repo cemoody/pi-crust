@@ -337,6 +337,8 @@ export interface ExtensionSettingsResponse {
   readonly disabledExtensions?: readonly string[];
   readonly appBranding?: Partial<AppBrandingSettings>;
   readonly presentations?: { readonly templateDirs?: readonly string[] };
+  /** Workspace-wide system prompt appended to every session's system prompt. */
+  readonly globalSystemPrompt?: string;
   readonly extensions: ExtensionRegistryInfo;
 }
 

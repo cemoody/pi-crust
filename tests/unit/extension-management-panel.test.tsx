@@ -214,3 +214,29 @@ describe("ExtensionManagementPanel — unified extension list", () => {
     expect(h.onToggle).toHaveBeenCalledWith("core.builtin", false);
   });
 });
+
+describe("ExtensionManagementPanel — global system prompt", () => {
+  it("renders the current global system prompt and saves edits via onSaveSetting", async () => {
+    const h = makeHandlers();
+    render(
+      <ExtensionManagementPanel
+        extensions={makeExtensions()}
+        settings={{ globalSystemPrompt: "old prompt", extensions: makeExtensions() }}
+        currentAppName="π crust"
+        {...h}
+      />,
+    );
+
+    const textarea = screen.getByPlaceholderText(/In-scope CLI tools/i) as HTMLTextAreaElement;
+    expect(textarea.value).toBe("old prompt");
+
+    // The Save button is disabled until the draft differs from the saved value.
+    const saveButton = screen.getByRole("button", { name: /save prompt/i });
+    expect(saveButton).toBeDisabled();
+
+    fireEvent.change(textarea, { target: { value: "In-scope CLI tools: gh, kubectl." } });
+    expect(saveButton).toBeEnabled();
+    fireEvent.click(saveButton);
+    expect(h.onSaveSetting).toHaveBeenCalledWith("globalSystemPrompt", "In-scope CLI tools: gh, kubectl.");
+  });
+});

@@ -9,6 +9,7 @@ import { SessionRegistry } from "../../src/server/session/session-registry.js";
 
 async function makeFakePiRpcExecutable(root: string): Promise<string> {
   const fakeRpc = path.join(root, "fake-pi-rpc.mjs");
+  const argvFile = path.join(root, "spawn-argv.json");
   const sessionFile = path.join(root, "sessions", "fake.jsonl");
   const responseFile = path.join(root, "extension-ui-response.json");
   const compactFile = path.join(root, "compact-request.json");
@@ -20,6 +21,8 @@ const sessionFile = ${JSON.stringify(sessionFile)};
 const responseFile = ${JSON.stringify(responseFile)};
 const compactFile = ${JSON.stringify(compactFile)};
 const slashFile = ${JSON.stringify(slashFile)};
+const argvFile = ${JSON.stringify(argvFile)};
+try { writeFileSync(argvFile, JSON.stringify(process.argv.slice(2))); } catch {}
 const sessionId = "fake-rpc-session";
 let name;
 let buffer = "";
@@ -101,7 +104,7 @@ function handle(message) {
 }
 `, "utf8");
   const executable = path.join(root, "fake-pi");
-  await fs.writeFile(executable, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(fakeRpc)}\n`, "utf8");
+  await fs.writeFile(executable, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(fakeRpc)} "$@"\n`, "utf8");
   await fs.chmod(executable, 0o755);
   return executable;
 }
@@ -453,6 +456,50 @@ describe("PiRpcAdapter", () => {
       }),
     });
     expect(toDashboardMessages(messages)[0]?.tool).toMatchObject({ artifact });
+  });
+
+  it("appends the global system prompt to spawned pi args when configured", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-remote-pirpc-sysprompt-"));
+    const projectRoot = path.join(root, "project");
+    const sessionRoot = path.join(root, "sessions");
+    await fs.mkdir(projectRoot, { recursive: true });
+    const piCommand = await makeFakePiRpcExecutable(root);
+    const registry = new SessionRegistry({
+      adapter: new PiRpcAdapter({
+        piCommand,
+        sessionDir: sessionRoot,
+        artifactExtension: false,
+        getAppendSystemPrompt: () => "In-scope CLI tools: gh, kubectl.",
+      }),
+      pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
+    });
+
+    await registry.createSession({ cwd: projectRoot });
+    const argv = JSON.parse(await readEventually(path.join(root, "spawn-argv.json"))) as string[];
+    const flagIndex = argv.indexOf("--append-system-prompt");
+    expect(flagIndex).toBeGreaterThanOrEqual(0);
+    expect(argv[flagIndex + 1]).toBe("In-scope CLI tools: gh, kubectl.");
+  });
+
+  it("omits the append-system-prompt flag when the global prompt is empty", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-remote-pirpc-nosysprompt-"));
+    const projectRoot = path.join(root, "project");
+    const sessionRoot = path.join(root, "sessions");
+    await fs.mkdir(projectRoot, { recursive: true });
+    const piCommand = await makeFakePiRpcExecutable(root);
+    const registry = new SessionRegistry({
+      adapter: new PiRpcAdapter({
+        piCommand,
+        sessionDir: sessionRoot,
+        artifactExtension: false,
+        getAppendSystemPrompt: () => "   ",
+      }),
+      pathPolicy: new PathPolicy({ allowedProjectRoots: [projectRoot], allowedSessionRoots: [sessionRoot] }),
+    });
+
+    await registry.createSession({ cwd: projectRoot });
+    const argv = JSON.parse(await readEventually(path.join(root, "spawn-argv.json"))) as string[];
+    expect(argv).not.toContain("--append-system-prompt");
   });
 });
 

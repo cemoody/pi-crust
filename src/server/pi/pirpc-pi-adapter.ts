@@ -47,6 +47,13 @@ export interface PiRpcAdapterOptions {
   readonly artifactExtension?: false | string;
   readonly runtimeDir?: string;
   readonly supervisorScript?: string;
+  /**
+   * Resolves the workspace-wide system prompt at spawn time. Returning a
+   * non-empty string causes a `--append-system-prompt <text>` arg to be added
+   * to each freshly spawned pi worker. Read lazily so edits in Settings take
+   * effect on the next session without an API restart.
+   */
+  readonly getAppendSystemPrompt?: () => Promise<string | undefined> | string | undefined;
 }
 
 interface RpcResponse {
@@ -79,6 +86,14 @@ export class PiRpcAdapter implements PiAdapter {
   private readonly workerRegistry: WorkerRegistry;
   private readonly supervisorScript: string;
 
+  /** Build the per-spawn extra args, appending the global system prompt (if any). */
+  private async resolveExtraArgs(): Promise<readonly string[]> {
+    const base = this.options.extraArgs ?? [];
+    const prompt = (await this.options.getAppendSystemPrompt?.())?.trim();
+    if (!prompt) return base;
+    return [...base, "--append-system-prompt", prompt];
+  }
+
   constructor(private readonly options: PiRpcAdapterOptions = {}) {
     this.piCommand = options.piCommand ?? resolvePiCommand();
     this.workerRegistry = new WorkerRegistry(options.runtimeDir === undefined ? {} : { runtimeDir: options.runtimeDir });
@@ -92,7 +107,7 @@ export class PiRpcAdapter implements PiAdapter {
       supervisorScript: this.supervisorScript,
       workerRegistry: this.workerRegistry,
       ...optional({ sessionDir: this.options.sessionDir }),
-      ...optional({ extraArgs: this.options.extraArgs }),
+      ...optional({ extraArgs: await this.resolveExtraArgs() }),
       ...optional({ artifactExtension: this.options.artifactExtension }),
     });
     if (options.sessionName) await handle.setSessionName(options.sessionName);
@@ -109,7 +124,7 @@ export class PiRpcAdapter implements PiAdapter {
       supervisorScript: this.supervisorScript,
       workerRegistry: this.workerRegistry,
       ...optional({ sessionDir: this.options.sessionDir }),
-      ...optional({ extraArgs: this.options.extraArgs }),
+      ...optional({ extraArgs: await this.resolveExtraArgs() }),
       ...optional({ artifactExtension: this.options.artifactExtension }),
     });
   }
@@ -155,7 +170,7 @@ export class PiRpcAdapter implements PiAdapter {
       supervisorScript: this.supervisorScript,
       workerRegistry: this.workerRegistry,
       ...optional({ sessionDir: this.options.sessionDir }),
-      ...optional({ extraArgs: this.options.extraArgs }),
+      ...optional({ extraArgs: await this.resolveExtraArgs() }),
       ...optional({ artifactExtension: this.options.artifactExtension }),
     });
     return { result: { cancelled: false, text: selectedText }, handle };

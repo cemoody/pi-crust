@@ -9,6 +9,13 @@ export interface PrcSettings {
   readonly appBranding?: PrcAppBrandingSettings;
   /** Configuration block consumed by the core.presentations extension. */
   readonly presentations?: PrcPresentationsSettings;
+  /**
+   * Workspace-wide system prompt text appended to every session's system
+   * prompt (via `pi --append-system-prompt`). Use it to make the model aware
+   * of which CLI tools are in scope, house conventions, etc. Applied to newly
+   * spawned sessions; already-running sessions pick it up on next launch.
+   */
+  readonly globalSystemPrompt?: string;
 }
 
 export interface PrcPresentationsSettings {
