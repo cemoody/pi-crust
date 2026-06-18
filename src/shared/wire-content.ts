@@ -77,3 +77,22 @@ export function toolResultText(result: unknown): string {
   if (!isRecord(result) || !Array.isArray(result.content)) return "";
   return result.content.map((item) => isRecord(item) ? String(item.text ?? "") : "").join("\n");
 }
+
+/**
+ * Pull image blocks out of a tool-result envelope:
+ *   { content: [{ type: "image", data, mimeType }, ...] }
+ *     -> [{ data, mimeType }]
+ * Used so the read tool (and any other image-producing tool) can render the
+ * actual image inline in the timeline instead of only its `[Read image
+ * file …]` text note. Returns [] for any other shape.
+ */
+export function toolResultImages(result: unknown): readonly { readonly data: string; readonly mimeType: string }[] {
+  if (!isRecord(result) || !Array.isArray(result.content)) return [];
+  const images: { data: string; mimeType: string }[] = [];
+  for (const item of result.content) {
+    if (isRecord(item) && item.type === "image" && typeof item.data === "string") {
+      images.push({ data: item.data, mimeType: String(item.mimeType ?? "image/png") });
+    }
+  }
+  return images;
+}

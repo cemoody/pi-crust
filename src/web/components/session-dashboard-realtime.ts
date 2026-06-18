@@ -15,6 +15,7 @@ import type {
   TimelineMessage,
 } from "./MessageTimeline.js";
 import { contentTextAndThinking, extractArtifact, toolResultText } from "./session-dashboard-helpers.js";
+import { toolResultImages } from "../../shared/wire-content.js";
 
 export type MessageSetter = Dispatch<SetStateAction<Record<string, TimelineMessage[]>>>;
 
@@ -177,6 +178,7 @@ export function applyRealtimeEvent(
     const toolName = event.toolName;
     const result = event.type === "tool_execution_update" ? event.partialResult : event.result;
     const artifact = extractArtifact(result);
+    const images = toolResultImages(result);
     setMessagesBySession((current) => ({
       ...current,
       [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], {
@@ -190,6 +192,7 @@ export function applyRealtimeEvent(
           status: event.type === "tool_execution_end" ? (event.isError ? "error" : "success") : "running",
           output: toolResultText(result),
           ...optional({ artifact }),
+          ...(images.length > 0 ? { images } : {}),
           ...(event.type === "tool_execution_end" ? { completedAt: Date.now() } : {}),
         },
       }),

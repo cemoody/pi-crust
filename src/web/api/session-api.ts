@@ -98,6 +98,9 @@ export interface DashboardToolDetails {
   readonly status: "running" | "success" | "error";
   readonly output: string;
   readonly artifact?: DashboardArtifact;
+  /** Images emitted by the tool result (e.g. read of a PNG). Inlined for
+   *  small payloads; larger images are stripped to a `url` by the server. */
+  readonly images?: readonly DashboardMessageImage[];
   readonly startedAt?: number;
   readonly completedAt?: number;
 }

@@ -116,6 +116,10 @@ export interface SessionToolDetails {
    *  Currently used by show_presentation/show_artifact to attach inline
    *  preview data so it survives a page reload. */
   readonly artifact?: unknown;
+  /** Image blocks emitted in the tool result (e.g. the read tool reading a
+   *  PNG/JPEG). Surfaced so the timeline can render the actual image inline
+   *  rather than just the textual "[Read image file …]" note. */
+  readonly images?: readonly SessionMessageImage[];
 }
 
 export interface CreateSessionOptions {

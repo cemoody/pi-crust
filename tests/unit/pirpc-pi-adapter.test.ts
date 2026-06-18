@@ -458,6 +458,41 @@ describe("PiRpcAdapter", () => {
     expect(toDashboardMessages(messages)[0]?.tool).toMatchObject({ artifact });
   });
 
+  it("surfaces image blocks from a read toolResult onto tool.images", () => {
+    const messages = toSessionMessages([
+      {
+        role: "assistant",
+        timestamp: 1_000,
+        content: [
+          { type: "toolCall", id: "call_read", name: "read", arguments: { path: "preview/shot.png" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        timestamp: 2_000,
+        toolCallId: "call_read",
+        toolName: "read",
+        isError: false,
+        content: [
+          { type: "text", text: "Read image file [image/png]" },
+          { type: "image", data: "QUJD", mimeType: "image/png" },
+        ],
+      },
+    ]);
+    expect(messages.length).toBe(1);
+    expect(messages[0]?.tool?.images).toEqual([{ data: "QUJD", mimeType: "image/png" }]);
+    // Without a sessionId (unit back-compat) the bytes stay inline.
+    expect(toDashboardMessages(messages)[0]?.tool).toMatchObject({
+      images: [{ data: "QUJD", mimeType: "image/png" }],
+    });
+    // With a sessionId the bytes are stripped and replaced with a URL.
+    const stripped = toDashboardMessages(messages, { sessionId: "sess1" })[0]?.tool as
+      | { images?: { url?: string; data?: string; mimeType: string }[] }
+      | undefined;
+    expect(stripped?.images?.[0]?.data).toBeUndefined();
+    expect(stripped?.images?.[0]?.url).toContain("/images/0");
+  });
+
   it("appends the global system prompt to spawned pi args when configured", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-remote-pirpc-sysprompt-"));
     const projectRoot = path.join(root, "project");

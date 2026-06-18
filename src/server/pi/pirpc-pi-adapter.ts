@@ -1295,7 +1295,7 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
     }
 
     if (role === "toolResult") {
-      const output = contentText(message.content);
+      const { text: output, images } = contentTextAndImages(message.content);
       const toolCallId = String(message.toolCallId ?? message.id ?? "");
       const artifact = extractToolResultArtifact(message.details);
       const index = toolCallIndexes.get(toolCallId);
@@ -1312,6 +1312,7 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
               output,
               completedAt: timestamp,
               ...optional({ artifact }),
+              ...(images.length > 0 ? { images } : {}),
             },
           };
           continue;

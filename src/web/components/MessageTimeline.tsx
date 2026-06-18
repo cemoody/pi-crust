@@ -69,6 +69,9 @@ export interface TimelineToolDetails {
   readonly status: "running" | "success" | "error";
   readonly output: string;
   readonly artifact?: TimelineArtifact;
+  /** Images emitted by the tool result (e.g. read of a PNG). Either inline
+   *  base64 `data` (live SSE) or a server-hosted `url` (after reload). */
+  readonly images?: readonly { readonly data?: string; readonly url?: string; readonly mimeType: string }[];
   readonly startedAt?: number;
   readonly completedAt?: number;
 }
@@ -562,7 +565,7 @@ function ToolCard({ tool }: { readonly tool: TimelineToolDetails }) {
           <span className="tool-status-text">{statusLabel(tool)}</span>
         </summary>
         <ToolInputBlock tool={tool} />
-        {tool.output ? <pre className="tool-output">{tool.output}</pre> : null}
+        <ToolResultBody tool={tool} />
       </details>
       {tool.artifact ? <ArtifactPreview artifact={tool.artifact} /> : null}
     </div>
@@ -638,6 +641,81 @@ function formatToolInput(tool: TimelineToolDetails): string {
   } catch {
     return String(tool.args);
   }
+}
+
+/**
+ * Renders the *result* of a tool call inside its expandable card. Most tools
+ * just show their text output in a <pre>, but a few read-shaped results are
+ * worth rendering richly so users don't have to squint at a path or raw markup:
+ *
+ *   - image reads (the read tool reading a PNG/JPEG/…) render the actual image
+ *     instead of only the "[Read image file …]" note.
+ *   - markdown reads (*.md) render formatted markdown.
+ *   - html reads (*.html) render in a sandboxed iframe.
+ *
+ * Everything else falls back to the plain <pre> output.
+ */
+function ToolResultBody({ tool }: { readonly tool: TimelineToolDetails }) {
+  const images = tool.images ?? [];
+  if (images.length > 0) {
+    return (
+      <div className="tool-result-images">
+        {tool.output ? <pre className="tool-output tool-output-note">{tool.output}</pre> : null}
+        {images.map((image, index) => {
+          const src = toolImageSrc(image);
+          if (!src) return null;
+          return (
+            <figure key={index} className="tool-image">
+              <img src={src} alt={`${tool.name} image ${index + 1}`} />
+            </figure>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const richKind = readRichKind(tool);
+  if (richKind === "markdown" && tool.output) {
+    return (
+      <div className="tool-read-markdown">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{coerceMarkdownInput(tool.output)}</ReactMarkdown>
+      </div>
+    );
+  }
+  if (richKind === "html" && tool.output) {
+    return (
+      <figure className="tool-read-html">
+        <iframe title="HTML preview" className="artifact-html" sandbox="" srcDoc={tool.output} />
+      </figure>
+    );
+  }
+
+  return tool.output ? <pre className="tool-output">{tool.output}</pre> : null;
+}
+
+/** Resolve a tool image to a usable <img> src: inline base64 data URI (live
+ *  SSE) or a server-hosted URL (after reload, possibly under an API base). */
+function toolImageSrc(image: { readonly data?: string; readonly url?: string; readonly mimeType: string }): string | undefined {
+  if (typeof image.data === "string" && image.data.length > 0) {
+    return `data:${image.mimeType ?? "image/png"};base64,${image.data}`;
+  }
+  if (typeof image.url === "string" && image.url.length > 0) {
+    const base = import.meta.env.VITE_PI_CRUST_API_BASE ?? "";
+    return image.url.startsWith("/api/") ? `${base}${image.url}` : image.url;
+  }
+  return undefined;
+}
+
+/** Detect whether a read result should render as rich markdown/html based on
+ *  the file extension of the read path. Only applies to the read tool. */
+function readRichKind(tool: TimelineToolDetails): "markdown" | "html" | undefined {
+  if (tool.name !== "read") return undefined;
+  const path = typeof tool.args?.path === "string" ? tool.args.path : undefined;
+  if (!path) return undefined;
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown";
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
+  return undefined;
 }
 
 function ArtifactPreview({ artifact }: { readonly artifact: TimelineArtifact }) {

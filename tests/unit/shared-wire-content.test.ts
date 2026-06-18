@@ -25,6 +25,7 @@ import { describe, expect, it } from "vitest";
 import {
   contentText,
   contentTextAndThinking,
+  toolResultImages,
   toolResultText,
 } from "../../src/shared/wire-content.js";
 
@@ -110,5 +111,24 @@ describe("toolResultText", () => {
     expect(toolResultText(undefined)).toBe("");
     expect(toolResultText("plain string")).toBe("");
     expect(toolResultText({ content: "not an array" })).toBe("");
+  });
+});
+
+describe("toolResultImages", () => {
+  it("extracts image blocks with default mime type", () => {
+    expect(toolResultImages({ content: [
+      { type: "text", text: "Read image file [image/png]" },
+      { type: "image", data: "QUJD", mimeType: "image/jpeg" },
+      { type: "image", data: "REVG" },
+    ] })).toEqual([
+      { data: "QUJD", mimeType: "image/jpeg" },
+      { data: "REVG", mimeType: "image/png" },
+    ]);
+  });
+
+  it("returns [] when there are no image blocks", () => {
+    expect(toolResultImages({ content: [{ type: "text", text: "x" }] })).toEqual([]);
+    expect(toolResultImages(undefined)).toEqual([]);
+    expect(toolResultImages("plain")).toEqual([]);
   });
 });
