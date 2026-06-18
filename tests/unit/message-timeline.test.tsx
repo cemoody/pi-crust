@@ -198,6 +198,57 @@ describe("MessageTimeline", () => {
     expect(input!.textContent ?? "").toContain("echo 'hello world' && date");
   });
 
+  it("renders an inline image when a read tool result carries image data", () => {
+    const { container } = render(<MessageTimeline messages={[
+      { id: "t1", role: "tool", text: "",
+        tool: { id: "x", name: "read", args: { path: "preview/shot.png" },
+                status: "success", output: "Read image file [image/png]",
+                images: [{ data: "QUJD", mimeType: "image/png" }] } },
+    ]} />);
+    const details = container.querySelector("details.tool-card") as HTMLDetailsElement;
+    details.open = true;
+    const img = container.querySelector("figure.tool-image img") as HTMLImageElement | null;
+    expect(img, "expanded read card should render the image").not.toBeNull();
+    expect(img!.getAttribute("src")).toBe("data:image/png;base64,QUJD");
+  });
+
+  it("resolves a server-hosted url for a read image without inline bytes", () => {
+    const { container } = render(<MessageTimeline messages={[
+      { id: "t1", role: "tool", text: "",
+        tool: { id: "x", name: "read", args: { path: "a.png" },
+                status: "success", output: "Read image file [image/png]",
+                images: [{ url: "/api/sessions/s/messages/m/images/0", mimeType: "image/png" }] } },
+    ]} />);
+    (container.querySelector("details.tool-card") as HTMLDetailsElement).open = true;
+    const img = container.querySelector("figure.tool-image img") as HTMLImageElement | null;
+    expect(img!.getAttribute("src")).toContain("/api/sessions/s/messages/m/images/0");
+  });
+
+  it("renders markdown read results as formatted markdown", () => {
+    const { container } = render(<MessageTimeline messages={[
+      { id: "t1", role: "tool", text: "",
+        tool: { id: "x", name: "read", args: { path: "README.md" },
+                status: "success", output: "# Title\n\nbody text" } },
+    ]} />);
+    (container.querySelector("details.tool-card") as HTMLDetailsElement).open = true;
+    const md = container.querySelector(".tool-read-markdown");
+    expect(md, "markdown read card should render rich markdown").not.toBeNull();
+    expect(md!.querySelector("h1")?.textContent).toBe("Title");
+  });
+
+  it("renders html read results in a sandboxed iframe", () => {
+    const { container } = render(<MessageTimeline messages={[
+      { id: "t1", role: "tool", text: "",
+        tool: { id: "x", name: "read", args: { path: "page.html" },
+                status: "success", output: "<p>hello</p>" } },
+    ]} />);
+    (container.querySelector("details.tool-card") as HTMLDetailsElement).open = true;
+    const iframe = container.querySelector("figure.tool-read-html iframe") as HTMLIFrameElement | null;
+    expect(iframe, "html read card should render an iframe").not.toBeNull();
+    expect(iframe!.getAttribute("sandbox")).toBe("");
+    expect(iframe!.getAttribute("srcdoc")).toContain("<p>hello</p>");
+  });
+
   it("prefers elapsed duration over 'done' even after a reload (when the tool carries timestamps)", () => {
     // Reload bug: after history reload tool entries lost their
     // startedAt/completedAt and the row reverted to 'done'. The pipeline

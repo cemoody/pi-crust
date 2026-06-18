@@ -537,6 +537,47 @@
   white-space: pre-wrap;
 }
 
+/* Rich read-result rendering: images, markdown, and HTML previews shown when
+   a read tool card is expanded. */
+.tool-result-images { margin: 4px 0 0; }
+.tool-result-images .tool-output-note {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+.tool-card figure.tool-image {
+  margin: 6px 0 0;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--gray-060);
+}
+.tool-card figure.tool-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.tool-card .tool-read-markdown {
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--white-900);
+  font-size: 13px;
+  overflow-x: auto;
+}
+.tool-card figure.tool-read-html {
+  margin: 4px 0 0;
+  padding: 0;
+}
+.tool-card figure.tool-read-html iframe {
+  width: 100%;
+  min-height: 320px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--white-900);
+}
+
 .artifact-preview {
   margin: 8px 0 0;
   padding: 10px;

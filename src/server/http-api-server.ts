@@ -1953,7 +1953,7 @@ export function toDashboardMessages(messages: readonly SessionMessage[], options
               : "custom",
       text: normalized.text,
       provider: message.role === "assistant" ? "pi" : undefined,
-      tool: message.tool ? stripToolForTransport(message.tool, sessionId, id) : undefined,
+      tool: message.tool ? stripToolForTransport(message.tool, sessionId, id, (images ?? []).length) : undefined,
       images: sessionId && images ? stripImagesForTransport(images, sessionId, id) : images,
       timestamp: message.timestamp,
       ...(message.customType ? { customType: message.customType } : {}),
@@ -1976,7 +1976,12 @@ function stripImagesForTransport(images: readonly { readonly data: string; reado
 function messageImages(message: SessionMessage | undefined): readonly { readonly data: string; readonly mimeType: string }[] {
   if (!message) return [];
   const normalized = typeof message.content === "string" ? { images: [] as readonly { readonly data: string; readonly mimeType: string }[] } : contentTextAndThinking(message.content);
-  return normalized.images.length > 0 ? normalized.images : (message.images ?? []);
+  const base = normalized.images.length > 0 ? normalized.images : (message.images ?? []);
+  // Tool-result images (e.g. read of a PNG) live on message.tool.images and
+  // are addressed by the /images/:index route after any message-level images.
+  // The global index space must match stripToolForTransport's offset.
+  const toolImages = message.tool?.images ?? [];
+  return toolImages.length > 0 ? [...base, ...toolImages] : base;
 }
 
 function messageImageAt(message: SessionMessage | undefined, imageIndex: number) {
@@ -1984,21 +1989,42 @@ function messageImageAt(message: SessionMessage | undefined, imageIndex: number)
   return messageImages(message)[imageIndex];
 }
 
-function stripToolForTransport(tool: NonNullable<SessionMessage["tool"]>, sessionId: string | undefined, messageId: string) {
+function stripToolForTransport(
+  tool: NonNullable<SessionMessage["tool"]>,
+  sessionId: string | undefined,
+  messageId: string,
+  imageIndexOffset = 0,
+) {
   const output = tool.output ?? "";
   const artifact = stripToolArtifactForTransport(tool.artifact, sessionId, messageId);
   const toolWithArtifact = artifact === tool.artifact ? tool : { ...tool, artifact };
-  if (!sessionId || Buffer.byteLength(output, "utf8") <= MAX_INLINE_TOOL_OUTPUT_BYTES) return toolWithArtifact;
-  // Keep the first/last few KB inline so the UI still shows context without
-  // a second round-trip. The exact midpoint is replaced with a marker that
-  // includes the byte count and a URL to the full payload.
-  const halfWindow = Math.floor(MAX_INLINE_TOOL_OUTPUT_BYTES / 2);
-  const head = output.slice(0, halfWindow);
-  const tail = output.slice(-halfWindow);
-  const fullBytes = Buffer.byteLength(output, "utf8");
-  const outputUrl = `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/tool-output`;
-  const truncated = `${head}\n\n…[${(fullBytes / 1024).toFixed(0)} KB truncated — full output at ${outputUrl}]…\n\n${tail}`;
-  return { ...toolWithArtifact, output: truncated, outputTruncated: true, outputUrl, outputFullBytes: fullBytes };
+  let result: Record<string, unknown> = { ...toolWithArtifact };
+  if (sessionId && Buffer.byteLength(output, "utf8") > MAX_INLINE_TOOL_OUTPUT_BYTES) {
+    // Keep the first/last few KB inline so the UI still shows context without
+    // a second round-trip. The exact midpoint is replaced with a marker that
+    // includes the byte count and a URL to the full payload.
+    const halfWindow = Math.floor(MAX_INLINE_TOOL_OUTPUT_BYTES / 2);
+    const head = output.slice(0, halfWindow);
+    const tail = output.slice(-halfWindow);
+    const fullBytes = Buffer.byteLength(output, "utf8");
+    const outputUrl = `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/tool-output`;
+    const truncated = `${head}\n\n…[${(fullBytes / 1024).toFixed(0)} KB truncated — full output at ${outputUrl}]…\n\n${tail}`;
+    result = { ...result, output: truncated, outputTruncated: true, outputUrl, outputFullBytes: fullBytes };
+  }
+  // Tool images (e.g. read of a PNG) can be multi-MB base64; strip the bytes
+  // and hand the pi-crust a URL into the /images/:index route (indexed after
+  // any message-level images via imageIndexOffset). Without a sessionId we
+  // can't mint URLs, so leave them inline for unit-test back-compat.
+  if (sessionId && tool.images && tool.images.length > 0) {
+    result = {
+      ...result,
+      images: tool.images.map((image, i) => ({
+        mimeType: image.mimeType,
+        url: `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/images/${imageIndexOffset + i}`,
+      })),
+    };
+  }
+  return result;
 }
 
 function stripToolArtifactForTransport(artifact: unknown, sessionId: string | undefined, messageId: string): unknown {
