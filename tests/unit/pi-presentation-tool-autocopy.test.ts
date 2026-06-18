@@ -1,9 +1,10 @@
 /**
- * TDD: show_presentation should auto-copy absolute local paths that live
- * under the session cwd into <cwd>/.pi/presentations/<sessionId>/ and
- * rewrite each image.src / logo.src to the bare filename the asset route
- * serves. Anything outside cwd, or non-existent, still hits the
- * actionable validator error from #166 so the LLM can self-correct.
+ * TDD: show_presentation reads the deck spec from a JSON file path and should
+ * auto-copy absolute local paths that live under the session cwd into
+ * <cwd>/.pi/presentations/<sessionId>/ and rewrite each image.src / logo.src
+ * to the bare filename the asset route serves. Anything outside cwd, or
+ * non-existent, still hits the actionable validator error from #166 so the
+ * LLM can self-correct.
  *
  * The tool exposes a single hook for tests: an extension factory option
  * that injects `getSessionContext(): { sessionId, cwd }`. Production
@@ -26,6 +27,7 @@ describe("show_presentation auto-copy of local assets", () => {
   let cwd: string;
   let originalCwd: string;
   let tool: RegisteredTool;
+  let specSeq = 0;
 
   beforeEach(async () => {
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-autocopy-"));
@@ -37,8 +39,7 @@ describe("show_presentation auto-copy of local assets", () => {
     const tools: RegisteredTool[] = [];
     // The extension factory takes an internal options bag for tests that
     // pins the (sessionId, cwd) the tool would otherwise resolve from
-    // session_start. Anything plumbed here is implementation detail and
-    // not part of the public extension surface.
+    // session_start.
     piRemoteArtifacts({
       registerTool: (t: RegisteredTool) => tools.push(t),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,17 +56,24 @@ describe("show_presentation auto-copy of local assets", () => {
     vi.restoreAllMocks();
   });
 
+  // Spec files are written OUTSIDE cwd so they don't pollute the
+  // .pi/presentations target dir assertions.
+  async function specFile(spec: unknown): Promise<string> {
+    const p = path.join(tmpRoot, `spec-${specSeq++}.json`);
+    await fs.writeFile(p, JSON.stringify(spec), "utf8");
+    return p;
+  }
+
   it("succeeds when image.src is an absolute path under cwd, after copying + rewriting", async () => {
     const assetAbs = path.join(cwd, "adhoc", "landfalls.png");
     await fs.mkdir(path.dirname(assetAbs), { recursive: true });
     await fs.writeFile(assetAbs, "IMG");
 
     const result = (await tool.execute("call-1", {
-      title: "buildzoom hurricane data",
-      slides: [
-        { title: "Title" },
-        { title: "Landfalls", image: { src: assetAbs } },
-      ],
+      path: await specFile({
+        title: "buildzoom hurricane data",
+        slides: [{ title: "Title" }, { title: "Landfalls", image: { src: assetAbs } }],
+      }),
     })) as { content: Array<{ text: string }>; details: Record<string, unknown> };
 
     expect(result.content[0]?.text).toContain("buildzoom hurricane data");
@@ -86,29 +94,29 @@ describe("show_presentation auto-copy of local assets", () => {
     await fs.writeFile(outsideAbs, "EVIL");
 
     await expect(tool.execute("call-2", {
-      title: "Outside",
-      slides: [
-        { title: "x" },
-        { title: "y", image: { src: outsideAbs } },
-      ],
+      path: await specFile({
+        title: "Outside",
+        slides: [{ title: "x" }, { title: "y", image: { src: outsideAbs } }],
+      }),
     })).rejects.toThrow(/slides\[1\]\.image\.src is unsafe/);
   });
 
   it("still throws when the absolute path under cwd does NOT exist", async () => {
     const ghost = path.join(cwd, "missing.png");
     await expect(tool.execute("call-3", {
-      title: "Ghost",
-      slides: [{ title: "x", image: { src: ghost } }],
+      path: await specFile({ title: "Ghost", slides: [{ title: "x", image: { src: ghost } }] }),
     })).rejects.toThrow(/slides\[0\]\.image\.src is unsafe|image\.src.*does not exist/);
   });
 
   it("leaves https:// and bare relative srcs alone (no copy, no error)", async () => {
     const result = (await tool.execute("call-4", {
-      title: "Mix",
-      slides: [
-        { title: "a", image: { src: "https://example.com/x.png" } },
-        { title: "b", image: { src: "chart.png" } },
-      ],
+      path: await specFile({
+        title: "Mix",
+        slides: [
+          { title: "a", image: { src: "https://example.com/x.png" } },
+          { title: "b", image: { src: "chart.png" } },
+        ],
+      }),
     })) as { details: Record<string, unknown> };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const deck = (result.details as any).piRemoteControlArtifact.data;
@@ -125,16 +133,15 @@ describe("show_presentation auto-copy of local assets", () => {
     await fs.mkdir(path.dirname(logoAbs), { recursive: true });
     await fs.writeFile(logoAbs, "LOGO");
     const result = (await tool.execute("call-5", {
-      title: "Brand",
-      slides: [{ title: "x" }],
-      // logo isn't on the tool's typed schema, but the tool currently
-      // passes the slides through verbatim; we test the same conduit.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any)) as { details: Record<string, unknown> };
-    // The simpler logo case is exercised by the pure-function tests; this
-    // just sanity-checks the integration when callers pass logo through.
+      path: await specFile({
+        title: "Brand",
+        logo: { src: logoAbs },
+        slides: [{ title: "x" }],
+      }),
+    })) as { details: Record<string, unknown> };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const _deck = (result.details as any).piRemoteControlArtifact.data;
     expect(_deck.title).toBe("Brand");
+    expect(_deck.logo.src).toBe("logo.png");
   });
 });

@@ -154,31 +154,60 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
   pi.registerTool({
     name: "show_presentation",
     label: "Show Presentation",
-    description: "Display a slide deck in Pi Remote Control. Accepts a structured deck with title and slides; slides can include template, title, subtitle, body, bullets, stats, images, columns, speaker notes, and fragments. To use a brand template pack, set `templatePack` on the deck (e.g. 'brainco') and `layout` + `slots` on each slide.",
-    promptSnippet: "show_presentation displays structured HTML slide decks with preview and present controls in Pi Remote Control. Supports brand template packs via templatePack + layout + slots.",
+    description: "Display a slide deck in Pi Remote Control. Pass `path`: the path to a JSON file containing the full deck spec ({ title, subtitle, theme, slides, ... }). Each slide can include template, title, subtitle, body, bullets, stats, images, columns, speaker notes, and fragments. To use a brand template pack, set `templatePack` on the deck (e.g. 'brainco') and `layout` + `slots` on each slide. The deck is read from the file — it is NOT passed inline.",
+    promptSnippet: "show_presentation displays structured HTML slide decks with preview and present controls in Pi Remote Control. The deck spec is a JSON file referenced by `path`, not inline. Supports brand template packs via templatePack + layout + slots.",
     promptGuidelines: [
       "Use show_presentation when the user asks to create, revise, or present a slide deck.",
+      "Write the full deck spec to a JSON file first (e.g. with the write tool), then call show_presentation with `path` pointing at that file. Do NOT inline the deck/slides into the tool call — this keeps large decks out of the conversation.",
+      "The JSON file must contain a single object with at least `title` and a non-empty `slides` array; it may also set id, subtitle, theme, client, confidential, logo, and templatePack.",
       "Prefer structured deck data over raw HTML so Pi Remote Control can provide preview, present, download, and fallback outline behavior.",
       "Keep each slide concise: one main title, short bullets, optional stats/images, and speaker notes only when useful.",
       "If a brand template pack is configured (e.g. brainco), set templatePack on the deck and use layout + slots per slide instead of generic title/bullets fields. Layout keys and slot names are pack-specific.",
       "Image src must be an https:// URL, a data: URI, or a path RELATIVE to the session's .pi/presentations/<deckId>/ directory (no leading slash, no '..'). Absolute paths that point at real files inside the session's cwd are auto-copied into the right directory, so passing /path/to/chart.png is fine when the file exists — anything else is rejected with an actionable error.",
     ],
     parameters: Type.Object({
-      title: Type.String({ description: "Deck title." }),
-      id: Type.Optional(Type.String({ description: "Optional stable identifier used for persisted edits. Auto-derived from the title when omitted." })),
-      subtitle: Type.Optional(Type.String({ description: "Optional deck subtitle." })),
-      theme: Type.Optional(Type.String({ description: "Theme name, e.g. light or dark." })),
-      client: Type.Optional(Type.String({ description: "Client or audience label." })),
-      confidential: Type.Optional(Type.String({ description: "Footer confidentiality text." })),
-      templatePack: Type.Optional(Type.String({ description: "Optional template-pack id (e.g. 'brainco'). When set, each slide's layout key is rendered by the pack's renderer." })),
-      slides: Type.Array(Type.Any({ description: "Slide objects. Generic decks can use template/title/subtitle/body/bullets/stats/image/columns/notes/fragments. Template-pack decks should use layout + slots (e.g. { layout: 'title-light', slots: { primary: '...', secondary: '...' } })." }), { minItems: 1 }),
+      path: Type.String({ description: "Path to a JSON file containing the full presentation deck spec ({ title, slides, ... }). Relative to the session cwd or absolute. The deck is read from this file; it is not passed inline." }),
     }),
     async execute(_toolCallId, params) {
+      // The deck spec is read from a JSON file referenced by `path`. Inline
+      // decks are intentionally not supported — they bloated tool calls with
+      // tens of kB of JSON. Read + parse the file before doing anything else.
+      const specPath = typeof params.path === "string" ? params.path.trim() : "";
+      if (!specPath) {
+        throw new Error(
+          "show_presentation requires `path`: the path to a JSON file containing the deck spec " +
+          "({ title, slides, ... }). Write the deck to a file first, then pass its path. " +
+          "Inline decks (title/slides params) are no longer supported.",
+        );
+      }
+      const absSpecPath = path.isAbsolute(specPath) ? specPath : path.resolve(process.cwd(), specPath);
+      let rawSpec: string;
+      try {
+        rawSpec = await fs.readFile(absSpecPath, "utf8");
+      } catch (error) {
+        throw new Error(
+          `show_presentation could not read the deck spec file at ${absSpecPath}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      let spec: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(rawSpec);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error(`expected a JSON object { title, slides, ... } but got ${Array.isArray(parsed) ? "an array" : typeof parsed}`);
+        }
+        spec = parsed as Record<string, unknown>;
+      } catch (error) {
+        throw new Error(
+          `show_presentation could not parse the deck spec file at ${absSpecPath} as JSON: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      const title = spec.title;
+      const templatePack = spec.templatePack;
       // If the deck specifies a templatePack, pre-resolve each slide's layout
       // via the pi-crust template-pack route so the pi-crust receives slide.html
       // already baked. This keeps the pi-crust compile path synchronous.
-      let slides = params.slides as Array<Record<string, unknown>>;
-      if (typeof params.templatePack === "string" && params.templatePack.length > 0) {
+      let slides = Array.isArray(spec.slides) ? (spec.slides as Array<Record<string, unknown>>) : [];
+      if (typeof templatePack === "string" && templatePack.length > 0 && slides.length > 0) {
         const apiBase = resolvePiRemoteApiBase();
         slides = await Promise.all(
           slides.map(async (slide, index) => {
@@ -186,7 +215,7 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
             if (!layout || typeof slide.html === "string") return slide;
             const slots = { page: index + 1, ...(slide.slots as Record<string, unknown> | undefined ?? {}) };
             try {
-              const url = `${apiBase}/api/presentations/templates/${encodeURIComponent(params.templatePack as string)}/render/${encodeURIComponent(layout)}`;
+              const url = `${apiBase}/api/presentations/templates/${encodeURIComponent(templatePack)}/render/${encodeURIComponent(layout)}`;
               const response = await postJson<{ readonly html?: string }>(url, { slots });
               if (response && typeof response.html === "string") return { ...slide, html: response.html };
             } catch {
@@ -196,19 +225,14 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
           }),
         );
       }
-      const deckId = typeof params.id === "string" && params.id.trim().length > 0
-        ? params.id.trim()
-        : slugifyDeckTitle(params.title);
+      const deckId = typeof spec.id === "string" && spec.id.trim().length > 0
+        ? spec.id.trim()
+        : slugifyDeckTitle(typeof title === "string" ? title : "");
       let deck: PresentationDeck = {
+        ...spec,
         id: deckId,
-        title: params.title,
-        ...optional({ subtitle: params.subtitle }),
-        ...optional({ theme: params.theme }),
-        ...optional({ client: params.client }),
-        ...optional({ confidential: params.confidential }),
-        ...optional({ templatePack: params.templatePack }),
         slides,
-      } as PresentationDeck;
+      } as unknown as PresentationDeck;
       // Auto-copy any absolute image.src / logo.src that points at a real
       // file inside the session's cwd into
       // `<cwd>/.pi/presentations/<sessionId>/`, then rewrite to a bare
@@ -246,13 +270,14 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
           `}\nFix the listed fields and call show_presentation again.`,
         );
       }
+      const slideCount = deck.slides.length;
       return {
-        content: [{ type: "text", text: `Displayed presentation deck: ${params.title} (${params.slides.length} slide${params.slides.length === 1 ? "" : "s"}).` }],
+        content: [{ type: "text", text: `Displayed presentation deck: ${deck.title} (${slideCount} slide${slideCount === 1 ? "" : "s"}).` }],
         details: {
           [ARTIFACT_DETAIL_KEY]: {
             version: ARTIFACT_SCHEMA_VERSION,
             kind: PRESENTATION_DETAIL_KIND,
-            title: params.title,
+            title: deck.title,
             deckId,
             data: deck,
           },

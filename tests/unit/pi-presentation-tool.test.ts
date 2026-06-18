@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import piRemoteArtifacts from "../../src/server/pi/extensions/pi-crust-artifacts.js";
 
 type RegisteredTool = {
@@ -6,24 +9,50 @@ type RegisteredTool = {
   description: string;
   promptSnippet?: string;
   promptGuidelines?: readonly string[];
+  parameters?: unknown;
   execute(toolCallId: string, params: Record<string, unknown>): Promise<unknown>;
 };
 
+function loadTool(name: string): RegisteredTool {
+  const tools: RegisteredTool[] = [];
+  piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
+  const tool = tools.find((t) => t.name === name);
+  if (!tool) throw new Error(`tool ${name} not registered`);
+  return tool;
+}
+
 describe("Pi presentation tool extension", () => {
-  it("registers show_presentation with artifact details consumed by pi-crust", async () => {
-    const tools: RegisteredTool[] = [];
-    piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
+  let tmpRoot: string;
 
-    const tool = tools.find((candidate) => candidate.name === "show_presentation");
-    expect(tool).toBeTruthy();
-    expect(tool?.promptSnippet).toMatch(/slide decks/i);
-    expect(tool?.promptGuidelines?.join("\n")).toMatch(/structured deck/i);
+  beforeEach(async () => {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-pres-tool-"));
+  });
 
-    const result = await tool!.execute("call-1", {
+  afterEach(async () => {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  async function writeSpec(spec: unknown): Promise<string> {
+    const specPath = path.join(tmpRoot, `deck-${Math.random().toString(36).slice(2)}.json`);
+    await fs.writeFile(specPath, JSON.stringify(spec), "utf8");
+    return specPath;
+  }
+
+  it("reads the deck spec from a JSON file path and emits artifact details consumed by pi-crust", async () => {
+    const tool = loadTool("show_presentation");
+    expect(tool.promptSnippet).toMatch(/slide decks/i);
+    expect(tool.promptGuidelines?.join("\n")).toMatch(/JSON file/i);
+
+    const specPath = await writeSpec({
       title: "Executive Signal Brief",
       theme: "light",
       slides: [{ title: "Title", subtitle: "Subtitle" }, { title: "Signals", bullets: ["Permits"] }],
-    }) as { content: Array<{ text: string }>; details: Record<string, unknown> };
+    });
+
+    const result = await tool.execute("call-1", { path: specPath }) as {
+      content: Array<{ text: string }>;
+      details: Record<string, unknown>;
+    };
 
     expect(result.content[0]?.text).toContain("Executive Signal Brief");
     expect(result.details.piRemoteControlArtifact).toMatchObject({
@@ -38,62 +67,85 @@ describe("Pi presentation tool extension", () => {
     });
   });
 
-  it("rejects malformed decks with a structured error so the LLM can self-correct", async () => {
-    const tools: RegisteredTool[] = [];
-    piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
-    const tool = tools.find((candidate) => candidate.name === "show_presentation")!;
+  it("no longer accepts an inline slides array — the schema only exposes `path`", async () => {
+    const tool = loadTool("show_presentation");
+    // The parameter schema must not declare a `slides` (or `title`) property
+    // any more; the entire deck lives in the JSON file referenced by `path`.
+    const schema = tool.parameters as { properties?: Record<string, unknown>; required?: string[] };
+    expect(schema?.properties).toBeTruthy();
+    expect(Object.keys(schema.properties ?? {})).toContain("path");
+    expect(Object.keys(schema.properties ?? {})).not.toContain("slides");
+    expect(schema.required).toContain("path");
+  });
 
-    // image passed as a string instead of { src, alt? } — the exact mistake
-    // observed in the bug report. The tool must throw (not silently succeed)
-    // and the message must name the bad field + suggest the right shape.
+  it("rejects an inline deck passed via params (no `path`)", async () => {
+    const tool = loadTool("show_presentation");
+    await expect(tool.execute("call-inline", {
+      title: "Inline",
+      slides: [{ title: "Title" }],
+    })).rejects.toThrow(/path/i);
+  });
+
+  it("throws a readable error when the spec file does not exist", async () => {
+    const tool = loadTool("show_presentation");
+    await expect(tool.execute("call-missing", {
+      path: path.join(tmpRoot, "nope.json"),
+    })).rejects.toThrow(/could not read|no such file|ENOENT/i);
+  });
+
+  it("throws a readable error when the spec file is not valid JSON", async () => {
+    const tool = loadTool("show_presentation");
+    const badPath = path.join(tmpRoot, "bad.json");
+    await fs.writeFile(badPath, "{not json", "utf8");
+    await expect(tool.execute("call-bad-json", { path: badPath })).rejects.toThrow(/parse|JSON/i);
+  });
+
+  it("rejects malformed decks (read from file) with a structured error so the LLM can self-correct", async () => {
+    const tool = loadTool("show_presentation");
+
+    // image passed as a string instead of { src, alt? }.
     await expect(tool.execute("call-bad-image", {
-      title: "Bad image",
-      slides: [
-        { title: "Cover" },
-        { title: "Pic", image: "https://example.com/cat.png" },
-      ],
+      path: await writeSpec({
+        title: "Bad image",
+        slides: [{ title: "Cover" }, { title: "Pic", image: "https://example.com/cat.png" }],
+      }),
     })).rejects.toThrow(/slides\[1\]\.image must be an object/);
 
     // Missing image.src.
     await expect(tool.execute("call-no-src", {
-      title: "No src",
-      slides: [{ title: "x", image: { alt: "oops" } }],
+      path: await writeSpec({ title: "No src", slides: [{ title: "x", image: { alt: "oops" } }] }),
     })).rejects.toThrow(/slides\[0\]\.image\.src is required/);
 
-    // Absolute filesystem path — the exact compile-time 'Unsafe presentation
-    // asset path' failure from a real bug report. Must be caught up-front so
-    // the LLM sees it.
+    // Absolute filesystem path.
     await expect(tool.execute("call-abs-path", {
-      title: "Coastal",
-      slides: [
-        { title: "Cover" },
-        { title: "Landfalls", image: { src: "/home/coder/adhoc/bz_coastal/slide_02_landfalls.png" } },
-      ],
+      path: await writeSpec({
+        title: "Coastal",
+        slides: [{ title: "Cover" }, { title: "Landfalls", image: { src: "/home/coder/adhoc/bz_coastal/slide_02_landfalls.png" } }],
+      }),
     })).rejects.toThrow(/slides\[1\]\.image\.src is unsafe.*absolute path.*\.pi\/presentations/s);
 
     // Parent-directory traversal is also unsafe.
     await expect(tool.execute("call-dotdot", {
-      title: "Traversal",
-      slides: [{ title: "x", image: { src: "../../../etc/passwd" } }],
+      path: await writeSpec({ title: "Traversal", slides: [{ title: "x", image: { src: "../../../etc/passwd" } }] }),
     })).rejects.toThrow(/slides\[0\]\.image\.src is unsafe.*path traversal/);
 
     // https:// and data: URIs and bare relative filenames must still pass.
     await expect(tool.execute("call-ok", {
-      title: "OK",
-      slides: [
-        { title: "a", image: { src: "https://example.com/x.png" } },
-        { title: "b", image: { src: "data:image/png;base64,AAA" } },
-        { title: "c", image: { src: "chart.png" } },
-        { title: "d", image: { src: "sub/chart.png" } },
-      ],
+      path: await writeSpec({
+        title: "OK",
+        slides: [
+          { title: "a", image: { src: "https://example.com/x.png" } },
+          { title: "b", image: { src: "data:image/png;base64,AAA" } },
+          { title: "c", image: { src: "chart.png" } },
+          { title: "d", image: { src: "sub/chart.png" } },
+        ],
+      }),
     })).resolves.toBeTruthy();
 
-    // The error message should include the shape hint so the model knows what
-    // to send next time.
+    // The error message should include the shape hint.
     try {
       await tool.execute("call-shape", {
-        title: "Shape",
-        slides: [{ title: "x", image: "u" }],
+        path: await writeSpec({ title: "Shape", slides: [{ title: "x", image: "u" }] }),
       });
       throw new Error("expected throw");
     } catch (err) {
@@ -105,20 +157,14 @@ describe("Pi presentation tool extension", () => {
   });
 
   it("keeps show_artifact backwards-compatible for presentation artifacts", async () => {
-    const tools: RegisteredTool[] = [];
-    piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
-    const tool = tools.find((candidate) => candidate.name === "show_artifact")!;
-
+    const tool = loadTool("show_artifact");
     const deck = { title: "Deck", slides: [{ title: "One" }] };
     const result = await tool.execute("call-1", { kind: "presentation", title: "Deck", data: deck }) as { details: Record<string, unknown> };
-
     expect(result.details.piRemoteControlArtifact).toMatchObject({ kind: "presentation", title: "Deck", data: deck });
   });
 
   it("registers list_presentation_templates that calls the /api/presentations/templates route", async () => {
-    const tools: RegisteredTool[] = [];
-    piRemoteArtifacts({ registerTool: (tool: RegisteredTool) => tools.push(tool) } as never);
-    const tool = tools.find((candidate) => candidate.name === "list_presentation_templates");
+    const tool = loadTool("list_presentation_templates");
     expect(tool).toBeDefined();
 
     const fetched: string[] = [];
@@ -131,7 +177,7 @@ describe("Pi presentation tool extension", () => {
     }) as typeof fetch;
     try {
       process.env.PI_CRUST_API_BASE = "http://127.0.0.1:9999";
-      const result = await tool!.execute("toolCallId", {}) as { content: { text: string }[]; details: { packs: { id: string }[] } };
+      const result = await tool.execute("toolCallId", {}) as { content: { text: string }[]; details: { packs: { id: string }[] } };
       expect(fetched).toContain("http://127.0.0.1:9999/api/presentations/templates");
       expect(result.details.packs[0]?.id).toBe("brainco");
       expect(result.content[0]?.text).toMatch(/brainco: 2 layout/);

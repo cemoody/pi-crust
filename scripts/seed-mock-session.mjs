@@ -248,7 +248,7 @@ await fs.writeFile(toolPresFile, JSON.stringify({
       tool: {
         id: 'call_tool_pres',
         name: 'show_presentation',
-        args: { title: toolPresDeck.title, slides: toolPresDeck.slides },
+        args: { path: `.pi/presentations/${toolPresDeck.id ?? 'deck'}.deck.json` },
         status: 'success',
         output: 'Displayed presentation deck: Tool-result Signal Brief (2 slides).',
         startedAt: 1700000005050,
