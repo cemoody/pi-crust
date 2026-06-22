@@ -4,6 +4,7 @@
 // event can fire — otherwise the inaugural Vite-server-restart reload races
 // the listener registration and slips past our suppression.
 import "./utils/hmr-tame.js";
+import { initTheme } from "./utils/theme.js";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "./design-system.css";
@@ -14,6 +15,7 @@ import { registerServiceWorker } from "./utils/pwa-register.js";
 
 installClientTelemetry();
 registerServiceWorker();
+initTheme();
 const api = new HttpSessionDashboardApi();
 
 const root = document.getElementById("root");
