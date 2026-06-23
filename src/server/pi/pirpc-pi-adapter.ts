@@ -197,14 +197,24 @@ export class PiRpcAdapter implements PiAdapter {
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
-    const available = await this.modelRegistry.getAvailable();
-    return available.map((model: any) => ({
+    // Provider extensions (for example pi-provider-litellm) register models
+    // inside the running Pi process, not in this API process's standalone
+    // ModelRegistry. Prefer live session registries in SessionRegistry.listModels()
+    // when available; this fallback is for empty/cold dashboards.
+    return toModelInfo(await this.modelRegistry.getAvailable());
+  }
+}
+
+function toModelInfo(models: readonly unknown[]): ModelInfo[] {
+  return models
+    .filter(isRecord)
+    .map((model) => ({
       provider: String(model.provider ?? ""),
       id: String(model.id ?? ""),
       name: String(model.name ?? model.id ?? "unknown"),
       available: true,
-    }));
-  }
+    }))
+    .filter((model) => model.provider.length > 0 && model.id.length > 0);
 }
 
 interface SpawnSessionOptions {
@@ -433,6 +443,12 @@ class PiRpcSessionHandle implements PiSessionHandle {
   async setSessionName(name: string): Promise<SessionState> {
     await this.rpc.request("set_session_name", { name });
     return this.getState();
+  }
+
+  async getAvailableModels(): Promise<readonly ModelInfo[]> {
+    const data = await this.rpc.request("get_available_models");
+    const models = isRecord(data) && Array.isArray(data.models) ? data.models : [];
+    return toModelInfo(models);
   }
 
   async setModel(provider: string, modelId: string): Promise<SessionState> {

@@ -158,6 +158,7 @@ export interface PiSessionHandle {
   reload?(): Promise<SessionState>;
   abort(): Promise<void>;
   setSessionName(name: string): Promise<SessionState>;
+  getAvailableModels?(): Promise<readonly ModelInfo[]>;
   setModel(provider: string, modelId: string): Promise<SessionState>;
   getForkMessages?(): Promise<readonly ForkMessage[]>;
   fork?(entryId: string): Promise<ForkSessionResult>;
