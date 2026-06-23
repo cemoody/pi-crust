@@ -18,6 +18,7 @@ export function ModelPicker({ open, loadModels, onSelect, onClose }: ModelPicker
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setQuery("");
     void loadModels().then(setModels).catch((caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)));
   }, [loadModels, open]);
 
@@ -66,7 +67,7 @@ export function ModelPicker({ open, loadModels, onSelect, onClose }: ModelPicker
               </button>
             </li>
           ))}
-          {filtered.length === 0 ? <li className="empty">No models match “{query}”.</li> : null}
+          {filtered.length === 0 ? <li className="empty">{query ? `No models match “${query}”.` : "No models available. Open a session or configure/login to a provider."}</li> : null}
         </ul>
       </div>
     </div>

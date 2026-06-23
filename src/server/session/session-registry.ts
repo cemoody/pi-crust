@@ -233,7 +233,18 @@ export class SessionRegistry {
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
-    return this.adapter.listModels();
+    const byKey = new Map<string, ModelInfo>();
+    for (const internal of this.sessions.values()) {
+      const liveModels = internal.registered.handle.getAvailableModels
+        ? await internal.registered.handle.getAvailableModels().catch(() => [])
+        : [];
+      for (const model of liveModels) byKey.set(`${model.provider}/${model.id}`, model);
+    }
+    for (const model of await this.adapter.listModels()) {
+      const key = `${model.provider}/${model.id}`;
+      if (!byKey.has(key)) byKey.set(key, model);
+    }
+    return [...byKey.values()];
   }
 
   async setModel(sessionId: string, provider: string, modelId: string): Promise<void> {
