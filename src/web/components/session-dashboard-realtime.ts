@@ -96,9 +96,13 @@ export function applyRealtimeEvent(
       delete streamDraftIds[sessionId];
       if (draftId) {
         // Normal finalize: replace the in-progress streaming row in place.
+        // If the canonical /messages transcript already rendered this same
+        // finalized turn, fold the live draft into that history row instead of
+        // leaving two visually identical assistant messages.
+        const finalRow = wireMessageToTimeline(draftId, message, false);
         setMessagesBySession((current) => ({
           ...current,
-          [sessionId]: upsertTimelineMessage(current[sessionId] ?? [], wireMessageToTimeline(draftId, message, false)),
+          [sessionId]: reconcileFinalizedAssistant(current[sessionId] ?? [], finalRow, { liveDraftId: draftId }),
         }));
         return false;
       }
@@ -260,23 +264,54 @@ export function upsertTimelineMessage(messages: readonly TimelineMessage[], mess
 export function reconcileFinalizedAssistant(
   messages: readonly TimelineMessage[],
   finalized: TimelineMessage,
+  options: { readonly liveDraftId?: string } = {},
 ): TimelineMessage[] {
+  const duplicateHistoryIndex = options.liveDraftId
+    ? findMatchingAssistantIndex(messages, finalized, { excludeId: options.liveDraftId, requireTimestampMatch: true })
+    : -1;
+  if (duplicateHistoryIndex !== -1) {
+    const existing = messages[duplicateHistoryIndex]!;
+    const merged = mergeTimelineMessage(existing, { ...finalized, id: existing.id });
+    return messages.flatMap((message, index) => {
+      if (index === duplicateHistoryIndex) return [merged];
+      if (message.id === options.liveDraftId) return [];
+      return [message];
+    });
+  }
+
   if (messages.some((existing) => existing.id === finalized.id)) {
     return upsertTimelineMessage(messages, finalized);
   }
+
+  const replayIndex = findMatchingAssistantIndex(messages, finalized, { requireTimestampMatch: false });
+  if (replayIndex !== -1) {
+    const existing = messages[replayIndex]!;
+    const merged = mergeTimelineMessage(existing, { ...finalized, id: existing.id });
+    return [...messages.slice(0, replayIndex), merged, ...messages.slice(replayIndex + 1)];
+  }
+  return [...messages, finalized];
+}
+
+function findMatchingAssistantIndex(
+  messages: readonly TimelineMessage[],
+  finalized: TimelineMessage,
+  options: { readonly excludeId?: string; readonly requireTimestampMatch: boolean },
+): number {
   const finalText = finalized.text ?? "";
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const existing = messages[index]!;
+    if (existing.id === options.excludeId) continue;
     if (existing.role !== "assistant") continue;
+    if (options.requireTimestampMatch) {
+      if (existing.timestamp === undefined || finalized.timestamp === undefined || existing.timestamp !== finalized.timestamp) continue;
+    }
     const existingText = existing.text ?? "";
     const sameTurn = existingText === finalText
       || (existingText.length > 0 && finalText.startsWith(existingText))
       || (finalText.length > 0 && existingText.startsWith(finalText));
-    if (!sameTurn) continue;
-    const merged = mergeTimelineMessage(existing, { ...finalized, id: existing.id });
-    return [...messages.slice(0, index), merged, ...messages.slice(index + 1)];
+    if (sameTurn) return index;
   }
-  return [...messages, finalized];
+  return -1;
 }
 
 export function mergeTimelineMessage(previous: TimelineMessage, next: TimelineMessage): TimelineMessage {
@@ -309,6 +344,7 @@ export function wireMessageToTimeline(id: string, message: WireMessage, forceAss
     text,
     ...(thinking ? { thinking } : {}),
     ...(forceAssistantProvider || role === "assistant" ? { provider: "pi" } : {}),
+    ...optional({ timestamp: message.timestamp }),
     ...optional({ customType: message.customType }),
     ...extractArtifactTimeline(message.customType, message.details),
   };
