@@ -28,7 +28,9 @@ export type IconName =
   | "terminal"
   | "extension"
   | "download"
-  | "check";
+  | "check"
+  | "sun"
+  | "moon";
 
 interface IconSpec {
   readonly width: number;
@@ -169,6 +171,24 @@ const ICONS: Record<IconName, IconSpec> = {
   check: {
     width: 14, height: 14,
     body: <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />,
+  },
+  sun: {
+    width: 16, height: 16, strokeWidth: 1.4,
+    body: <>
+      <circle cx="8" cy="8" r="3" />
+      <path d="M8 1.5v2" />
+      <path d="M8 12.5v2" />
+      <path d="M1.5 8h2" />
+      <path d="M12.5 8h2" />
+      <path d="M3.4 3.4l1.4 1.4" />
+      <path d="M11.2 11.2l1.4 1.4" />
+      <path d="M12.6 3.4l-1.4 1.4" />
+      <path d="M4.8 11.2l-1.4 1.4" />
+    </>,
+  },
+  moon: {
+    width: 16, height: 16, strokeWidth: 1.4,
+    body: <path d="M13 9.2A5.2 5.2 0 0 1 6.8 3a5.2 5.2 0 1 0 6.2 6.2z" />,
   },
 };
 
