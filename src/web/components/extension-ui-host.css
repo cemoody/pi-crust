@@ -1,8 +1,16 @@
 .extension-ui-host {
   display: grid;
+  grid-template-columns: minmax(0, var(--composer-max));
+  justify-content: center;
   gap: 0.5rem;
   min-width: 0;
-  padding: 0 0 0.35rem;
+  padding: 0 24px 0.35rem;
+  box-sizing: border-box;
+}
+
+.extension-ui-host > * {
+  grid-column: 1;
+  min-width: 0;
 }
 
 .extension-ui-host [role="dialog"] {

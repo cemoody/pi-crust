@@ -5,6 +5,7 @@ import { expect, test } from '@playwright/test';
  * - setStatus requests render as compact, theme-aware chips rather than heavy pills.
  * - setWidget requests render as reusable disclosure cards, not dashed debug boxes.
  * - long extension text is contained and cannot create page-level horizontal overflow.
+ * - extension chrome aligns to the same centered content column as the timeline/composer.
  * - mobile defaults keep verbose widget bodies collapsed until the user expands them.
  */
 
@@ -68,6 +69,18 @@ test.describe('generic extension UI', () => {
     }));
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
 
+    // The extension UI should sit in the same centered column as the composer,
+    // rather than spanning edge-to-edge and visually sticking out past messages.
+    const boxes = await page.evaluate(() => {
+      const ext = document.querySelector('.extension-ui-host')?.getBoundingClientRect();
+      const composer = document.querySelector('.composer-input')?.getBoundingClientRect();
+      if (!ext || !composer) return null;
+      return { extLeft: ext.left, extRight: ext.right, composerLeft: composer.left, composerRight: composer.right };
+    });
+    expect(boxes).not.toBeNull();
+    expect(Math.abs(boxes!.extLeft - boxes!.composerLeft)).toBeLessThanOrEqual(24);
+    expect(Math.abs(boxes!.extRight - boxes!.composerRight)).toBeLessThanOrEqual(24);
+
     await page.screenshot({ path: 'test-results/extension-ui-generic-desktop.png', fullPage: true });
   });
 
@@ -91,6 +104,16 @@ test.describe('generic extension UI', () => {
       clientWidth: document.documentElement.clientWidth,
     }));
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+
+    const boxes = await page.evaluate(() => {
+      const ext = document.querySelector('.extension-ui-host')?.getBoundingClientRect();
+      const composer = document.querySelector('.composer-input')?.getBoundingClientRect();
+      if (!ext || !composer) return null;
+      return { extLeft: ext.left, extRight: ext.right, composerLeft: composer.left, composerRight: composer.right };
+    });
+    expect(boxes).not.toBeNull();
+    expect(Math.abs(boxes!.extLeft - boxes!.composerLeft)).toBeLessThanOrEqual(16);
+    expect(Math.abs(boxes!.extRight - boxes!.composerRight)).toBeLessThanOrEqual(16);
 
     await page.screenshot({ path: 'test-results/extension-ui-generic-mobile.png', fullPage: true });
   });
