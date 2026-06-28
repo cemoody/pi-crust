@@ -20,6 +20,7 @@ import type {
   SessionStatus,
   Unsubscribe,
 } from "./types.js";
+import type { ExtensionUiRequest } from "../../shared/protocol.js";
 
 import { optional } from "../../shared/util.js";
 interface PersistedMockSession {
@@ -239,6 +240,14 @@ class MockPiSessionHandle implements PiSessionHandle {
       await this.runArtifact();
       return;
     }
+    // Test directive: `@@extension-ui` emits generic extension UI status/widget
+    // requests exactly as RPC-backed extensions do for ctx.ui.setStatus and
+    // ctx.ui.setWidget. Used by extension-ui-generic.spec.ts to pin the web
+    // renderer without depending on a specific third-party extension.
+    if (message.trim() === "@@extension-ui") {
+      await this.runExtensionUiDemo(message);
+      return;
+    }
     // Test directive: `@@login` reproduces the browser-extension login handoff —
     // the LLM explains it needs a sign-in, then calls `browser_request_login`,
     // whose result carries a `kind:"html"` artifact rendered as an inline live
@@ -358,6 +367,58 @@ class MockPiSessionHandle implements PiSessionHandle {
     this.status = "idle";
     this.lastActivity = Date.now();
     this.emit({ type: "agent_end", messages: [] });
+  }
+
+  private async runExtensionUiDemo(message: string): Promise<void> {
+    this.status = "running";
+    this.emit({ type: "agent_start" });
+    const timestamp = Date.now();
+    const userMessage: SessionMessage = { role: "user", content: message, timestamp };
+    this.messages.push(userMessage);
+    this.emit({ type: "message", message: userMessage });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const extensionUiRequests = [
+      { id: "status-loop", method: "setStatus", statusKey: "loop", statusText: "⟳ loop · 1 active" },
+      { id: "status-review", method: "setStatus", statusKey: "review", statusText: "review · waiting" },
+      {
+        id: "widget-loop",
+        method: "setWidget",
+        widgetKey: "loop",
+        widgetLines: [
+          "⟳ #3 Read /home/coder/PROMPT_roofing_dma_pipeline_orchestrator.md — cron: */5 * * * * · next 4m28s 4/500",
+        ],
+      },
+      {
+        id: "widget-audit",
+        method: "setWidget",
+        widgetKey: "audit",
+        widgetLines: [
+          "finding JSONs: 4/5",
+          "finding MDs: 4/5",
+          "corrected/artifact files: 22",
+        ],
+      },
+    ] satisfies ExtensionUiRequest[];
+
+    const assistantMessage: SessionMessage = {
+      role: "assistant",
+      content: "Emitted generic extension UI demo requests.",
+      timestamp: timestamp + 1,
+    };
+    this.messages.push(assistantMessage);
+    await this.persist();
+    this.status = "idle";
+    this.lastActivity = Date.now();
+    this.emit({ type: "message", message: assistantMessage });
+    this.emit({ type: "agent_end", messages: [userMessage, assistantMessage] });
+    for (const delayMs of [50, 250, 750, 1500]) {
+      setTimeout(() => {
+        for (const request of extensionUiRequests) {
+          this.emit({ type: "extension_ui_request", ...request } as PiEvent);
+        }
+      }, delayMs).unref?.();
+    }
   }
 
   private async runBurst(intervalMs: number, durationMs: number): Promise<void> {

@@ -1,6 +1,135 @@
-.extension-ui-host { display: grid; gap: 0.75rem; }
-.extension-ui-host [role="dialog"] { border: 1px solid #72a7ff; border-radius: 0.75rem; padding: 1rem; background: #171a21; display: grid; gap: 0.5rem; }
-.extension-widget { border: 1px dashed #475569; border-radius: 0.5rem; padding: 0.5rem; }
-[aria-label="Extension statuses"] { display: flex; gap: 0.5rem; }
-[aria-label="Extension statuses"] span { background: #1e293b; border-radius: 999px; padding: 0.2rem 0.55rem; }
+.extension-ui-host {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0 0 0.35rem;
+}
+
+.extension-ui-host [role="dialog"] {
+  border: 1px solid #72a7ff;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  background: #171a21;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.extension-status-tray {
+  display: flex;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  padding: 0 0.05rem;
+}
+.extension-status-tray::-webkit-scrollbar { display: none; }
+
+.extension-status-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(18rem, 58vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--white-000) 84%, var(--gray-100));
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 0.16rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.extension-widget {
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--white-000) 92%, var(--gray-100));
+  overflow: hidden;
+}
+
+.extension-widget-header {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  padding: 0.42rem 0.55rem;
+  cursor: pointer;
+}
+.extension-widget-header:hover { background: color-mix(in srgb, var(--gray-100) 50%, transparent); }
+.extension-widget-header:focus-visible { outline: 2px solid var(--blue-accent); outline-offset: -2px; }
+
+.extension-widget-caret {
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  transition: transform 120ms ease;
+}
+.extension-widget[data-expanded="true"] .extension-widget-caret { transform: rotate(90deg); }
+
+.extension-widget-title {
+  min-width: 0;
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.extension-widget-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+}
+
+.extension-widget-count {
+  justify-self: end;
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.extension-widget-body {
+  display: none;
+  max-height: min(28vh, 13rem);
+  overflow: auto;
+  border-top: 1px solid var(--hairline);
+  padding: 0.42rem 0.55rem 0.5rem;
+  background: color-mix(in srgb, var(--white-000) 96%, var(--gray-100));
+}
+.extension-widget[data-expanded="true"] .extension-widget-body { display: grid; gap: 0.25rem; }
+
+.extension-widget-body p {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--text-secondary);
+  font: 0.78rem/1.35 var(--font-mono);
+}
+
 [aria-label="Approval inbox"] { border: 1px solid #f59e0b; border-radius: 0.5rem; padding: 0.5rem; }
+
+@media (max-width: 699px) {
+  .extension-ui-host { gap: 0.4rem; }
+  .extension-widget-header {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    padding: 0.38rem 0.5rem;
+  }
+  .extension-widget-count { display: none; }
+  .extension-widget-title { max-width: 5.5rem; }
+  .extension-widget-preview { font-size: 0.76rem; }
+}

@@ -51,7 +51,7 @@ describe("ExtensionUiHost", () => {
     expect(handlers.onCancelResponse).toHaveBeenCalledWith("1");
   });
 
-  it("renders notifications, statuses, and widgets", () => {
+  it("renders notifications, compact statuses, and collapsible widgets", () => {
     renderHost([
       { id: "n", method: "notify", message: "Done", notifyType: "info" },
       { id: "s", method: "setStatus", statusKey: "ext", statusText: "Turn 1" },
@@ -59,9 +59,16 @@ describe("ExtensionUiHost", () => {
       { id: "wb", method: "setWidget", widgetKey: "below", widgetLines: ["below"], widgetPlacement: "belowEditor" },
     ]);
     expect(screen.getByRole("status")).toHaveTextContent("Done");
-    expect(screen.getByLabelText("Extension statuses")).toHaveTextContent("Turn 1");
-    expect(screen.getByLabelText("Widget todo")).toHaveTextContent("one");
-    expect(screen.getByLabelText("Widget below")).toHaveTextContent("below");
+    expect(screen.getByRole("region", { name: "Extension statuses" })).toHaveTextContent("Turn 1");
+
+    const todo = screen.getByRole("group", { name: "Widget todo" });
+    const todoToggle = screen.getByRole("button", { name: "todo extension widget" });
+    expect(todoToggle).toHaveAttribute("aria-expanded", "false");
+    expect(todo).toHaveTextContent("one");
+    fireEvent.click(todoToggle);
+    expect(todoToggle).toHaveAttribute("aria-expanded", "true");
+
+    expect(screen.getByRole("group", { name: "Widget below" })).toHaveTextContent("below");
   });
 
   it("updates browser title and editor text", () => {

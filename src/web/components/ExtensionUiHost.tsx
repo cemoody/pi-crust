@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionUiRequest } from "../../shared/protocol.js";
 import "./extension-ui-host.css";
 
@@ -45,9 +45,17 @@ export function ExtensionUiHost(props: ExtensionUiHostProps) {
     }
   }, [props]);
 
+  if (statuses.length === 0 && widgets.length === 0 && notifications.length === 0 && dialogs.length === 0) return null;
+
   return (
     <section className="extension-ui-host" aria-label="Extension UI">
-      {statuses.length ? <div aria-label="Extension statuses">{statuses.map((status) => <span key={status.id}>{status.statusText}</span>)}</div> : null}
+      {statuses.length ? (
+        <div className="extension-status-tray" role="region" aria-label="Extension statuses">
+          {statuses.map((status) => (
+            <span key={status.id} className="extension-status-chip" title={status.statusText}>{status.statusText}</span>
+          ))}
+        </div>
+      ) : null}
 
       {widgets.filter((widget) => widget.widgetPlacement !== "belowEditor").map((widget) => (
         <Widget key={widget.id} widget={widget} />
@@ -109,10 +117,30 @@ export function ExtensionUiHost(props: ExtensionUiHostProps) {
 }
 
 function Widget({ widget }: { readonly widget: Extract<ExtensionUiRequest, { method: "setWidget" }> }) {
+  const contentId = useId();
+  const lines = widget.widgetLines ?? [];
+  const [expanded, setExpanded] = useState(false);
+  const preview = lines[0] ?? "";
+  const summary = `${lines.length} item${lines.length === 1 ? "" : "s"}`;
   return (
-    <div aria-label={`Widget ${widget.widgetKey}`} className="extension-widget">
-      {widget.widgetLines?.map((line, index) => <p key={index}>{line}</p>)}
-    </div>
+    <section aria-label={`Widget ${widget.widgetKey}`} role="group" className="extension-widget" data-expanded={expanded ? "true" : "false"}>
+      <button
+        type="button"
+        className="extension-widget-header"
+        aria-label={`${widget.widgetKey} extension widget`}
+        aria-expanded={expanded}
+        aria-controls={contentId}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="extension-widget-caret" aria-hidden="true">▸</span>
+        <span className="extension-widget-title">{widget.widgetKey}</span>
+        <span className="extension-widget-preview" title={preview}>{preview}</span>
+        <span className="extension-widget-count">{summary}</span>
+      </button>
+      <div id={contentId} className="extension-widget-body">
+        {lines.map((line, index) => <p key={index} title={line}>{line}</p>)}
+      </div>
+    </section>
   );
 }
 

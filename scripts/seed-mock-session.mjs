@@ -31,6 +31,26 @@ await fs.writeFile(sessionFile, JSON.stringify({
 }, null, 2) + '\n');
 console.log(`seeded ${sessionFile}`);
 
+// Seeded session: generic extension UI requests. This pins the web rendering
+// contract for ctx.ui.setStatus(...) and ctx.ui.setWidget(...): compact status
+// tray, card-like widgets, mobile-safe truncation, and disclosure for verbose
+// persistent extension content. The data intentionally mirrors real extensions
+// such as pi-loop without making the renderer loop-specific.
+const extensionUiId = 'seeded-session-extension-ui';
+const extensionUiSessionFile = path.join(root, '0000000000000a_seeded-session-extension-ui.mock-session.json');
+await fs.writeFile(extensionUiSessionFile, JSON.stringify({
+  id: extensionUiId,
+  cwd,
+  sessionFile: extensionUiSessionFile,
+  sessionName: 'Extension UI generic session',
+  messages: [
+    { role: 'user', content: 'show generic extension UI chrome', timestamp: 1700000000500 },
+    { role: 'assistant', content: 'The extension UI below is synthetic test data.', timestamp: 1700000000501 },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${extensionUiSessionFile}`);
+
 // Second seeded session: deliberately wide / overflowing content to exercise
 // mobile horizontal-scroll behavior in code blocks, inline code, and long URLs.
 const longId = 'seeded-session-longcode';
