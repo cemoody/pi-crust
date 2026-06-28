@@ -69,17 +69,17 @@ test.describe('generic extension UI', () => {
     }));
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
 
-    // The extension UI should sit in the same centered column as the composer,
-    // rather than spanning edge-to-edge and visually sticking out past messages.
+    // The visible extension card should sit in the same centered column as the
+    // composer, rather than spanning edge-to-edge and visually sticking out past messages.
     const boxes = await page.evaluate(() => {
-      const ext = document.querySelector('.extension-ui-host')?.getBoundingClientRect();
+      const ext = document.querySelector('.extension-widget')?.getBoundingClientRect();
       const composer = document.querySelector('.composer-input')?.getBoundingClientRect();
       if (!ext || !composer) return null;
       return { extLeft: ext.left, extRight: ext.right, composerLeft: composer.left, composerRight: composer.right };
     });
     expect(boxes).not.toBeNull();
-    expect(Math.abs(boxes!.extLeft - boxes!.composerLeft)).toBeLessThanOrEqual(24);
-    expect(Math.abs(boxes!.extRight - boxes!.composerRight)).toBeLessThanOrEqual(24);
+    expect(Math.abs(boxes!.extLeft - boxes!.composerLeft)).toBeLessThanOrEqual(4);
+    expect(Math.abs(boxes!.extRight - boxes!.composerRight)).toBeLessThanOrEqual(4);
 
     await page.screenshot({ path: 'test-results/extension-ui-generic-desktop.png', fullPage: true });
   });
@@ -106,14 +106,14 @@ test.describe('generic extension UI', () => {
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
 
     const boxes = await page.evaluate(() => {
-      const ext = document.querySelector('.extension-ui-host')?.getBoundingClientRect();
+      const ext = document.querySelector('.extension-widget')?.getBoundingClientRect();
       const composer = document.querySelector('.composer-input')?.getBoundingClientRect();
       if (!ext || !composer) return null;
       return { extLeft: ext.left, extRight: ext.right, composerLeft: composer.left, composerRight: composer.right };
     });
     expect(boxes).not.toBeNull();
-    expect(Math.abs(boxes!.extLeft - boxes!.composerLeft)).toBeLessThanOrEqual(16);
-    expect(Math.abs(boxes!.extRight - boxes!.composerRight)).toBeLessThanOrEqual(16);
+    expect(Math.abs(boxes!.extLeft - boxes!.composerLeft)).toBeLessThanOrEqual(4);
+    expect(Math.abs(boxes!.extRight - boxes!.composerRight)).toBeLessThanOrEqual(4);
 
     await page.screenshot({ path: 'test-results/extension-ui-generic-mobile.png', fullPage: true });
   });
