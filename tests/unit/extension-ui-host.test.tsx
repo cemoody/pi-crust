@@ -71,6 +71,18 @@ describe("ExtensionUiHost", () => {
     expect(screen.getByRole("group", { name: "Widget below" })).toHaveTextContent("below");
   });
 
+  it("hides a status chip when the same extension also renders a widget", () => {
+    renderHost([
+      { id: "status-loop", method: "setStatus", statusKey: "loop", statusText: "⟳ loop · 1 active" },
+      { id: "widget-loop", method: "setWidget", widgetKey: "loop", widgetLines: ["⟳ #3 Read /tmp/prompt — next 1m"] },
+      { id: "status-review", method: "setStatus", statusKey: "review", statusText: "review · waiting" },
+    ]);
+
+    expect(screen.queryByText("⟳ loop · 1 active")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Widget loop" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Extension statuses" })).toHaveTextContent("review · waiting");
+  });
+
   it("updates browser title and editor text", () => {
     const handlers = renderHost([
       { id: "t", method: "setTitle", title: "pi - project" },

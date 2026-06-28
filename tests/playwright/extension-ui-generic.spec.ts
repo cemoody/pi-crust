@@ -46,7 +46,7 @@ test.describe('generic extension UI', () => {
 
     const statusTray = page.getByRole('region', { name: 'Extension statuses' });
     await expect(statusTray).toBeVisible();
-    await expect(statusTray.getByText('⟳ loop · 1 active')).toBeVisible();
+    await expect(statusTray.getByText('⟳ loop · 1 active')).toHaveCount(0);
     await expect(statusTray.getByText('review · waiting')).toBeVisible();
 
     const loopWidget = page.getByRole('group', { name: 'Widget loop' });

@@ -20,8 +20,11 @@ export interface ExtensionUiHostProps {
 export function ExtensionUiHost(props: ExtensionUiHostProps) {
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
 
-  const statuses = props.requests.filter(isStatusRequest).filter((request) => request.statusText);
   const widgets = props.requests.filter(isWidgetRequest).filter((request) => request.widgetLines);
+  const widgetKeys = new Set(widgets.map((widget) => widget.widgetKey));
+  const statuses = props.requests
+    .filter(isStatusRequest)
+    .filter((request) => request.statusText && !widgetKeys.has(request.statusKey));
   const notifications = props.requests.filter(isNotifyRequest);
   const dialogs = props.requests.filter(isDialogRequest);
 
