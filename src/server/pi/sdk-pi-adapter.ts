@@ -78,7 +78,7 @@ export class SdkPiAdapter implements PiAdapter {
     }));
   }
 
-  async listSessions(cwd?: string): Promise<readonly SessionListItem[]> {
+  async listSessions(cwd?: string, _options: { readonly includeHidden?: boolean; readonly includeSubagents?: boolean } = {}): Promise<readonly SessionListItem[]> {
     const sessions = cwd === undefined
       ? await SessionManager.listAll()
       : await SessionManager.list(path.resolve(cwd), this.options.sessionDir);

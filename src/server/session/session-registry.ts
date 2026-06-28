@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import { sanitizePiDynamicCommands } from "../../shared/slash-command-routing.js";
 import type { PathPolicy } from "../security/path-policy.js";
-import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ModelInfo, PiAdapter, PiEvent, PiEventListener, PiSessionHandle, PromptAttachment, SeqEventListener, SessionListItem, SessionState, Unsubscribe } from "../pi/types.js";
+import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ListSessionsOptions, ModelInfo, PiAdapter, PiEvent, PiEventListener, PiSessionHandle, PromptAttachment, SeqEventListener, SessionListItem, SessionState, Unsubscribe } from "../pi/types.js";
 import { WorkerRegistry } from "./worker-registry.js";
 
 export interface SessionRegistryOptions {
@@ -152,12 +152,13 @@ export class SessionRegistry {
     return reattached;
   }
 
-  async listSessions(cwd?: string): Promise<readonly SessionListItem[]> {
+  async listSessions(cwd?: string, options: ListSessionsOptions = {}): Promise<readonly SessionListItem[]> {
     const allowedCwd = cwd === undefined ? undefined : this.pathPolicy.assertAllowedCwd(cwd);
-    const sessions = await this.adapter.listSessions(allowedCwd);
+    const sessions = await this.adapter.listSessions(allowedCwd, options);
     return sessions.filter((session) => {
       try {
-        if (session.hiddenFromList || session.subagent) return false;
+        if (!options.includeHidden && session.hiddenFromList) return false;
+        if (!options.includeSubagents && session.subagent) return false;
         this.pathPolicy.assertAllowedCwd(session.cwd);
         this.pathPolicy.assertAllowedSessionFile(session.sessionFile);
         return true;

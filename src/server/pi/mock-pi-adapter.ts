@@ -88,7 +88,7 @@ export class MockPiAdapter implements PiAdapter {
     return new MockPiSessionHandle(persisted, this.sessionRoot, this.assistantResponse);
   }
 
-  async listSessions(cwd?: string): Promise<readonly SessionListItem[]> {
+  async listSessions(cwd?: string, options: { readonly includeHidden?: boolean; readonly includeSubagents?: boolean } = {}): Promise<readonly SessionListItem[]> {
     await fs.mkdir(this.sessionRoot, { recursive: true });
     const entries = await fs.readdir(this.sessionRoot);
     const items: SessionListItem[] = [];
@@ -97,7 +97,8 @@ export class MockPiAdapter implements PiAdapter {
       const sessionFile = path.join(this.sessionRoot, entry);
       const persisted = await readSession(sessionFile);
       if (cwd !== undefined && persisted.cwd !== path.resolve(cwd)) continue;
-      if (persisted.hiddenFromList || persisted.subagent) continue;
+      if (!options.includeHidden && persisted.hiddenFromList) continue;
+      if (!options.includeSubagents && persisted.subagent) continue;
       const firstMessage = persisted.messages.find((message) => message.role === "user")?.content;
       items.push({
         id: persisted.id,

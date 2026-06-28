@@ -139,6 +139,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   const [query, setQuery] = useState("");
   const [showPaths, setShowPaths] = useState(false);
   const [namedOnly, setNamedOnly] = useState(false);
+  const [showSubagents, setShowSubagents] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   // Sidebar 'Recent' sort key. We track the last time the *user* drove
   // activity into a session (prompt sent, bash command sent, session
@@ -344,7 +345,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
             // Optional capability; ignore.
           }
         }
-        const initialSessions = await api.listSessions(defaultCwd);
+        const initialSessions = await api.listSessions(defaultCwd, { includeSubagents: showSubagents });
         if (cancelled) return;
         setSessions(initialSessions);
         // Seed the user-activity map for sessions we haven't seen before so
@@ -365,7 +366,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       }
     })();
     return () => { cancelled = true; };
-  }, [api, refreshExtensions, refreshExtensionSettings]);
+  }, [api, refreshExtensions, refreshExtensionSettings, showSubagents]);
 
   useEffect(() => {
     if (!api.listSessionStatuses || !defaultCwd) return;
@@ -374,7 +375,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
 
     const poll = async () => {
       try {
-        const statuses = await api.listSessionStatuses?.(defaultCwd);
+        const statuses = await api.listSessionStatuses?.(defaultCwd, { includeSubagents: showSubagents });
         if (!cancelled && statuses) {
           setSessions((current) => mergeSessionStatusSnapshot(current, statuses));
           setError(null);
@@ -398,7 +399,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [api, defaultCwd]);
+  }, [api, defaultCwd, showSubagents]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -548,11 +549,12 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       if (pendingRefresh) clearTimeout(pendingRefresh);
       unsubscribe();
     };
-  }, [activeSessionId, api]);
+  }, [activeSessionId, api, showSubagents]);
 
   const visibleSessions = useMemo(() => {
     const lowered = query.toLowerCase();
     const filtered = sessions.filter((session) => {
+      if (!showSubagents && (session.subagent || session.hiddenFromList)) return false;
       if (namedOnly && !session.sessionName) return false;
       const haystack = [session.sessionName, session.cwd, session.id, session.model].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(lowered);
@@ -571,14 +573,14 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       if (createdDelta !== 0) return createdDelta;
       return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
     });
-  }, [namedOnly, query, sessions, sortMode, lastUserActivityById]);
+  }, [namedOnly, query, sessions, showSubagents, sortMode, lastUserActivityById]);
 
   const activeSession = activeSessionId ? sessions.find((session) => session.id === activeSessionId) : null;
   const openSessionFromExtension = useCallback(async (sessionId: string) => {
     setView("sessions");
     setActiveSessionId(sessionId);
     try {
-      const refreshed = await api.listSessions(defaultCwd);
+      const refreshed = await api.listSessions(defaultCwd, { includeSubagents: showSubagents });
       let merged: readonly SessionCardData[] = refreshed;
       if (!refreshed.some((session) => session.id === sessionId) && api.getSession) {
         try {
@@ -1360,6 +1362,10 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
                   <input type="checkbox" checked={namedOnly} onChange={(event) => setNamedOnly(event.target.checked)} />
                   <span>Named only</span>
                 </label>
+                <label className="popover-row checkbox-row">
+                  <input type="checkbox" checked={showSubagents} onChange={(event) => setShowSubagents(event.target.checked)} />
+                  <span>Show subagents</span>
+                </label>
               </div>
             ) : null}
           </div>
@@ -1382,7 +1388,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
                   className={`session-row-dot ${session.status === "streaming" ? "streaming" : ""}`}
                   aria-hidden="true"
                 />
-                <span className="session-row-name">{session.sessionName ?? "Untitled session"}</span>
+                <span className="session-row-name">{session.sessionName ?? "Untitled session"}{session.subagent ? <span className="session-row-badge">Subagent</span> : null}</span>
                 {session.status && session.status !== "idle" && session.status !== "streaming" ? (
                   <span className="session-row-status">{session.status}</span>
                 ) : null}

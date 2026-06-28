@@ -84,6 +84,20 @@ describe("fastListSessions", () => {
     expect(result.map((row) => row.id)).toEqual(["parent"]);
   });
 
+  it("includes subagent sessions when explicitly requested", async () => {
+    await fs.writeFile(path.join(tmp, "parent.jsonl"), lines(
+      { type: "session", id: "parent", cwd: "/w", timestamp: 1 },
+    ));
+    await fs.writeFile(path.join(tmp, "child.jsonl"), lines(
+      { type: "session", id: "child", cwd: "/w", timestamp: 2, subagent: true, hiddenFromList: true },
+    ));
+
+    const result = await fastListSessions(tmp, undefined, { includeSubagents: true, includeHidden: true });
+
+    expect(result.map((row) => row.id)).toEqual(["child", "parent"]);
+    expect(result[0]).toMatchObject({ id: "child", subagent: true, hiddenFromList: true });
+  });
+
   it("omits sessions marked hiddenFromList by session_info metadata", async () => {
     await fs.writeFile(path.join(tmp, "parent.jsonl"), lines(
       { type: "session", id: "parent", cwd: "/w", timestamp: 1 },

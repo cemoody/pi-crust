@@ -39,7 +39,11 @@ interface ScannedSession {
   readonly lastActivity: number;
 }
 
-export async function fastListSessions(sessionDir: string | undefined, _cwdFilter?: string): Promise<readonly SessionListItem[]> {
+export async function fastListSessions(
+  sessionDir: string | undefined,
+  _cwdFilter?: string,
+  options: { readonly includeHidden?: boolean; readonly includeSubagents?: boolean } = {},
+): Promise<readonly SessionListItem[]> {
   if (!sessionDir) return [];
   let entries: import("node:fs").Dirent[];
   try {
@@ -68,7 +72,7 @@ export async function fastListSessions(sessionDir: string | undefined, _cwdFilte
     while (true) {
       const index = cursor++;
       if (index >= candidates.length) return;
-      results[index] = await scanSessionFile(candidates[index]!);
+      results[index] = await scanSessionFile(candidates[index]!, options);
     }
   };
   await Promise.all(Array.from({ length: Math.min(FAST_LIST_CONCURRENCY, candidates.length) }, worker));
@@ -93,7 +97,10 @@ export async function fastListSessions(sessionDir: string | undefined, _cwdFilte
   return sessions;
 }
 
-async function scanSessionFile(filePath: string): Promise<ScannedSession | null> {
+async function scanSessionFile(
+  filePath: string,
+  options: { readonly includeHidden?: boolean; readonly includeSubagents?: boolean } = {},
+): Promise<ScannedSession | null> {
   let stat: import("node:fs").Stats;
   try { stat = await fs.stat(filePath); } catch { return null; }
   if (!stat.isFile() || stat.size === 0) return null;
@@ -120,7 +127,7 @@ async function scanSessionFile(filePath: string): Promise<ScannedSession | null>
     const headText = headBuf.toString("utf8");
     // If head and tail overlap (small file) we'll iterate twice; the merge
     // logic below tolerates duplicates.
-    return parseScannedSession(filePath, stat, headText, tailText);
+    return parseScannedSession(filePath, stat, headText, tailText, options);
   } finally {
     await fd.close();
   }
@@ -131,6 +138,7 @@ function parseScannedSession(
   stat: import("node:fs").Stats,
   headText: string,
   tailText: string,
+  options: { readonly includeHidden?: boolean; readonly includeSubagents?: boolean } = {},
 ): ScannedSession | null {
   let id: string | undefined;
   let cwd: string | undefined;
@@ -184,7 +192,8 @@ function parseScannedSession(
   for (const line of tailText.split("\n")) handleLine(line);
 
   if (!id) return null;
-  if (subagent || hiddenFromList) return null;
+  if (!options.includeHidden && hiddenFromList) return null;
+  if (!options.includeSubagents && subagent) return null;
   const resolvedCwd = cwd ?? "";
   if (lastActivity === 0) lastActivity = stat.mtimeMs;
   return {
