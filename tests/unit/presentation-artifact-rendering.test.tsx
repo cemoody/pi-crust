@@ -26,6 +26,29 @@ const presentationMessage = {
   },
 };
 
+function truncatedPresentationToolMessage(artifactUrl = "/api/sessions/s1/messages/m-tool/artifact") {
+  return {
+    id: "m-tool",
+    role: "tool" as const,
+    text: "Displayed presentation deck",
+    tool: {
+      id: "tool-1",
+      name: "show_presentation",
+      args: {},
+      status: "success" as const,
+      output: "Displayed presentation deck",
+      artifact: {
+        kind: "presentation",
+        title: "Lazy Tool Deck",
+        artifactTruncated: true,
+        artifactFullBytes: 11_000_000,
+        artifactUrl,
+        data: { __omitted: true },
+      },
+    },
+  };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -64,31 +87,46 @@ describe("presentation artifact rendering", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<MessageTimeline messages={[{
-      id: "m-tool",
-      role: "tool" as const,
-      text: "Displayed presentation deck",
-      tool: {
-        id: "tool-1",
-        name: "show_presentation",
-        args: {},
-        status: "success" as const,
-        output: "Displayed presentation deck",
-        artifact: {
-          kind: "presentation",
-          title: "Lazy Tool Deck",
-          artifactTruncated: true,
-          artifactFullBytes: 11_000_000,
-          artifactUrl: "/api/sessions/s1/messages/m-tool/artifact",
-          data: { __omitted: true },
-        },
-      },
-    }]} />);
+    render(<MessageTimeline messages={[truncatedPresentationToolMessage()]} />);
 
     expect(screen.getByText(/Loading artifact \(10\.5 MB\)/)).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/sessions/s1/messages/m-tool/artifact"));
     expect(await screen.findByText("2 slides")).toBeInTheDocument();
     expect(screen.getByTestId("artifact-presentation-preview")).toBeInTheDocument();
+  });
+
+  it("defers truncated tool artifacts in browsers until visible or manually loaded", async () => {
+    vi.stubGlobal("IntersectionObserver", class {
+      readonly root = null;
+      readonly rootMargin = "";
+      readonly thresholds: readonly number[] = [];
+      observe() { /* leave non-intersecting until the user clicks */ }
+      unobserve() { /* noop */ }
+      disconnect() { /* noop */ }
+      takeRecords(): IntersectionObserverEntry[] { return []; }
+    });
+    const fullArtifact = {
+      version: 1,
+      kind: "presentation",
+      title: "Lazy Tool Deck",
+      data: { title: "Lazy Tool Deck", slides: [{ title: "Lazy Tool Deck" }] },
+    };
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => fullArtifact,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const artifactUrl = "/api/sessions/s1/messages/m-tool-deferred/artifact";
+    render(<MessageTimeline messages={[truncatedPresentationToolMessage(artifactUrl)]} />);
+
+    expect(screen.getByText(/Artifact preview deferred \(10\.5 MB\)/)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Load artifact" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(artifactUrl));
+    expect(await screen.findByText("1 slide")).toBeInTheDocument();
   });
 
   it("falls back when the presentation renderer MIME is not enabled", () => {

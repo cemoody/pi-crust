@@ -535,14 +535,20 @@ function TypingDots() {
 }
 
 function OrphanToolResult({ text }: { readonly text: string }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details className="orphan-tool-result tool-card success" aria-label="tool result">
+    <details
+      className="orphan-tool-result tool-card success"
+      aria-label="tool result"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary>
         <span className="tool-icon" aria-hidden="true">✓</span>
         <span className="tool-line"><strong>Tool result</strong></span>
         <span className="tool-status-text">done</span>
       </summary>
-      {text ? <pre>{text}</pre> : null}
+      {open && text ? <pre>{text}</pre> : null}
     </details>
   );
 }
@@ -552,9 +558,23 @@ function ToolCard({ tool }: { readonly tool: TimelineToolDetails }) {
   // tool calls like show_presentation / show_artifact. Render them outside
   // the collapsed <details> so they’re visible at a glance; the input
   // args and raw text output stay inside the details for debugging.
+  //
+  // Important performance detail: do NOT mount the details body while the
+  // disclosure is closed. Long sessions commonly have hundreds of successful
+  // tool calls; mounting every hidden <pre>, image, iframe, and artifact fetch
+  // at page-load makes Chromium keep tens of thousands of nodes and huge text
+  // strings alive even though the cards are collapsed. Lazy-mounting the body
+  // is the normal pattern here: render the cheap summary rows up front, then
+  // hydrate the expensive output only when the user opens a card.
+  const [open, setOpen] = useState(tool.status === "running" || tool.status === "error");
   return (
     <div className="tool-card-wrapper">
-      <details className={`tool-card ${tool.status}`} aria-label={`tool ${tool.name}`}>
+      <details
+        className={`tool-card ${tool.status}`}
+        aria-label={`tool ${tool.name}`}
+        open={open}
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+      >
         <summary>
           <span className="tool-icon" aria-hidden="true">{toolIcon(tool.status)}</span>
           <span className="tool-line">
@@ -564,8 +584,12 @@ function ToolCard({ tool }: { readonly tool: TimelineToolDetails }) {
           </span>
           <span className="tool-status-text">{statusLabel(tool)}</span>
         </summary>
-        <ToolInputBlock tool={tool} />
-        <ToolResultBody tool={tool} />
+        {open ? (
+          <>
+            <ToolInputBlock tool={tool} />
+            <ToolResultBody tool={tool} />
+          </>
+        ) : null}
       </details>
       {tool.artifact ? <ArtifactPreview artifact={tool.artifact} /> : null}
     </div>
@@ -577,9 +601,15 @@ function ThinkingCard({ thinking }: { readonly thinking: string }) {
   // a single anatomy: chevron + icon + verb + status-text + body. Still
   // tagged with .thinking-block so existing CSS / tests targeting that
   // class continue to apply.
+  const [open, setOpen] = useState(false);
   const preview = thinkingPreview(thinking);
   return (
-    <details className="thinking-block tool-card thinking" aria-label="thinking step">
+    <details
+      className="thinking-block tool-card thinking"
+      aria-label="thinking step"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary>
         <span className="tool-icon" aria-hidden="true">💡</span>
         <span className="tool-line">
@@ -587,7 +617,7 @@ function ThinkingCard({ thinking }: { readonly thinking: string }) {
           {preview ? <> · <span className="tool-args thinking-preview">{preview}</span></> : null}
         </span>
       </summary>
-      <pre className="thinking-body">{thinking}</pre>
+      {open ? <pre className="thinking-body">{thinking}</pre> : null}
     </details>
   );
 }
@@ -925,32 +955,65 @@ function markdownDownloadName(filePath: string | undefined, title: string): stri
   return `${slug}.md`;
 }
 
+const artifactPreviewCache = new Map<string, Promise<TimelineArtifact>>();
+
 function LazyToolArtifactPreview({ artifact, title }: { readonly artifact: TimelineArtifact; readonly title: string }) {
   const [loaded, setLoaded] = useState<TimelineArtifact | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shouldLoad, setShouldLoad] = useState(false);
+  const hostRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (!artifact.artifactUrl) return;
+    if (!artifact.artifactUrl || shouldLoad) return;
+    // In real browsers, defer heavyweight truncated artifacts until the card is
+    // near the viewport. A long presentation-heavy transcript can otherwise
+    // fire tens of multi-MB /artifact requests on open, freezing both the API
+    // worker and Chromium. jsdom lacks IntersectionObserver, so tests keep the
+    // historical eager behavior.
+    if (typeof IntersectionObserver !== "function") {
+      setShouldLoad(true);
+      return;
+    }
+    const el = hostRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setShouldLoad(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "600px 0px" });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [artifact.artifactUrl, shouldLoad]);
+
+  useEffect(() => {
+    if (!artifact.artifactUrl || !shouldLoad) return;
     let cancelled = false;
     const url = `${import.meta.env.VITE_PI_CRUST_API_BASE ?? ""}${artifact.artifactUrl}`;
-    (async () => {
-      try {
-        setError(null);
+    let pending = artifactPreviewCache.get(url);
+    if (!pending) {
+      pending = (async () => {
         const response = await fetch(url);
         if (!response.ok) throw new Error(`Artifact fetch failed (${response.status})`);
-        const value = await response.json() as TimelineArtifact;
-        if (!cancelled) setLoaded(value);
-      } catch (caught) {
+        return await response.json() as TimelineArtifact;
+      })();
+      artifactPreviewCache.set(url, pending);
+    }
+    setError(null);
+    pending.then(
+      (value) => { if (!cancelled) setLoaded(value); },
+      (caught) => {
+        artifactPreviewCache.delete(url);
         if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
-      }
-    })();
+      },
+    );
     return () => { cancelled = true; };
-  }, [artifact.artifactUrl]);
+  }, [artifact.artifactUrl, shouldLoad]);
 
   if (loaded) return <ArtifactPreview artifact={loaded} />;
   if (error) {
     return (
-      <section className="artifact-preview artifact-data" role="alert" aria-label={`${title} failed to load`}>
+      <section ref={hostRef} className="artifact-preview artifact-data" role="alert" aria-label={`${title} failed to load`}>
         <strong>{title}</strong>
         <p>Could not load full artifact: {error}</p>
         <ArtifactFallback artifact={artifact} />
@@ -959,9 +1022,10 @@ function LazyToolArtifactPreview({ artifact, title }: { readonly artifact: Timel
   }
   const size = typeof artifact.artifactFullBytes === "number" ? ` (${(artifact.artifactFullBytes / 1024 / 1024).toFixed(1)} MB)` : "";
   return (
-    <section className="artifact-preview artifact-data" aria-label={`${title} loading`}>
+    <section ref={hostRef} className="artifact-preview artifact-data" aria-label={`${title} loading`}>
       <strong>{title}</strong>
-      <p>Loading artifact{size}…</p>
+      <p>{shouldLoad ? <>Loading artifact{size}…</> : <>Artifact preview deferred{size}.</>}</p>
+      {!shouldLoad ? <button type="button" onClick={() => setShouldLoad(true)}>Load artifact</button> : null}
     </section>
   );
 }

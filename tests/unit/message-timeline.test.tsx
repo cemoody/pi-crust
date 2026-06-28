@@ -187,12 +187,10 @@ describe("MessageTimeline", () => {
                 status: "success", output: "hello world\nWed May 14 21:00:00 UTC 2026" } },
     ]} />);
     const details = container.querySelector("details.tool-card") as HTMLDetailsElement;
-    // Force-open so the body renders even though it would default to
-    // collapsed for a successful call.
+    // Force-open and dispatch the native toggle event so the controlled React
+    // state opens and lazy-mounts the body for successful tool calls.
     details.open = true;
-    // Re-query the now-rendered body content. Native <details> renders
-    // children regardless of open state in jsdom, so we can assert the
-    // input box exists.
+    fireEvent(details, new Event("toggle"));
     const input = container.querySelector(".tool-input");
     expect(input, "expanded tool card should show an .tool-input box").not.toBeNull();
     expect(input!.textContent ?? "").toContain("echo 'hello world' && date");
@@ -207,6 +205,7 @@ describe("MessageTimeline", () => {
     ]} />);
     const details = container.querySelector("details.tool-card") as HTMLDetailsElement;
     details.open = true;
+    fireEvent(details, new Event("toggle"));
     const img = container.querySelector("figure.tool-image img") as HTMLImageElement | null;
     expect(img, "expanded read card should render the image").not.toBeNull();
     expect(img!.getAttribute("src")).toBe("data:image/png;base64,QUJD");
@@ -219,7 +218,9 @@ describe("MessageTimeline", () => {
                 status: "success", output: "Read image file [image/png]",
                 images: [{ url: "/api/sessions/s/messages/m/images/0", mimeType: "image/png" }] } },
     ]} />);
-    (container.querySelector("details.tool-card") as HTMLDetailsElement).open = true;
+    const details = container.querySelector("details.tool-card") as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
     const img = container.querySelector("figure.tool-image img") as HTMLImageElement | null;
     expect(img!.getAttribute("src")).toContain("/api/sessions/s/messages/m/images/0");
   });
@@ -230,7 +231,9 @@ describe("MessageTimeline", () => {
         tool: { id: "x", name: "read", args: { path: "README.md" },
                 status: "success", output: "# Title\n\nbody text" } },
     ]} />);
-    (container.querySelector("details.tool-card") as HTMLDetailsElement).open = true;
+    const details = container.querySelector("details.tool-card") as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
     const md = container.querySelector(".tool-read-markdown");
     expect(md, "markdown read card should render rich markdown").not.toBeNull();
     expect(md!.querySelector("h1")?.textContent).toBe("Title");
@@ -242,7 +245,9 @@ describe("MessageTimeline", () => {
         tool: { id: "x", name: "read", args: { path: "page.html" },
                 status: "success", output: "<p>hello</p>" } },
     ]} />);
-    (container.querySelector("details.tool-card") as HTMLDetailsElement).open = true;
+    const details = container.querySelector("details.tool-card") as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
     const iframe = container.querySelector("figure.tool-read-html iframe") as HTMLIFrameElement | null;
     expect(iframe, "html read card should render an iframe").not.toBeNull();
     expect(iframe!.getAttribute("sandbox")).toBe("");
@@ -556,6 +561,8 @@ describe("MessageTimeline", () => {
 
     const orphan = screen.getByLabelText("tool result");
     expect(orphan).toBeInTheDocument();
+    (orphan as HTMLDetailsElement).open = true;
+    fireEvent(orphan, new Event("toggle"));
     const pre = orphan.querySelector("pre");
     expect(pre).toHaveTextContent("> pi-crust@0.0.0 typecheck tsc --noEmit");
     expect(orphan.querySelector("blockquote")).toBeNull();
