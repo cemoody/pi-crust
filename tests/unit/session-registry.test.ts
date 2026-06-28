@@ -70,6 +70,19 @@ describe("SessionRegistry", () => {
     expect(listed[0]?.sessionName).toBe("test session");
   });
 
+  it("hides subagent sessions from the default session list while keeping them addressable", async () => {
+    const { registry, projectA } = await makeRegistry();
+    const parent = await registry.createSession({ cwd: projectA, sessionName: "visible parent" });
+    const subagent = await registry.createSession({ cwd: projectA, sessionName: "hidden child", subagent: true });
+
+    const listed = await registry.listSessions(projectA);
+
+    expect(listed.map((item) => item.id)).toContain(parent.id);
+    expect(listed.map((item) => item.id)).not.toContain(subagent.id);
+    await expect(subagent.handle.getState()).resolves.toMatchObject({ id: subagent.id, subagent: true, hiddenFromList: true });
+    await expect(registry.getSession(subagent.id).handle.getState()).resolves.toMatchObject({ id: subagent.id });
+  });
+
   it("persists renamed sessions across reopen and list", async () => {
     const { registry, projectA } = await makeRegistry();
     const created = await registry.createSession({ cwd: projectA });

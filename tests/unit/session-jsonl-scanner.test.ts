@@ -71,6 +71,33 @@ describe("fastListSessions", () => {
     expect(row!.sessionName).toBe("third");
   });
 
+  it("omits subagent sessions from the default fast session list", async () => {
+    await fs.writeFile(path.join(tmp, "parent.jsonl"), lines(
+      { type: "session", id: "parent", cwd: "/w", timestamp: 1 },
+    ));
+    await fs.writeFile(path.join(tmp, "child.jsonl"), lines(
+      { type: "session", id: "child", cwd: "/w", timestamp: 2, subagent: true, hiddenFromList: true },
+    ));
+
+    const result = await fastListSessions(tmp);
+
+    expect(result.map((row) => row.id)).toEqual(["parent"]);
+  });
+
+  it("omits sessions marked hiddenFromList by session_info metadata", async () => {
+    await fs.writeFile(path.join(tmp, "parent.jsonl"), lines(
+      { type: "session", id: "parent", cwd: "/w", timestamp: 1 },
+    ));
+    await fs.writeFile(path.join(tmp, "child.jsonl"), lines(
+      { type: "session", id: "child", cwd: "/w", timestamp: 2 },
+      { type: "session_info", name: "child", subagent: true, hiddenFromList: true },
+    ));
+
+    const result = await fastListSessions(tmp);
+
+    expect(result.map((row) => row.id)).toEqual(["parent"]);
+  });
+
   it("treats an empty/whitespace session_info name as 'no name'", async () => {
     const file = path.join(tmp, "s3.jsonl");
     await fs.writeFile(file, lines(

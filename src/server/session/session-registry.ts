@@ -36,6 +36,21 @@ interface SessionInternal {
 
 const DEFAULT_RING_SIZE = 500;
 
+async function appendHiddenSessionMetadata(
+  sessionFile: string,
+  metadata: { readonly sessionName?: string; readonly subagent: boolean; readonly hiddenFromList: boolean },
+): Promise<void> {
+  if (!sessionFile.endsWith(".jsonl")) return;
+  const entry = {
+    type: "session_info",
+    ...(metadata.sessionName ? { name: metadata.sessionName } : {}),
+    ...(metadata.subagent ? { subagent: true } : {}),
+    ...(metadata.hiddenFromList ? { hiddenFromList: true } : {}),
+    timestamp: new Date().toISOString(),
+  };
+  await fs.appendFile(sessionFile, `${JSON.stringify(entry)}\n`, "utf8").catch(() => undefined);
+}
+
 export class SessionRegistry {
   private readonly adapter: PiAdapter;
   private readonly pathPolicy: PathPolicy;
@@ -89,6 +104,13 @@ export class SessionRegistry {
   async createSession(options: CreateSessionOptions): Promise<RegisteredSession> {
     const cwd = this.pathPolicy.assertAllowedCwd(options.cwd);
     const handle = await this.adapter.createSession({ ...options, cwd });
+    if (options.subagent || options.hiddenFromList) {
+      await appendHiddenSessionMetadata(handle.sessionFile, {
+        ...(options.sessionName ? { sessionName: options.sessionName } : {}),
+        subagent: options.subagent === true,
+        hiddenFromList: options.hiddenFromList === true || options.subagent === true,
+      });
+    }
     return this.register(handle);
   }
 
@@ -135,6 +157,7 @@ export class SessionRegistry {
     const sessions = await this.adapter.listSessions(allowedCwd);
     return sessions.filter((session) => {
       try {
+        if (session.hiddenFromList || session.subagent) return false;
         this.pathPolicy.assertAllowedCwd(session.cwd);
         this.pathPolicy.assertAllowedSessionFile(session.sessionFile);
         return true;

@@ -33,6 +33,8 @@ interface ScannedSession {
   readonly sessionFile: string;
   readonly sessionName?: string;
   readonly firstMessage?: string;
+  readonly subagent?: boolean;
+  readonly hiddenFromList?: boolean;
   readonly createdAt: number | null;
   readonly lastActivity: number;
 }
@@ -80,6 +82,8 @@ export async function fastListSessions(sessionDir: string | undefined, _cwdFilte
       sessionFile: item.sessionFile,
       ...optional({ sessionName: item.sessionName }),
       ...optional({ firstMessage: item.firstMessage }),
+      ...(item.subagent ? { subagent: true } : {}),
+      ...(item.hiddenFromList ? { hiddenFromList: true } : {}),
       createdAt: item.createdAt,
       lastActivity: item.lastActivity,
     });
@@ -133,6 +137,8 @@ function parseScannedSession(
   let createdAt: number | null = null;
   let firstMessage: string | undefined;
   let sessionName: string | undefined;
+  let subagent = false;
+  let hiddenFromList = false;
   let sessionNameSeenAt = -1; // entry index of latest session_info
   let lastActivity = 0;
   let entryIndex = 0;
@@ -148,12 +154,16 @@ function parseScannedSession(
     if (record.type === "session") {
       if (id === undefined && typeof record.id === "string") id = record.id;
       if (cwd === undefined && typeof record.cwd === "string") cwd = record.cwd;
+      if (record.subagent === true) subagent = true;
+      if (record.hiddenFromList === true) hiddenFromList = true;
       if (createdAt === null) createdAt = coerceTimestamp(record.timestamp) ?? null;
       const ts = coerceTimestamp(record.timestamp);
       if (ts !== undefined && ts > lastActivity) lastActivity = ts;
       return;
     }
     if (record.type === "session_info") {
+      if (record.subagent === true) subagent = true;
+      if (record.hiddenFromList === true) hiddenFromList = true;
       if (i > sessionNameSeenAt) {
         sessionNameSeenAt = i;
         const candidate = typeof record.name === "string" ? record.name.trim() : "";
@@ -174,6 +184,7 @@ function parseScannedSession(
   for (const line of tailText.split("\n")) handleLine(line);
 
   if (!id) return null;
+  if (subagent || hiddenFromList) return null;
   const resolvedCwd = cwd ?? "";
   if (lastActivity === 0) lastActivity = stat.mtimeMs;
   return {
@@ -182,6 +193,8 @@ function parseScannedSession(
     sessionFile: filePath,
     ...optional({ sessionName }),
     ...optional({ firstMessage }),
+    ...(subagent ? { subagent: true } : {}),
+    ...(hiddenFromList ? { hiddenFromList: true } : {}),
     createdAt: createdAt ?? null,
     lastActivity,
   };

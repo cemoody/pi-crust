@@ -30,6 +30,14 @@ type SessionCreateResponse = {
   sessionFile?: string;
 };
 
+type SpawnPromptResponse = unknown;
+
+type SubagentResultSummary = {
+  readonly messages?: unknown;
+  readonly messageCount?: number;
+  readonly lastAssistantMessage?: string;
+};
+
 export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArtifactsOptions = {}) {
   // Production wiring: capture the session id + cwd on session_start so
   // show_presentation can compute the auto-copy target directory. Tests
@@ -314,43 +322,75 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
   pi.registerTool({
     name: "spawn_prc_session",
     label: "Spawn pi-crust Session",
-    description: "Spawn a new Pi Remote Control session and kick it off with a prompt. Use this to delegate independent work to another visible pi-crust session.",
-    promptSnippet: "spawn_prc_session creates a new Pi Remote Control session with a cwd/name and starts it with a prompt.",
+    description: "Spawn a new Pi Remote Control session and kick it off with a prompt. Use this to delegate independent work to another visible pi-crust session, or set subagent=true to wait for a child agent and return its results to the caller session.",
+    promptSnippet: "spawn_prc_session creates a new Pi Remote Control session with a cwd/name and starts it with a prompt; set subagent=true when the caller needs the child agent's completed result returned.",
     promptGuidelines: [
       "Use spawn_prc_session when the user explicitly asks to split work into independent Pi Remote Control sessions.",
       "Keep each spawned session narrowly scoped; include the exact task, cwd, constraints, and expected final report in the prompt.",
-      "Do not use spawn_prc_session for routine subtasks unless the user asked for parallel/background sessions.",
+      "Leave subagent unset/false for wholesale background sessions that should keep running independently.",
+      "Set subagent=true when you need a child agent to complete a scoped task and return its session result to the caller session.",
+      "Do not use spawn_prc_session for routine subtasks unless the user asked for parallel/background sessions or a subagent.",
     ],
     parameters: Type.Object({
       prompt: Type.String({ description: "Initial prompt to send to the new session. Include the task scope and constraints." }),
       cwd: Type.Optional(Type.String({ description: "Working directory for the new session. Defaults to the current session cwd." })),
       sessionName: Type.Optional(Type.String({ description: "Display name for the new session in the pi-crust sidebar." })),
+      subagent: Type.Optional(Type.Boolean({ description: "When true, wait for the spawned session prompt to finish and return the child agent's result to the caller. Defaults to false/background wholesale session." })),
     }),
     async execute(_toolCallId, params) {
       const apiBase = resolvePiRemoteApiBase();
       const cwd = params.cwd?.trim() || process.cwd();
+      const subagent = params.subagent === true;
       const created = await postJson<SessionCreateResponse>(`${apiBase}/api/sessions`, {
         cwd,
         ...(params.sessionName?.trim() ? { sessionName: params.sessionName.trim() } : {}),
+        ...(subagent ? { subagent: true, hiddenFromList: true } : {}),
       });
 
       if (!created.id) {
         throw new Error("Pi Remote Control did not return a session id");
       }
 
+      const promptUrl = `${apiBase}/api/sessions/${encodeURIComponent(created.id)}/prompt`;
+      const promptBody = { text: params.prompt };
+      const uiBase = resolvePiRemoteUiBase(apiBase);
+      const sessionUrl = `${uiBase}/?session=${encodeURIComponent(created.id)}`;
+
+      if (subagent) {
+        const promptResult = await postJson<SpawnPromptResponse>(promptUrl, promptBody);
+        const subagentResult = summarizeSubagentResult(promptResult);
+        const lastAssistant = subagentResult.lastAssistantMessage;
+        return {
+          content: [{
+            type: "text",
+            text: `Subagent session ${created.id}${params.sessionName ? ` (${params.sessionName})` : ""} completed. URL: ${sessionUrl}${lastAssistant ? `\n\n${lastAssistant}` : ""}`,
+          }],
+          details: {
+            spawnedPiRemoteControlSession: {
+              version: 1,
+              sessionId: created.id,
+              ...optional({ sessionFile: created.sessionFile }),
+              cwd,
+              ...optional({ sessionName: params.sessionName }),
+              url: sessionUrl,
+              subagent: true,
+              promptDelivery: "completed",
+              subagentResult,
+            },
+          },
+        };
+      }
+
       // Fire-and-forget: /prompt intentionally waits for the spawned agent turn
-      // to finish. This tool should return as soon as the new session is
-      // visible, so the parent session can keep working while the child works.
-      void postJson(`${apiBase}/api/sessions/${encodeURIComponent(created.id)}/prompt`, {
-        text: params.prompt,
-      }).catch((error) => {
+      // to finish. For wholesale sessions this tool should return as soon as
+      // the new session is visible, so the parent session can keep working
+      // while the child works independently.
+      void postJson(promptUrl, promptBody).catch((error) => {
         console.error(
           `[spawn_prc_session] failed to send prompt to ${created.id}: ${error instanceof Error ? error.message : String(error)}`,
         );
       });
 
-      const uiBase = resolvePiRemoteUiBase(apiBase);
-      const sessionUrl = `${uiBase}/?session=${encodeURIComponent(created.id)}`;
       return {
         content: [{
           type: "text",
@@ -364,6 +404,8 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
             cwd,
             ...optional({ sessionName: params.sessionName }),
             url: sessionUrl,
+            subagent: false,
+            promptDelivery: "background",
           },
         },
       };
@@ -374,6 +416,41 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
 function slugifyDeckTitle(value: string): string {
   const slug = String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return slug || "deck";
+}
+
+function summarizeSubagentResult(promptResult: SpawnPromptResponse): SubagentResultSummary {
+  const messages = Array.isArray(promptResult) ? promptResult : undefined;
+  const lastAssistantMessage = messages
+    ? findLastAssistantMessage(messages)
+    : undefined;
+  return {
+    ...(messages ? { messages, messageCount: messages.length } : {}),
+    ...optional({ lastAssistantMessage }),
+  };
+}
+
+function findLastAssistantMessage(messages: readonly unknown[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isRecord(message)) continue;
+    const role = typeof message.role === "string" ? message.role : undefined;
+    if (role !== "assistant") continue;
+    const text = extractMessageText(message);
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function extractMessageText(message: Record<string, unknown>): string | undefined {
+  const candidates = [message.text, message.content, message.markdown];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate;
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function resolvePiRemoteApiBase(): string {

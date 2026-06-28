@@ -9,6 +9,8 @@ export interface SessionListItem {
   readonly sessionFile: string;
   readonly sessionName?: string;
   readonly firstMessage?: string;
+  readonly subagent?: boolean;
+  readonly hiddenFromList?: boolean;
   readonly lastUserActivity?: number | null;
   readonly createdAt?: number | null;
   readonly lastActivity: number;
@@ -125,6 +127,10 @@ export interface SessionToolDetails {
 export interface CreateSessionOptions {
   readonly cwd: string;
   readonly sessionName?: string;
+  /** Marks a child-agent session. Subagents are hidden from the default session list. */
+  readonly subagent?: boolean;
+  /** Internal/listing flag. True sessions remain addressable by URL/API but are omitted from sidebar lists. */
+  readonly hiddenFromList?: boolean;
 }
 
 export interface OpenSessionOptions {

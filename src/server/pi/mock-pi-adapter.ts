@@ -28,6 +28,8 @@ interface PersistedMockSession {
   readonly cwd: string;
   readonly sessionFile: string;
   readonly sessionName?: string;
+  readonly subagent?: boolean;
+  readonly hiddenFromList?: boolean;
   readonly messages: readonly SessionMessage[];
   readonly lastActivity: number;
 }
@@ -72,6 +74,8 @@ export class MockPiAdapter implements PiAdapter {
       cwd: path.resolve(options.cwd),
       sessionFile,
       ...optional({ sessionName: options.sessionName }),
+      ...(options.subagent ? { subagent: true } : {}),
+      ...(options.hiddenFromList ?? options.subagent ? { hiddenFromList: true } : {}),
       messages: [],
       lastActivity: Date.now(),
     };
@@ -93,6 +97,7 @@ export class MockPiAdapter implements PiAdapter {
       const sessionFile = path.join(this.sessionRoot, entry);
       const persisted = await readSession(sessionFile);
       if (cwd !== undefined && persisted.cwd !== path.resolve(cwd)) continue;
+      if (persisted.hiddenFromList || persisted.subagent) continue;
       const firstMessage = persisted.messages.find((message) => message.role === "user")?.content;
       items.push({
         id: persisted.id,
@@ -100,6 +105,8 @@ export class MockPiAdapter implements PiAdapter {
         sessionFile: persisted.sessionFile,
         ...optional({ sessionName: persisted.sessionName }),
         ...optional({ firstMessage }),
+        ...(persisted.subagent ? { subagent: true } : {}),
+        ...(persisted.hiddenFromList ? { hiddenFromList: true } : {}),
         lastActivity: persisted.lastActivity,
       });
     }
@@ -115,6 +122,8 @@ class MockPiSessionHandle implements PiSessionHandle {
   private readonly emitter = new EventEmitter();
   private status: SessionStatus = "idle";
   private sessionName: string | undefined;
+  private subagent: boolean | undefined;
+  private hiddenFromList: boolean | undefined;
   private modelProvider: string | undefined;
   private modelId: string | undefined;
   private messages: SessionMessage[];
@@ -127,6 +136,8 @@ class MockPiSessionHandle implements PiSessionHandle {
     this.cwd = persisted.cwd;
     this.sessionFile = persisted.sessionFile;
     this.sessionName = persisted.sessionName;
+    this.subagent = persisted.subagent;
+    this.hiddenFromList = persisted.hiddenFromList;
     this.messages = [...persisted.messages];
     this.lastActivity = persisted.lastActivity;
     this.sessionRoot = sessionRoot;
@@ -140,6 +151,8 @@ class MockPiSessionHandle implements PiSessionHandle {
       sessionFile: this.sessionFile,
       status: this.status,
       ...optional({ sessionName: this.sessionName }),
+      ...(this.subagent ? { subagent: true } : {}),
+      ...(this.hiddenFromList ? { hiddenFromList: true } : {}),
       ...(this.modelProvider && this.modelId
         ? { modelProvider: this.modelProvider, model: `${this.modelProvider}/${this.modelId}` }
         : {}),
@@ -193,6 +206,8 @@ class MockPiSessionHandle implements PiSessionHandle {
       this.cwd = fork.cwd;
       this.sessionFile = fork.sessionFile;
       this.sessionName = fork.sessionName;
+      this.subagent = fork.subagent;
+      this.hiddenFromList = fork.hiddenFromList;
       this.messages = [...fork.messages];
       this.lastActivity = fork.lastActivity;
     }
@@ -549,6 +564,8 @@ class MockPiSessionHandle implements PiSessionHandle {
     this.sessionFile = persisted.sessionFile;
     this.messages = [...persisted.messages];
     this.sessionName = persisted.sessionName;
+    this.subagent = persisted.subagent;
+    this.hiddenFromList = persisted.hiddenFromList;
     this.lastActivity = persisted.lastActivity;
   }
 
@@ -560,6 +577,8 @@ class MockPiSessionHandle implements PiSessionHandle {
       sessionFile: path.join(this.sessionRoot, `${Date.now()}_${id}.mock-session.json`),
       messages: [...messages],
       sessionName,
+      ...optional({ subagent: this.subagent }),
+      ...optional({ hiddenFromList: this.hiddenFromList }),
       lastActivity: Date.now(),
     };
     await writeSession(persisted);
@@ -572,6 +591,8 @@ class MockPiSessionHandle implements PiSessionHandle {
       cwd: this.cwd,
       sessionFile: this.sessionFile,
       ...optional({ sessionName: this.sessionName }),
+      ...optional({ subagent: this.subagent }),
+      ...optional({ hiddenFromList: this.hiddenFromList }),
       messages: this.messages,
       lastActivity: this.lastActivity,
     });

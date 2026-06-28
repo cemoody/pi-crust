@@ -464,7 +464,7 @@ export function createExtensionSessionApi(
   resolveSession: (sessionId: string) => Promise<RegisteredSession> = async (sessionId) => getRegistry().getSession(sessionId),
 ) {
   return {
-    create: async (input: { readonly cwd: string; readonly sessionName?: string }) => {
+    create: async (input: { readonly cwd: string; readonly sessionName?: string; readonly subagent?: boolean; readonly hiddenFromList?: boolean }) => {
       const session = await getRegistry().createSession(input);
       const state = await session.handle.getState();
       return toSessionCard(state);
@@ -472,7 +472,7 @@ export function createExtensionSessionApi(
     prompt: async (sessionId: string, prompt: string) => {
       await getRegistry().prompt(sessionId, prompt);
     },
-    createAndPrompt: async (input: { readonly cwd: string; readonly sessionName?: string; readonly prompt: string }) => {
+    createAndPrompt: async (input: { readonly cwd: string; readonly sessionName?: string; readonly prompt: string; readonly subagent?: boolean; readonly hiddenFromList?: boolean }) => {
       const session = await getRegistry().createSession(input);
       await getRegistry().prompt(session.id, input.prompt);
       const state = await session.handle.getState();
@@ -1123,9 +1123,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   }
 
   if (req.method === "POST" && url.pathname === "/api/sessions") {
-    const body = await readJson(req) as { cwd?: string; sessionName?: string };
+    const body = await readJson(req) as { cwd?: string; sessionName?: string; subagent?: boolean; hiddenFromList?: boolean };
     if (!body.cwd) return sendJson(res, 400, { error: "cwd is required" });
-    const created = await context.registry.createSession({ cwd: body.cwd, ...(body.sessionName ? { sessionName: body.sessionName } : {}) });
+    const created = await context.registry.createSession({
+      cwd: body.cwd,
+      ...(body.sessionName ? { sessionName: body.sessionName } : {}),
+      ...(body.subagent === true ? { subagent: true } : {}),
+      ...(body.hiddenFromList === true || body.subagent === true ? { hiddenFromList: true } : {}),
+    });
     const state = await created.handle.getState();
     context.coldSessionFiles.set(created.id, created.sessionFile);
     return sendJson(res, 200, toSessionCard(state));
