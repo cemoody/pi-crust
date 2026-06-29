@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ExtensionUiRequest, ExtensionUiResponse, WireMessage } from "../../shared/protocol.js";
 import type { PiDynamicCommandInfo } from "../../shared/slash-command-routing.js";
@@ -13,6 +13,10 @@ import { sanitizePiDynamicCommands } from "../../shared/slash-command-routing.js
  *  network for long sessions (e.g. the autotime-series-2 session whose full
  *  /messages payload was ~28 MB before this limit was applied). */
 const INITIAL_MESSAGES_LIMIT = 200;
+const MOBILE_INITIAL_MESSAGES_LIMIT = 80;
+const SESSION_ROW_HEIGHT_PX = 48;
+const SESSION_LIST_OVERSCAN = 8;
+const SESSION_LIST_VIRTUALIZE_THRESHOLD = 100;
 const DASHBOARD_ERROR_TOAST_ID = "dashboard-error";
 
 function isTransientPromptTransportError(message: string): boolean {
@@ -184,6 +188,8 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     return window.matchMedia("(max-width: 720px)").matches;
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const sessionListRef = useRef<HTMLUListElement | null>(null);
+  const [sessionListViewport, setSessionListViewport] = useState({ scrollTop: 0, height: 0 });
   const [view, setView] = useState<DashboardView>("sessions");
   const [creatingSessionFromMenu, setCreatingSessionFromMenu] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -454,8 +460,9 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
         // the wire to be reparsed in the browser. Older history is loaded
         // on demand when the user scrolls up; new activity is appended via
         // the SSE event stream (applyRealtimeEvent).
+        const initialLimit = isMobile ? MOBILE_INITIAL_MESSAGES_LIMIT : INITIAL_MESSAGES_LIMIT;
         const [messages, refreshed] = await Promise.all([
-          api.getMessages(activeSessionId, { limit: INITIAL_MESSAGES_LIMIT }),
+          api.getMessages(activeSessionId, { limit: initialLimit }),
           api.getSession ? api.getSession(activeSessionId) : Promise.resolve(null),
         ]);
         if (cancelled) return;
@@ -466,7 +473,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
         // don't show the loader on short transcripts.
         setHasMoreOlderBySession((current) => ({
           ...current,
-          [activeSessionId]: messages.length >= INITIAL_MESSAGES_LIMIT,
+          [activeSessionId]: messages.length >= initialLimit,
         }));
         if (refreshed) applyRefreshedSession(refreshed, options);
       } catch (caught) {
@@ -549,7 +556,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       if (pendingRefresh) clearTimeout(pendingRefresh);
       unsubscribe();
     };
-  }, [activeSessionId, api, showSubagents]);
+  }, [activeSessionId, api, isMobile, showSubagents]);
 
   const visibleSessions = useMemo(() => {
     const lowered = query.toLowerCase();
@@ -574,6 +581,43 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
     });
   }, [namedOnly, query, sessions, showSubagents, sortMode, lastUserActivityById]);
+
+  const virtualSessionRows = useMemo(() => {
+    // Keep small/test session lists fully rendered so existing navigation and
+    // accessibility expectations remain intact. Virtualization only pays off
+    // on large real-world corpora like this machine's 500+ sessions.
+    if (!isMobile || visibleSessions.length <= SESSION_LIST_VIRTUALIZE_THRESHOLD) {
+      return { topSpacer: 0, bottomSpacer: 0, sessions: visibleSessions };
+    }
+    const viewportHeight = sessionListViewport.height || 640;
+    const start = Math.max(0, Math.floor(sessionListViewport.scrollTop / SESSION_ROW_HEIGHT_PX) - SESSION_LIST_OVERSCAN);
+    const end = Math.min(
+      visibleSessions.length,
+      Math.ceil((sessionListViewport.scrollTop + viewportHeight) / SESSION_ROW_HEIGHT_PX) + SESSION_LIST_OVERSCAN,
+    );
+    return {
+      topSpacer: start * SESSION_ROW_HEIGHT_PX,
+      bottomSpacer: Math.max(0, (visibleSessions.length - end) * SESSION_ROW_HEIGHT_PX),
+      sessions: visibleSessions.slice(start, end),
+    };
+  }, [isMobile, sessionListViewport.height, sessionListViewport.scrollTop, visibleSessions]);
+
+  const updateSessionListViewport = useCallback(() => {
+    const el = sessionListRef.current;
+    if (!el) return;
+    const next = { scrollTop: el.scrollTop, height: el.clientHeight };
+    setSessionListViewport((current) => current.scrollTop === next.scrollTop && current.height === next.height ? current : next);
+  }, []);
+
+  useLayoutEffect(() => { updateSessionListViewport(); }, [updateSessionListViewport, visibleSessions.length, sidebarOpen, isMobile]);
+
+  useEffect(() => {
+    const el = sessionListRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => updateSessionListViewport());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [updateSessionListViewport, sidebarOpen, isMobile]);
 
   const activeSession = activeSessionId ? sessions.find((session) => session.id === activeSessionId) : null;
   const openSessionFromExtension = useCallback(async (sessionId: string) => {
@@ -640,7 +684,8 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     }
     setLoadingOlderBySession((current) => ({ ...current, [sessionId]: true }));
     try {
-      const older = await api.getMessages(sessionId, { limit: INITIAL_MESSAGES_LIMIT, before: oldestTs });
+      const pageLimit = isMobile ? MOBILE_INITIAL_MESSAGES_LIMIT : INITIAL_MESSAGES_LIMIT;
+      const older = await api.getMessages(sessionId, { limit: pageLimit, before: oldestTs });
       const olderTimeline = older.map(toTimelineMessage);
       const present = messagesBySession[sessionId] ?? [];
       const known = new Set(present.map((m) => m.id));
@@ -661,14 +706,14 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       // tests/e2e/http-api-tail-read-pagination-shrink.test.ts.
       setHasMoreOlderBySession((current) => ({
         ...current,
-        [sessionId]: freshCount > 0 && older.length >= INITIAL_MESSAGES_LIMIT,
+        [sessionId]: freshCount > 0 && older.length >= pageLimit,
       }));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setLoadingOlderBySession((current) => ({ ...current, [sessionId]: false }));
     }
-  }, [api, messagesBySession, hasMoreOlderBySession, loadingOlderBySession]);
+  }, [api, messagesBySession, hasMoreOlderBySession, loadingOlderBySession, isMobile]);
   const activePiCommands = activeSessionId ? (piCommandsBySession[activeSessionId] ?? []) : [];
   useEffect(() => {
     if (!activeSessionId || !api.getPiCommands) return;
@@ -1210,6 +1255,8 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     }
   }
 
+  const renderSidebar = !isMobile || sidebarOpen;
+
   return (
     <main className={`session-dashboard ${sidebarOpen ? "" : "collapsed"} ${isMobile ? "is-mobile" : ""}`}>
       {sidebarOpen && isMobile ? (
@@ -1231,6 +1278,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
         </button>
       )}
 
+      {renderSidebar ? (
       <aside className="session-sidebar" aria-label="Sessions" aria-hidden={!sidebarOpen}>
         <header>
           <AppBrand
@@ -1371,8 +1419,13 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
           </div>
         </section>
 
-        <ul className="session-list">
-          {visibleSessions.map((session) => (
+        <ul
+          ref={sessionListRef}
+          className="session-list"
+          onScroll={updateSessionListViewport}
+        >
+          {virtualSessionRows.topSpacer > 0 ? <li aria-hidden="true" style={{ height: virtualSessionRows.topSpacer, flex: "0 0 auto" }} /> : null}
+          {virtualSessionRows.sessions.map((session) => (
             <li key={session.id}>
               <a
                 href={`?session=${encodeURIComponent(session.id)}`}
@@ -1398,8 +1451,10 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
               </a>
             </li>
           ))}
+          {virtualSessionRows.bottomSpacer > 0 ? <li aria-hidden="true" style={{ height: virtualSessionRows.bottomSpacer, flex: "0 0 auto" }} /> : null}
         </ul>
       </aside>
+      ) : null}
 
       <section className="active-session" aria-label={view === "settings" ? "Settings" : view === "terminal" ? "Terminal" : activeActivity ? activeActivity.title : "Active session"}>
         {view === "terminal" && terminalEnabled ? (

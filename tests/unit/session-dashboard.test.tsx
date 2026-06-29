@@ -1122,7 +1122,10 @@ describe("SessionDashboard", () => {
     act(() => {
       pushEvent?.({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "ls" } });
     });
-    expect(screen.getByLabelText("tool bash")).toHaveTextContent("running");
+    const toolCard = screen.getByLabelText("tool bash") as HTMLDetailsElement;
+    expect(toolCard).toHaveTextContent("running");
+    toolCard.open = true;
+    fireEvent(toolCard, new Event("toggle"));
 
     act(() => {
       pushEvent?.({
@@ -1147,7 +1150,7 @@ describe("SessionDashboard", () => {
         isError: false,
       });
     });
-    expect(screen.getByLabelText("tool bash")).toHaveTextContent("package.json");
+    expect(toolCard).toHaveTextContent("package.json");
     expect(screen.getByText("package.json")).toBeInTheDocument();
     expect(screen.getByText("Report")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument();
