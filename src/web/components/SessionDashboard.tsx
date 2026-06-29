@@ -16,6 +16,7 @@ const INITIAL_MESSAGES_LIMIT = 200;
 const MOBILE_INITIAL_MESSAGES_LIMIT = 80;
 const SESSION_ROW_HEIGHT_PX = 48;
 const SESSION_LIST_OVERSCAN = 8;
+const SESSION_LIST_VIRTUALIZE_THRESHOLD = 100;
 const DASHBOARD_ERROR_TOAST_ID = "dashboard-error";
 
 function isTransientPromptTransportError(message: string): boolean {
@@ -582,6 +583,12 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   }, [namedOnly, query, sessions, showSubagents, sortMode, lastUserActivityById]);
 
   const virtualSessionRows = useMemo(() => {
+    // Keep small/test session lists fully rendered so existing navigation and
+    // accessibility expectations remain intact. Virtualization only pays off
+    // on large real-world corpora like this machine's 500+ sessions.
+    if (!isMobile || visibleSessions.length <= SESSION_LIST_VIRTUALIZE_THRESHOLD) {
+      return { topSpacer: 0, bottomSpacer: 0, sessions: visibleSessions };
+    }
     const viewportHeight = sessionListViewport.height || 640;
     const start = Math.max(0, Math.floor(sessionListViewport.scrollTop / SESSION_ROW_HEIGHT_PX) - SESSION_LIST_OVERSCAN);
     const end = Math.min(
@@ -589,13 +596,11 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       Math.ceil((sessionListViewport.scrollTop + viewportHeight) / SESSION_ROW_HEIGHT_PX) + SESSION_LIST_OVERSCAN,
     );
     return {
-      start,
-      end,
       topSpacer: start * SESSION_ROW_HEIGHT_PX,
       bottomSpacer: Math.max(0, (visibleSessions.length - end) * SESSION_ROW_HEIGHT_PX),
       sessions: visibleSessions.slice(start, end),
     };
-  }, [sessionListViewport.height, sessionListViewport.scrollTop, visibleSessions]);
+  }, [isMobile, sessionListViewport.height, sessionListViewport.scrollTop, visibleSessions]);
 
   const updateSessionListViewport = useCallback(() => {
     const el = sessionListRef.current;
