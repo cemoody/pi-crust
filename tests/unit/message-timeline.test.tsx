@@ -537,18 +537,18 @@ describe("MessageTimeline", () => {
     expect(card).toHaveTextContent("done");
   });
 
-  it("shows running tool card without output", () => {
+  it("shows running tool card collapsed without output until expanded", () => {
     render(<MessageTimeline messages={[{
       id: "t1",
       role: "tool",
       text: "",
       tool: { id: "call_1", name: "read", args: { path: "src/app.ts" }, status: "running", output: "" },
     }]} />);
-    const card = screen.getByLabelText("tool read");
+    const card = screen.getByLabelText("tool read") as HTMLDetailsElement;
     expect(card).toHaveTextContent("Read");
     expect(card).toHaveTextContent("running");
-    // No *output* <pre> while running. (The .tool-input <pre> showing the
-    // input path is fine — that's intentional and covered separately.)
+    expect(card.open).toBe(false);
+    expect(card.querySelector(".tool-input")).toBeNull();
     expect(card.querySelector("pre.tool-output")).toBeNull();
   });
 

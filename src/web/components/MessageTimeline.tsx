@@ -566,7 +566,7 @@ function ToolCard({ tool }: { readonly tool: TimelineToolDetails }) {
   // strings alive even though the cards are collapsed. Lazy-mounting the body
   // is the normal pattern here: render the cheap summary rows up front, then
   // hydrate the expensive output only when the user opens a card.
-  const [open, setOpen] = useState(tool.status === "running" || tool.status === "error");
+  const [open, setOpen] = useState(false);
   return (
     <div className="tool-card-wrapper">
       <details
