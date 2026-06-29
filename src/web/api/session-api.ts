@@ -24,6 +24,8 @@ export interface SessionCardData {
   readonly id: string;
   readonly cwd: string;
   readonly sessionName?: string;
+  readonly subagent?: boolean;
+  readonly hiddenFromList?: boolean;
   readonly model?: string;
   readonly status: SessionCardStatus;
   readonly tokenSummary?: string;
@@ -413,9 +415,9 @@ export interface SessionDashboardApi {
   /** Re-fetch a source to its latest version and reload extensions. */
   updateExtensionPackage?(source: string): Promise<ExtensionUpdateResult>;
   runExtensionCommand?(extensionId: string, invocationName: string, input?: unknown): Promise<unknown>;
-  listSessions(cwd?: string): Promise<readonly SessionCardData[]>;
+  listSessions(cwd?: string, options?: { readonly includeSubagents?: boolean }): Promise<readonly SessionCardData[]>;
   /** Lightweight sidebar status refresh; does not open cold sessions or fetch messages. */
-  listSessionStatuses?(cwd?: string): Promise<readonly SessionCardData[]>;
+  listSessionStatuses?(cwd?: string, options?: { readonly includeSubagents?: boolean }): Promise<readonly SessionCardData[]>;
   createSession(input: NewSessionInput): Promise<SessionCardData>;
   renameSession(sessionId: string, name: string): Promise<SessionCardData>;
   deleteSession(sessionId: string): Promise<void>;

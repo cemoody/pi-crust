@@ -22,6 +22,8 @@ export interface SessionState {
   readonly sessionFile: string;
   readonly status: SessionStatus;
   readonly sessionName?: string;
+  readonly subagent?: boolean;
+  readonly hiddenFromList?: boolean;
   readonly model?: string;
   readonly modelProvider?: string;
   readonly messageCount: number;
@@ -137,6 +139,11 @@ export interface OpenSessionOptions {
   readonly sessionFile: string;
 }
 
+export interface ListSessionsOptions {
+  readonly includeHidden?: boolean;
+  readonly includeSubagents?: boolean;
+}
+
 export interface ReattachSessionOptions {
   readonly sessionId: string;
   readonly socketPath: string;
@@ -189,7 +196,7 @@ export interface PiSessionHandle {
 export interface PiAdapter {
   createSession(options: CreateSessionOptions): Promise<PiSessionHandle>;
   openSession(options: OpenSessionOptions): Promise<PiSessionHandle>;
-  listSessions(cwd?: string): Promise<readonly SessionListItem[]>;
+  listSessions(cwd?: string, options?: ListSessionsOptions): Promise<readonly SessionListItem[]>;
   listModels(): Promise<readonly ModelInfo[]>;
   /**
    * Create an independent fork of a hot source session.

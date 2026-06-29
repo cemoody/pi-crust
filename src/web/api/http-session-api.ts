@@ -102,13 +102,19 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     return request(`/api/extensions/${encodeURIComponent(extensionId)}/commands/${encodeURIComponent(invocationName)}`, { method: "POST", body: input ?? {} });
   }
 
-  async listSessions(cwd?: string): Promise<readonly SessionCardData[]> {
-    const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
+  async listSessions(cwd?: string, options: { readonly includeSubagents?: boolean } = {}): Promise<readonly SessionCardData[]> {
+    const params = new URLSearchParams();
+    if (cwd) params.set("cwd", cwd);
+    if (options.includeSubagents) params.set("includeSubagents", "true");
+    const query = params.toString() ? `?${params.toString()}` : "";
     return request<SessionCardData[]>(`/api/sessions${query}`);
   }
 
-  async listSessionStatuses(cwd?: string): Promise<readonly SessionCardData[]> {
-    const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
+  async listSessionStatuses(cwd?: string, options: { readonly includeSubagents?: boolean } = {}): Promise<readonly SessionCardData[]> {
+    const params = new URLSearchParams();
+    if (cwd) params.set("cwd", cwd);
+    if (options.includeSubagents) params.set("includeSubagents", "true");
+    const query = params.toString() ? `?${params.toString()}` : "";
     return request<SessionCardData[]>(`/api/sessions/statuses${query}`);
   }
 

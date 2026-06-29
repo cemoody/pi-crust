@@ -522,6 +522,18 @@ a.sidebar-menu-item:visited {
   color: var(--text-primary);
 }
 
+.session-row-badge {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--gray-080);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+
 .session-row-status {
   grid-column: 3;
   grid-row: 1;

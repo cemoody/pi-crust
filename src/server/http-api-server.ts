@@ -1071,12 +1071,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && url.pathname === "/api/sessions") {
     const cwd = url.searchParams.get("cwd") ?? undefined;
-    return sendJson(res, 200, await dedupedListSessionCards(context, cwd));
+    const includeSubagents = url.searchParams.get("includeSubagents") === "true";
+    return sendJson(res, 200, await dedupedListSessionCards(context, cwd, { includeSubagents, includeHidden: includeSubagents }));
   }
 
   if (req.method === "GET" && url.pathname === "/api/sessions/statuses") {
     const cwd = url.searchParams.get("cwd") ?? undefined;
-    return sendJson(res, 200, await dedupedListSessionCards(context, cwd));
+    const includeSubagents = url.searchParams.get("includeSubagents") === "true";
+    return sendJson(res, 200, await dedupedListSessionCards(context, cwd, { includeSubagents, includeHidden: includeSubagents }));
   }
 
   // Serve arbitrary on-disk artifact files (images, html, pdf, video) that
@@ -1573,14 +1575,18 @@ interface SessionsCacheEntry {
 const sessionsCardCache = new Map<string, SessionsCacheEntry>();
 const sessionsCardInflight = new Map<string, Promise<Awaited<ReturnType<typeof listSessionCards>>>>();
 
-async function dedupedListSessionCards(context: HttpApiServerContext, cwd?: string) {
-  const key = cwd ?? "";
+async function dedupedListSessionCards(
+  context: HttpApiServerContext,
+  cwd?: string,
+  options: { readonly includeSubagents?: boolean; readonly includeHidden?: boolean } = {},
+) {
+  const key = `${cwd ?? ""}|subagents:${options.includeSubagents === true ? "1" : "0"}|hidden:${options.includeHidden === true ? "1" : "0"}`;
   const now = Date.now();
   const cached = sessionsCardCache.get(key);
   if (cached && cached.expiresAt > now) return cached.cards;
   const inflight = sessionsCardInflight.get(key);
   if (inflight) return inflight;
-  const pending = listSessionCards(context, cwd)
+  const pending = listSessionCards(context, cwd, options)
     .then((cards) => {
       sessionsCardCache.set(key, { expiresAt: Date.now() + LIST_SESSIONS_CACHE_TTL_MS, cards });
       return cards;
@@ -1590,8 +1596,12 @@ async function dedupedListSessionCards(context: HttpApiServerContext, cwd?: stri
   return pending;
 }
 
-async function listSessionCards(context: HttpApiServerContext, cwd?: string) {
-  const sessions = await context.registry.listSessions(cwd);
+async function listSessionCards(
+  context: HttpApiServerContext,
+  cwd?: string,
+  options: { readonly includeSubagents?: boolean; readonly includeHidden?: boolean } = {},
+) {
+  const sessions = await context.registry.listSessions(cwd, options);
   for (const session of sessions) context.coldSessionFiles.set(session.id, session.sessionFile);
   const cards = await Promise.all(sessions.map((session) => sessionCardWithLiveState(context, session)));
   // Persist any updated timeline-metadata entries to disk so the next process
@@ -1854,6 +1864,8 @@ function toSessionListCard(session: SessionListItem, metadata: SessionTimelineMe
     cwd: session.cwd,
     sessionFile: session.sessionFile,
     sessionName: session.sessionName,
+    subagent: session.subagent,
+    hiddenFromList: session.hiddenFromList,
     status: "idle",
     model: undefined,
     tokenSummary: undefined,
@@ -1868,6 +1880,8 @@ function toSessionCard(state: Awaited<ReturnType<import("./pi/types.js").PiSessi
     id: state.id,
     cwd: state.cwd,
     sessionName: state.sessionName,
+    subagent: state.subagent,
+    hiddenFromList: state.hiddenFromList,
     status: state.status === "running" ? "streaming" : state.status,
     model: state.modelProvider && state.model ? `${state.modelProvider}/${state.model}` : undefined,
     tokenSummary: state.totalTokens === undefined || state.totalTokens === null

@@ -176,7 +176,7 @@ export class PiRpcAdapter implements PiAdapter {
     return { result: { cancelled: false, text: selectedText }, handle };
   }
 
-  async listSessions(cwd?: string): Promise<readonly SessionListItem[]> {
+  async listSessions(cwd?: string, options: { readonly includeHidden?: boolean; readonly includeSubagents?: boolean } = {}): Promise<readonly SessionListItem[]> {
     // We used to call SessionManager.list(cwd, sessionDir) here, but that
     // function reads the FULL body of every session jsonl just to compute
     // sidebar metadata (messageCount, allMessagesText, etc. — most of which
@@ -193,7 +193,7 @@ export class PiRpcAdapter implements PiAdapter {
     //                           back to stat.mtime when missing
     // So we do a bounded head+tail scan per file in parallel and skip the
     // SDK helper entirely.
-    return fastListSessions(this.options.sessionDir, cwd);
+    return fastListSessions(this.options.sessionDir, cwd, options);
   }
 
   async listModels(): Promise<readonly ModelInfo[]> {
