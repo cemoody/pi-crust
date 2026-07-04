@@ -49,6 +49,7 @@ import { ExtensionManagementPanel } from "./ExtensionManagementPanel.js";
 import { NotificationsProvider, useNotifications } from "./notifications.js";
 import "./session-dashboard.css";
 import { Icon, type IconName } from "./Icon.js";
+import { getActiveTheme, applyTheme, setStoredTheme, type Theme } from "../utils/theme.js";
 import type { ExtensionActivityInfo, ServerExtensionPackageInfo } from "../api/session-api.js";
 import { AppBrand, isPlainLeftClick, updateFavicon, imageFaviconDataUrl } from "./app-brand.js";
 import {
@@ -190,6 +191,16 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const sessionListRef = useRef<HTMLUListElement | null>(null);
   const [sessionListViewport, setSessionListViewport] = useState({ scrollTop: 0, height: 0 });
+  // Mirror the document's `data-theme` attribute so the toggle button
+  // reflects what is painted. The attribute is initialized in main.tsx
+  // before first render; this state simply stays in sync with it.
+  const [theme, setTheme] = useState<Theme>(() => getActiveTheme());
+  const toggleTheme = useCallback(() => {
+    const next: Theme = getActiveTheme() === "dark" ? "light" : "dark";
+    applyTheme(next);
+    setStoredTheme(next);
+    setTheme(next);
+  }, []);
   const [view, setView] = useState<DashboardView>("sessions");
   const [creatingSessionFromMenu, setCreatingSessionFromMenu] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -1289,6 +1300,16 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
           <button
             type="button"
             className="sidebar-toggle"
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            aria-pressed={theme === "dark"}
+            title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            onClick={toggleTheme}
+          >
+            <ThemeToggleGlyph theme={theme} />
+          </button>
+          <button
+            type="button"
+            className="sidebar-toggle"
             aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
             aria-pressed={sidebarOpen}
             onClick={() => setSidebarOpen((open) => !open)}
@@ -1968,6 +1989,11 @@ function CloneGlyph() { return <Icon name="clone" />; }
 function PencilGlyph() { return <Icon name="pencil" />; }
 function TrashGlyph() { return <Icon name="trash" />; }
 function SidebarToggleGlyph() { return <Icon name="sidebar-toggle" />; }
+function ThemeToggleGlyph({ theme }: { readonly theme: Theme }) {
+  // Show the glyph for the theme you will switch TO: a moon while light
+  // (click -> dark), a sun while dark (click -> light).
+  return <Icon name={theme === "dark" ? "sun" : "moon"} />;
+}
 function NewSessionGlyph() { return <Icon name="new-session" />; }
 function CronGlyph() { return <Icon name="cron" />; }
 function ExtensionGlyph() { return <Icon name="extension" />; }
