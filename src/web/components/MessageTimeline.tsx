@@ -748,6 +748,100 @@ function readRichKind(tool: TimelineToolDetails): "markdown" | "html" | undefine
   return undefined;
 }
 
+/** Resolve an artifact `path`/`url` into a fetchable href, prefixing the
+ *  configured API base for same-origin `/api/...` routes. */
+function resolveArtifactSrc(src: string | undefined): string | undefined {
+  if (typeof src !== "string" || src.length === 0) return undefined;
+  const base = import.meta.env.VITE_PI_CRUST_API_BASE ?? "";
+  return src.startsWith("/api/") ? `${base}${src}` : src;
+}
+
+/** Basename of a path/url (query string stripped), or undefined when empty. */
+function artifactBasename(candidate: string | undefined): string | undefined {
+  if (typeof candidate !== "string" || candidate.length === 0) return undefined;
+  const withoutQuery = candidate.split(/[?#]/)[0] ?? candidate;
+  const base = withoutQuery.split(/[\\/]/).pop();
+  return base && base.length > 0 ? base : undefined;
+}
+
+function slugifyTitle(title: string, fallback = "artifact"): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || fallback;
+}
+
+/**
+ * Computes a `{ href, name }` download target for any artifact kind. Inline
+ * artifacts (html/markdown/json/table/vega-lite) become client-side blobs;
+ * file-backed artifacts (image, or html/data with a `path`/`url`) download
+ * straight from their served source. Returns null when there is nothing to
+ * download. Manages the blob object-URL lifecycle so it is revoked on unmount.
+ */
+function useArtifactDownload(
+  artifact: TimelineArtifact,
+  title: string,
+): { readonly href: string; readonly name: string } | null {
+  const blob = useMemo(() => {
+    if (artifact.kind === "html" && typeof artifact.html === "string") {
+      return { data: artifact.html, type: "text/html", ext: "html" };
+    }
+    if (artifact.kind === "markdown" && typeof artifact.markdown === "string") {
+      return { data: artifact.markdown, type: "text/markdown", ext: "md" };
+    }
+    if (
+      artifact.data !== undefined &&
+      (artifact.kind === "json" || artifact.kind === "table" || artifact.kind === "vega-lite")
+    ) {
+      return { data: JSON.stringify(artifact.data, null, 2), type: "application/json", ext: "json" };
+    }
+    return null;
+  }, [artifact.kind, artifact.html, artifact.markdown, artifact.data]);
+
+  const objectUrl = useMemo(
+    () => (blob ? URL.createObjectURL(new Blob([blob.data], { type: blob.type })) : null),
+    [blob],
+  );
+  useEffect(() => () => { if (objectUrl) URL.revokeObjectURL(objectUrl); }, [objectUrl]);
+
+  if (objectUrl && blob) {
+    const name = artifactBasename(artifact.path) ?? `${slugifyTitle(title)}.${blob.ext}`;
+    return { href: objectUrl, name };
+  }
+  const src = resolveArtifactSrc(artifact.url ?? artifact.path);
+  if (src) {
+    return { href: src, name: artifactBasename(artifact.path ?? artifact.url) ?? slugifyTitle(title) };
+  }
+  return null;
+}
+
+/** Small download control shared across artifact previews; renders nothing
+ *  when the artifact has no downloadable content. */
+function ArtifactDownloadButton({ artifact, title }: { readonly artifact: TimelineArtifact; readonly title: string }) {
+  const download = useArtifactDownload(artifact, title);
+  if (!download) return null;
+  return (
+    <a
+      className="artifact-markdown-action artifact-download-action"
+      href={download.href}
+      download={download.name}
+      aria-label="Download artifact"
+      title={`Download ${download.name}`}
+    >
+      <Icon name="download" />
+    </a>
+  );
+}
+
+/** Header row (title + download button) shared by non-markdown previews. */
+function ArtifactPreviewHeader({ artifact, title }: { readonly artifact: TimelineArtifact; readonly title: string }) {
+  return (
+    <div className="artifact-preview-header">
+      <strong>{title}</strong>
+      <div className="artifact-markdown-actions">
+        <ArtifactDownloadButton artifact={artifact} title={title} />
+      </div>
+    </div>
+  );
+}
+
 function ArtifactPreview({ artifact }: { readonly artifact: TimelineArtifact }) {
   const title = artifact.title ?? `${artifact.kind} artifact`;
   if (artifact.artifactUrl && artifact.artifactTruncated) {
@@ -757,7 +851,7 @@ function ArtifactPreview({ artifact }: { readonly artifact: TimelineArtifact }) 
     const src = artifact.url ?? artifact.path;
     return src ? (
       <figure className="artifact-preview artifact-image">
-        <figcaption>{title}</figcaption>
+        <ArtifactPreviewHeader artifact={artifact} title={title} />
         <img src={src} alt={artifact.alt ?? title} />
       </figure>
     ) : <ArtifactFallback artifact={artifact} />;
@@ -771,18 +865,17 @@ function ArtifactPreview({ artifact }: { readonly artifact: TimelineArtifact }) 
     if (typeof artifact.html === "string") {
       return (
         <figure className="artifact-preview artifact-html">
-          <figcaption>{title}</figcaption>
+          <ArtifactPreviewHeader artifact={artifact} title={title} />
           <iframe title={title} className="artifact-html" sandbox="" srcDoc={artifact.html} />
         </figure>
       );
     }
     const src = artifact.url ?? artifact.path;
     if (typeof src === "string" && src.length > 0) {
-      const base = import.meta.env.VITE_PI_CRUST_API_BASE ?? "";
-      const resolved = src.startsWith("/api/") ? `${base}${src}` : src;
+      const resolved = resolveArtifactSrc(src)!;
       return (
         <figure className="artifact-preview artifact-html">
-          <figcaption>{title}</figcaption>
+          <ArtifactPreviewHeader artifact={artifact} title={title} />
           <iframe title={title} className="artifact-html" sandbox="allow-scripts" src={resolved} />
         </figure>
       );
@@ -1031,9 +1124,10 @@ function LazyToolArtifactPreview({ artifact, title }: { readonly artifact: Timel
 }
 
 function ArtifactFallback({ artifact }: { readonly artifact: TimelineArtifact }) {
+  const title = artifact.title ?? `${artifact.kind} artifact`;
   return (
     <section className="artifact-preview artifact-data" aria-label={artifact.title ?? "Artifact data"}>
-      <strong>{artifact.title ?? `${artifact.kind} artifact`}</strong>
+      <ArtifactPreviewHeader artifact={artifact} title={title} />
       <pre>{JSON.stringify(artifact.data ?? artifact, null, 2)}</pre>
     </section>
   );
