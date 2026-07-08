@@ -986,6 +986,47 @@ await fs.writeFile(htmlPathSessionFile, JSON.stringify({
 }, null, 2) + '\n');
 console.log(`seeded ${htmlPathSessionFile}`);
 
+// Inline-html artifact session: show_artifact(kind:"html") called with an
+// inline `html` string (no path/url). This is the common case behind the
+// user's QA-report screenshot and exercises the client-side Blob download
+// path (the Download control produces a same-origin blob: URL that actually
+// fires a browser download, named after the artifact title).
+const htmlInlineSessionId = 'seeded-session-html-inline';
+const htmlInlineSessionFile = path.join(root, '0000000000012_seeded-session-html-inline.mock-session.json');
+const inlineHtmlBody = '<!doctype html><html><head><meta charset="utf-8"><title>QA report</title></head><body><h1 id="seeded-inline-heading">QXO GAF QA report</h1><p>Inline HTML rendered in a sandboxed iframe.</p></body></html>';
+await fs.writeFile(htmlInlineSessionFile, JSON.stringify({
+  id: htmlInlineSessionId,
+  cwd,
+  sessionFile: htmlInlineSessionFile,
+  sessionName: 'HTML inline artifact',
+  messages: [
+    { role: 'user', content: 'Build and show the QA report inline', timestamp: 1700000012000 },
+    {
+      role: 'tool',
+      content: 'Displayed html artifact: QXO GAF QA report.',
+      timestamp: 1700000012100,
+      tool: {
+        id: 'call_show_html_inline',
+        name: 'show_artifact',
+        args: { kind: 'html', title: 'QXO GAF QA report' },
+        status: 'success',
+        output: 'Displayed html artifact: QXO GAF QA report.',
+        startedAt: 1700000012050,
+        completedAt: 1700000012100,
+        artifact: {
+          version: 1,
+          kind: 'html',
+          title: 'QXO GAF QA report',
+          html: inlineHtmlBody,
+          mimeType: 'text/html',
+        },
+      },
+    },
+  ],
+  lastActivity: Date.now(),
+}, null, 2) + '\n');
+console.log(`seeded ${htmlInlineSessionFile}`);
+
 // Long TOOL-HEAVY transcript, written as a real on-disk pirpc/Anthropic
 // `.jsonl` (NOT a .mock-session.json), so it flows through the production
 // /messages tail-read path (readSessionMessagesTail + the
