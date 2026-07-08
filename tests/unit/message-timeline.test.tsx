@@ -881,4 +881,94 @@ describe("MessageTimeline", () => {
     // Download is still available for inline markdown.
     expect(screen.getByRole("link", { name: "Download markdown" })).toBeInTheDocument();
   });
+
+  it("offers a blob download for inline html artifacts named after the title", () => {
+    (globalThis as any).URL.createObjectURL = vi.fn(() => "blob:mock-html");
+    (globalThis as any).URL.revokeObjectURL = vi.fn();
+    render(<MessageTimeline messages={[{
+      id: "html-inline-dl",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_inline_dl",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed html artifact: QA Report.",
+        artifact: { kind: "html", title: "QA Report", html: "<p>hi</p>" },
+      },
+    }]} />);
+    const link = screen.getByRole("link", { name: "Download artifact" });
+    expect(link).toHaveAttribute("download", "qa-report.html");
+    expect(link).toHaveAttribute("href", "blob:mock-html");
+  });
+
+  it("offers a file-backed download for path-backed html artifacts named after the file", () => {
+    render(<MessageTimeline messages={[{
+      id: "html-path-dl",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_path_dl",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed html artifact: Report.",
+        artifact: {
+          kind: "html",
+          title: "Report",
+          path: "/tmp/amira_email.html",
+          url: "/api/artifact-file?path=%2Ftmp%2Famira_email.html",
+          mimeType: "text/html",
+        },
+      },
+    }]} />);
+    const link = screen.getByRole("link", { name: "Download artifact" });
+    expect(link).toHaveAttribute("download", "amira_email.html");
+    expect(link.getAttribute("href") ?? "").toContain("/api/artifact-file?path=");
+  });
+
+  it("offers a download for image artifacts", () => {
+    render(<MessageTimeline messages={[{
+      id: "img-dl",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_img_dl",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed image artifact: Chart.",
+        artifact: {
+          kind: "image",
+          title: "Chart",
+          path: "/tmp/chart.png",
+          url: "/api/artifact-file?path=%2Ftmp%2Fchart.png",
+        },
+      },
+    }]} />);
+    const link = screen.getByRole("link", { name: "Download artifact" });
+    expect(link).toHaveAttribute("download", "chart.png");
+  });
+
+  it("offers a JSON blob download for json artifacts", () => {
+    (globalThis as any).URL.createObjectURL = vi.fn(() => "blob:mock-json");
+    (globalThis as any).URL.revokeObjectURL = vi.fn();
+    render(<MessageTimeline messages={[{
+      id: "json-dl",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_json_dl",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed json artifact: Data.",
+        artifact: { kind: "json", title: "Data Blob", data: { a: 1 } },
+      },
+    }]} />);
+    const link = screen.getByRole("link", { name: "Download artifact" });
+    expect(link).toHaveAttribute("download", "data-blob.json");
+    expect(link).toHaveAttribute("href", "blob:mock-json");
+  });
 });

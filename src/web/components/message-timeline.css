@@ -603,7 +603,8 @@
   border: 1px solid var(--hairline);
 }
 
-.artifact-markdown-header {
+.artifact-markdown-header,
+.artifact-preview-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -613,8 +614,17 @@
 
 /* The header already supplies the title spacing; drop the stray bottom
    margin the generic `.artifact-preview > strong` rule would add. */
-.artifact-markdown-header > strong {
+.artifact-markdown-header > strong,
+.artifact-preview-header > strong {
   margin-bottom: 0;
+}
+
+/* The preview header carries the caption styling that a bare figcaption used
+   to provide (small, bold, secondary title). */
+.artifact-preview-header > strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .artifact-markdown-actions {
