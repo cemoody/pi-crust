@@ -6,7 +6,7 @@ import fsp from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
-import { getProviders } from "@earendil-works/pi-ai";
+import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { OAuthLoginError, OAuthLoginManager } from "./auth/oauth-login-manager.js";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
@@ -296,7 +296,7 @@ const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   "xiaomi-token-plan-sgp": "Xiaomi MiMo Token Plan (Singapore)",
 };
 
-const BUILT_IN_MODEL_PROVIDERS: ReadonlySet<string> = new Set(getProviders());
+const BUILT_IN_MODEL_PROVIDERS: ReadonlySet<string> = new Set(getBuiltinProviders());
 
 /**
  * Mirror of the TUI's `isApiKeyLoginProvider`: a provider supports API-key
