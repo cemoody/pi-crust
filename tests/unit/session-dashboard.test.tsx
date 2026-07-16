@@ -866,6 +866,26 @@ describe("SessionDashboard", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Feature work" })).toBeInTheDocument());
   });
 
+  it("renders every full-text result even when it is absent from the sidebar snapshot", async () => {
+    const searchSessions = vi.fn(async () => [{
+      sessionId: "archived",
+      sessionFile: "/sessions/archived.jsonl",
+      sessionName: "Archived conversation",
+      cwd: "/repo/archive",
+      createdAt: 1,
+      lastActivity: 2,
+      score: -1,
+      matches: [{ role: "assistant" as const, timestamp: 2, snippet: "A <mark>hi</mark> from history" }],
+    }]);
+    render(<SessionDashboard api={{ ...makeApi([{ id: "current", cwd: "/repo/current", sessionName: "Current", status: "idle", lastActivity: 3 }]), searchSessions }} />);
+
+    fireEvent.change(await screen.findByPlaceholderText("Search sessions"), { target: { value: "hi" } });
+    await waitFor(() => expect(searchSessions).toHaveBeenCalledWith("hi", { includeSubagents: false }));
+    expect(await screen.findByText("Archived conversation")).toBeInTheDocument();
+    expect(screen.getByText("A hi from history")).toBeInTheDocument();
+    expect(screen.queryByText("Current")).not.toBeInTheDocument();
+  });
+
   it("searches, toggles paths, filters named sessions, and sorts", async () => {
     render(<SessionDashboard api={makeApi([
       { id: "b", cwd: "/repo/b", sessionName: "Beta", status: "streaming", model: "m", lastActivity: 2 },

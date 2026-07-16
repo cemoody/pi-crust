@@ -349,6 +349,14 @@ a.sidebar-menu-item:visited {
   box-shadow: 0 0 0 2px var(--blue-focus);
 }
 
+.session-search-loading {
+  position: absolute;
+  right: 34px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  pointer-events: none;
+}
+
 .session-filter-toggle {
   width: 26px;
   height: 26px;
