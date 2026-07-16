@@ -66,6 +66,19 @@ describe("SessionSearchService", () => {
     expect(results[0]).toMatchObject({ sessionId: "rename" });
   });
 
+  it("defers an active session until the agent has settled", async () => {
+    const filename = await writeSession("live", [
+      header("live", "/work/a"),
+      message("u1", "user", "A finished answer must not leak partial drafts", 100),
+    ]);
+    service.markSessionActive(filename);
+    expect(await service.search("partial drafts")).toEqual([]);
+
+    service.markSessionSettled(filename);
+    await service.sync();
+    expect((await service.search("partial drafts"))[0]?.sessionId).toBe("live");
+  });
+
   it("indexes compaction summaries but excludes tool result content", async () => {
     await writeSession("scoped", [
       header("scoped", "/work/a"),

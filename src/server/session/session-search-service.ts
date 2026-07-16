@@ -92,6 +92,8 @@ export class SessionSearchService {
   private readonly sessionRoot: string;
   private readonly titleWeight: number;
   private syncing: Promise<void> | undefined;
+  private readonly deferredFiles = new Set<string>();
+  private syncTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: SessionSearchServiceOptions) {
     this.sessionRoot = path.resolve(options.sessionRoot);
@@ -129,7 +131,30 @@ export class SessionSearchService {
   }
 
   close(): void {
+    if (this.syncTimer) clearTimeout(this.syncTimer);
     this.db.close();
+  }
+
+  /**
+   * Do not read an actively streaming transcript. Pi writes session JSONL as
+   * events arrive, so indexing it during a message_update could preserve a
+   * partial assistant reply. The host calls markSessionSettled only after the
+   * agent's return has completed, then queues the incremental update.
+   */
+  markSessionActive(sessionFile: string): void {
+    this.deferredFiles.add(path.resolve(sessionFile));
+  }
+
+  markSessionSettled(sessionFile: string): void {
+    this.deferredFiles.delete(path.resolve(sessionFile));
+    if (this.syncTimer) clearTimeout(this.syncTimer);
+    this.syncTimer = setTimeout(() => {
+      this.syncTimer = undefined;
+      void this.sync().catch((error: unknown) => {
+        console.warn(`[session-search] incremental sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }, 250);
+    this.syncTimer.unref?.();
   }
 
   /** Incrementally reconcile the FTS database against the append-only JSONL source. */
@@ -207,6 +232,7 @@ export class SessionSearchService {
     for (const sessionFile of files) {
       let stat: import("node:fs").Stats;
       try { stat = await fs.stat(sessionFile); } catch { continue; }
+      if (this.deferredFiles.has(sessionFile)) continue;
       const old = known.get(sessionFile);
       if (old && old.mtime_ms === stat.mtimeMs && old.size === stat.size) continue;
       const parsed = await parseSession(sessionFile);

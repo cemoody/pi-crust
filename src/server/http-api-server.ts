@@ -612,6 +612,13 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
     });
   });
   server.once("close", () => context.sessionSearch.close());
+  // Index only after the agent settles: Pi persists JSONL incrementally while
+  // streaming, and search must never expose a partial assistant response.
+  const unsubscribeSearchIndexing = context.registry.subscribeAll((session, event) => {
+    if (event.type === "agent_start") context.sessionSearch.markSessionActive(session.sessionFile);
+    if (event.type === "agent_end") context.sessionSearch.markSessionSettled(session.sessionFile);
+  });
+  server.once("close", unsubscribeSearchIndexing);
   // Mount the multiplexed Socket.IO realtime gateway on the same server. It
   // claims only its own `/socket.io/` path + the WS upgrade for that path, so
   // REST and the legacy SSE stream keep working untouched. Cold-session open

@@ -57,6 +57,8 @@ export class SessionRegistry {
   private readonly workerRegistry: WorkerRegistry;
   private readonly ringSize: number;
   private readonly sessions = new Map<string, SessionInternal>();
+  /** Process-wide observers for services such as the durable session index. */
+  private readonly eventObservers = new Set<(session: RegisteredSession, event: PiEvent) => void>();
 
   constructor(options: SessionRegistryOptions) {
     this.adapter = options.adapter;
@@ -310,6 +312,14 @@ export class SessionRegistry {
     return this.subscribeWithSeq(sessionId, wrapped);
   }
 
+  /** Observe events from every registered session without consuming a client
+   * subscription slot. Observers are best-effort and must never break Pi's
+   * realtime event fanout. */
+  subscribeAll(listener: (session: RegisteredSession, event: PiEvent) => void): () => void {
+    this.eventObservers.add(listener);
+    return () => { this.eventObservers.delete(listener); };
+  }
+
   subscribeWithSeq(sessionId: string, listener: SeqEventListener): () => void {
     const internal = this.getInternal(sessionId);
     internal.subscribers.add(listener);
@@ -416,6 +426,9 @@ export class SessionRegistry {
       if (internal.ring.length > this.ringSize) internal.ring.shift();
       for (const listener of internal.subscribers) {
         try { listener(event, seq); } catch { /* listener errors must not break the bus */ }
+      }
+      for (const observer of this.eventObservers) {
+        try { observer(registered, event); } catch { /* observers must not break the bus */ }
       }
     };
 
