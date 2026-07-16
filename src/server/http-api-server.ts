@@ -1097,9 +1097,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const query = url.searchParams.get("q") ?? "";
     const rawLimit = Number(url.searchParams.get("limit") ?? "");
     const limit = Number.isFinite(rawLimit) ? rawLimit : undefined;
+    const includeSubagents = url.searchParams.get("includeSubagents") === "true";
     return sendJson(res, 200, await context.sessionSearch.search(query, {
       ...(url.searchParams.get("cwd") ? { cwd: url.searchParams.get("cwd")! } : {}),
       ...(limit === undefined ? {} : { limit }),
+      ...(includeSubagents ? { includeSubagents: true, includeHidden: true } : {}),
     }));
   }
 

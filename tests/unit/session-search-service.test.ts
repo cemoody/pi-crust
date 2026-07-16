@@ -87,6 +87,12 @@ describe("SessionSearchService", () => {
     expect(await service.search("unique-tail-term")).toEqual([]);
   });
 
+  it("keeps hidden subagent sessions out of default results", async () => {
+    await writeSession("child", [{ ...header("child", "/work/a"), subagent: true, hiddenFromList: true }, message("u1", "user", "subagent-only finding", 100)]);
+    expect(await service.search("subagent-only finding")).toEqual([]);
+    expect((await service.search("subagent-only finding", { includeSubagents: true, includeHidden: true }))[0]?.sessionId).toBe("child");
+  });
+
   it("does not retain sessions excluded by the host policy", async () => {
     service.close();
     service = new SessionSearchService({

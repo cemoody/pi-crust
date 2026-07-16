@@ -567,14 +567,14 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void api.searchSessions!(trimmed).then((results) => {
+      void api.searchSessions!(trimmed, { includeSubagents: showSubagents }).then((results) => {
         if (!cancelled) setSearchResults(results);
       }).catch((caught) => {
         if (!cancelled) { setSearchResults([]); setError(errorMessage(caught)); }
       });
     }, 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [api, query, setError]);
+  }, [api, query, setError, showSubagents]);
 
   const visibleSessions = useMemo(() => {
     const lowered = query.toLowerCase();

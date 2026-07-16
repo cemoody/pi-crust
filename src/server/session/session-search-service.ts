@@ -21,6 +21,8 @@ export interface SessionSearchServiceOptions {
 export interface SessionSearchFilters {
   readonly cwd?: string;
   readonly limit?: number;
+  readonly includeSubagents?: boolean;
+  readonly includeHidden?: boolean;
 }
 
 export interface SessionSearchMatch {
@@ -54,6 +56,8 @@ interface ParsedSession {
   readonly createdAt: number | null;
   readonly lastActivity: number | null;
   readonly sessionName?: string;
+  readonly subagent: boolean;
+  readonly hiddenFromList: boolean;
   readonly firstPrompt: string;
   readonly summaries: string;
   readonly transcript: string;
@@ -113,6 +117,8 @@ export class SessionSearchService {
         session_file TEXT NOT NULL UNIQUE,
         cwd TEXT NOT NULL,
         session_name TEXT,
+        subagent INTEGER NOT NULL DEFAULT 0,
+        hidden_from_list INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER,
         last_activity INTEGER,
         mtime_ms REAL NOT NULL,
@@ -134,6 +140,13 @@ export class SessionSearchService {
       CREATE INDEX IF NOT EXISTS session_documents_file_index ON session_documents(session_file);
       CREATE INDEX IF NOT EXISTS session_chunks_document_index ON session_chunks(document_id, chunk_index);
     `);
+    // Existing local indexes predate the visibility fields; migrate in place.
+    for (const statement of [
+      "ALTER TABLE session_documents ADD COLUMN subagent INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE session_documents ADD COLUMN hidden_from_list INTEGER NOT NULL DEFAULT 0",
+    ]) {
+      try { this.db.exec(statement); } catch { /* column already exists */ }
+    }
   }
 
   close(): void {
@@ -174,9 +187,12 @@ export class SessionSearchService {
     if (!matchQuery) return [];
     await this.sync();
     const limit = clampLimit(filters.limit);
-    const where = filters.cwd ? "AND d.cwd = ?" : "";
+    const conditions: string[] = [];
     const params: (string | number)[] = [matchQuery];
-    if (filters.cwd) params.push(filters.cwd);
+    if (filters.cwd) { conditions.push("d.cwd = ?"); params.push(filters.cwd); }
+    if (!filters.includeSubagents) conditions.push("d.subagent = 0");
+    if (!filters.includeHidden) conditions.push("d.hidden_from_list = 0");
+    const where = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "";
     params.push(limit);
     // FTS5's bm25() sorts ascending. Put the title first and apply a modest
     // boost so a matching explicit session name normally beats body-only hits.
@@ -273,9 +289,9 @@ export class SessionSearchService {
     this.db.exec("BEGIN");
     try {
       const result = this.db.prepare(`
-        INSERT INTO session_documents (session_id, session_file, cwd, session_name, created_at, last_activity, mtime_ms, size)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(parsed.sessionId, sessionFile, parsed.cwd, parsed.sessionName ?? null, parsed.createdAt, parsed.lastActivity, stat.mtimeMs, stat.size);
+        INSERT INTO session_documents (session_id, session_file, cwd, session_name, subagent, hidden_from_list, created_at, last_activity, mtime_ms, size)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(parsed.sessionId, sessionFile, parsed.cwd, parsed.sessionName ?? null, Number(parsed.subagent), Number(parsed.hiddenFromList), parsed.createdAt, parsed.lastActivity, stat.mtimeMs, stat.size);
       const documentId = Number(result.lastInsertRowid);
       this.db.prepare("INSERT INTO session_fts(rowid, title, first_prompt, summaries, transcript) VALUES (?, ?, ?, ?, ?)")
         .run(documentId, parsed.sessionName ?? "", parsed.firstPrompt, parsed.summaries, parsed.transcript);
@@ -299,6 +315,8 @@ async function parseSession(sessionFile: string): Promise<ParsedSession | undefi
   let createdAt: number | null = null;
   let lastActivity: number | null = null;
   let sessionName: string | undefined;
+  let subagent = false;
+  let hiddenFromList = false;
   let firstPrompt = "";
   const summaries: string[] = [];
   const transcript: string[] = [];
@@ -321,6 +339,8 @@ async function parseSession(sessionFile: string): Promise<ParsedSession | undefi
     if (entry.type === "session") {
       if (typeof entry.id === "string") sessionId = entry.id;
       if (typeof entry.cwd === "string") cwd = entry.cwd;
+      if (entry.subagent === true) subagent = true;
+      if (entry.hiddenFromList === true) hiddenFromList = true;
       createdAt = asTimestamp(entry.timestamp) ?? createdAt;
       continue;
     }
@@ -357,7 +377,7 @@ async function parseSession(sessionFile: string): Promise<ParsedSession | undefi
   }
   if (!sessionId) return undefined;
   return {
-    sessionId, cwd, createdAt, lastActivity, ...(sessionName ? { sessionName } : {}),
+    sessionId, cwd, createdAt, lastActivity, ...(sessionName ? { sessionName } : {}), subagent, hiddenFromList,
     firstPrompt, summaries: summaries.join("\n\n"), transcript: transcript.join("\n\n"), chunks,
   };
 }
