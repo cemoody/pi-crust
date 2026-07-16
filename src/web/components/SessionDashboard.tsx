@@ -141,6 +141,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   // dialog default; falls back to defaultCwd when the API doesn't expose it.
   const [homeCwd, setHomeCwd] = useState<string>("");
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<readonly import("../api/session-api.js").SessionSearchResult[] | null>(null);
   const [showPaths, setShowPaths] = useState(false);
   const [namedOnly, setNamedOnly] = useState(false);
   const [showSubagents, setShowSubagents] = useState(false);
@@ -558,11 +559,30 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     };
   }, [activeSessionId, api, isMobile, showSubagents]);
 
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!trimmed || !api.searchSessions) {
+      setSearchResults(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void api.searchSessions!(trimmed, { includeSubagents: showSubagents }).then((results) => {
+        if (!cancelled) setSearchResults(results);
+      }).catch((caught) => {
+        if (!cancelled) { setSearchResults([]); setError(errorMessage(caught)); }
+      });
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [api, query, setError, showSubagents]);
+
   const visibleSessions = useMemo(() => {
     const lowered = query.toLowerCase();
+    const fullTextIds = searchResults === null ? undefined : new Set(searchResults.map((result) => result.sessionId));
     const filtered = sessions.filter((session) => {
       if (!showSubagents && (session.subagent || session.hiddenFromList)) return false;
       if (namedOnly && !session.sessionName) return false;
+      if (fullTextIds) return fullTextIds.has(session.id);
       const haystack = [session.sessionName, session.cwd, session.id, session.model].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(lowered);
     });
@@ -580,7 +600,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       if (createdDelta !== 0) return createdDelta;
       return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
     });
-  }, [namedOnly, query, sessions, showSubagents, sortMode, lastUserActivityById]);
+  }, [namedOnly, query, sessions, searchResults, showSubagents, sortMode, lastUserActivityById]);
 
   const virtualSessionRows = useMemo(() => {
     // Keep small/test session lists fully rendered so existing navigation and
@@ -619,6 +639,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     return () => observer.disconnect();
   }, [updateSessionListViewport, sidebarOpen, isMobile]);
 
+  const searchResultById = useMemo(() => new Map((searchResults ?? []).map((result) => [result.sessionId, result])), [searchResults]);
   const activeSession = activeSessionId ? sessions.find((session) => session.id === activeSessionId) : null;
   const openSessionFromExtension = useCallback(async (sessionId: string) => {
     setView("sessions");
@@ -1442,6 +1463,9 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
                   aria-hidden="true"
                 />
                 <span className="session-row-name">{session.sessionName ?? "Untitled session"}{session.subagent ? <span className="session-row-badge">Subagent</span> : null}</span>
+                {searchResultById.get(session.id)?.matches[0] ? (
+                  <span className="session-row-search-snippet">{stripSearchMarkup(searchResultById.get(session.id)!.matches[0]!.snippet)}</span>
+                ) : null}
                 {session.status && session.status !== "idle" && session.status !== "streaming" ? (
                   <span className="session-row-status">{session.status}</span>
                 ) : null}
@@ -1960,6 +1984,10 @@ function ExtensionActivityPanel({ activity, extensions }: { readonly activity: i
       </div>
     </div>
   );
+}
+
+function stripSearchMarkup(value: string): string {
+  return value.replaceAll(/<\/?mark>/g, "");
 }
 
 function FilterGlyph() { return <Icon name="filter" />; }

@@ -542,9 +542,20 @@ a.sidebar-menu-item:visited {
   text-transform: lowercase;
 }
 
-.session-row-id {
+.session-row-search-snippet {
   grid-column: 2 / -1;
   grid-row: 2;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.session-row-id {
+  grid-column: 2 / -1;
+  grid-row: 3;
   display: flex;
   align-items: center;
   gap: 4px;

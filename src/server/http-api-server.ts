@@ -19,6 +19,7 @@ import { PathPolicy, isPathWithinRoot } from "./security/path-policy.js";
 import { resolveGitSha, createLiveGitSha } from "./git-sha.js";
 import { resolvePiVersion } from "./pi-version.js";
 import { SessionRegistry, type RegisteredSession } from "./session/session-registry.js";
+import { SessionSearchService } from "./session/session-search-service.js";
 import { attachRealtimeGateway } from "./protocol/realtime-gateway.js";
 import { PtyManager } from "./pty/pty-manager.js";
 import { createNodePtySpawner } from "./pty/node-pty-spawner.js";
@@ -97,6 +98,8 @@ export interface HttpApiServerOptions {
    * the artifact route fails with 500 "session has no cwd".
    */
   readonly bindSessionResolver?: (resolve: (sessionId: string) => Promise<RegisteredSession>) => void;
+  /** Override the derived index location. Intended for tests and advanced local deployments. */
+  readonly sessionSearchDatabasePath?: string;
 }
 
 interface HttpApiServerContext extends HttpApiServerOptions {
@@ -134,6 +137,7 @@ interface HttpApiServerContext extends HttpApiServerOptions {
    * instance and one in-flight login() promise.
    */
   oauthLoginManager?: OAuthLoginManager;
+  readonly sessionSearch: SessionSearchService;
 }
 
 const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
@@ -590,6 +594,18 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
     sessionAliases: new Map(),
     openingSessions: new Map(),
     activeSseByTab: new Map(),
+    sessionSearch: new SessionSearchService({
+      sessionRoot: options.sessionRoot,
+      databasePath: options.sessionSearchDatabasePath ?? path.join(path.dirname(options.sessionRoot), ".pi-crust-session-search.sqlite"),
+      includeSession: (cwd, sessionFile) => {
+        try {
+          options.registry.assertSearchableSession(cwd, sessionFile);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    }),
     ...(options.clientEventLogPath ? { clientEventLog: createClientEventLog(options.clientEventLogPath) } : {}),
   };
   const server = http.createServer((req, res) => {
@@ -603,6 +619,14 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
       return sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
     });
   });
+  server.once("close", () => context.sessionSearch.close());
+  // Index only after the agent settles: Pi persists JSONL incrementally while
+  // streaming, and search must never expose a partial assistant response.
+  const unsubscribeSearchIndexing = context.registry.subscribeAll((session, event) => {
+    if (event.type === "agent_start") context.sessionSearch.markSessionActive(session.sessionFile);
+    if (event.type === "agent_end") context.sessionSearch.markSessionSettled(session.sessionFile);
+  });
+  server.once("close", unsubscribeSearchIndexing);
   // Mount the multiplexed Socket.IO realtime gateway on the same server. It
   // claims only its own `/socket.io/` path + the WS upgrade for that path, so
   // REST and the legacy SSE stream keep working untouched. Cold-session open
@@ -1068,6 +1092,18 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   const apiExtensionResponse = await getExtensionHost(context)?.serverRoutes.dispatch(req, url);
   if (apiExtensionResponse) return sendJsonWithHeaders(res, apiExtensionResponse.status ?? 200, apiExtensionResponse.body, apiExtensionResponse.headers);
+
+  if (req.method === "GET" && url.pathname === "/api/sessions/search") {
+    const query = url.searchParams.get("q") ?? "";
+    const rawLimit = Number(url.searchParams.get("limit") ?? "");
+    const limit = Number.isFinite(rawLimit) ? rawLimit : undefined;
+    const includeSubagents = url.searchParams.get("includeSubagents") === "true";
+    return sendJson(res, 200, await context.sessionSearch.search(query, {
+      ...(url.searchParams.get("cwd") ? { cwd: url.searchParams.get("cwd")! } : {}),
+      ...(limit === undefined ? {} : { limit }),
+      ...(includeSubagents ? { includeSubagents: true, includeHidden: true } : {}),
+    }));
+  }
 
   if (req.method === "GET" && url.pathname === "/api/sessions") {
     const cwd = url.searchParams.get("cwd") ?? undefined;
