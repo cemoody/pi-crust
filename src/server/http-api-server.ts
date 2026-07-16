@@ -597,6 +597,14 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
     sessionSearch: new SessionSearchService({
       sessionRoot: options.sessionRoot,
       databasePath: options.sessionSearchDatabasePath ?? path.join(path.dirname(options.sessionRoot), ".pi-crust-session-search.sqlite"),
+      includeSession: (cwd, sessionFile) => {
+        try {
+          options.registry.assertSearchableSession(cwd, sessionFile);
+          return true;
+        } catch {
+          return false;
+        }
+      },
     }),
     ...(options.clientEventLogPath ? { clientEventLog: createClientEventLog(options.clientEventLogPath) } : {}),
   };

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, mkdirSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -14,6 +14,8 @@ export interface SessionSearchServiceOptions {
   readonly sessionRoot: string;
   readonly databasePath: string;
   readonly titleWeight?: number;
+  /** Host policy for limiting the index to sessions the current UI may expose. */
+  readonly includeSession?: (cwd: string, sessionFile: string) => boolean;
 }
 
 export interface SessionSearchFilters {
@@ -60,6 +62,7 @@ interface ParsedSession {
 
 interface FileIndexRow {
   readonly session_file: string;
+  readonly cwd: string;
   readonly mtime_ms: number;
   readonly size: number;
 }
@@ -91,13 +94,16 @@ export class SessionSearchService {
   private readonly db: DatabaseSync;
   private readonly sessionRoot: string;
   private readonly titleWeight: number;
+  private readonly includeSession: (cwd: string, sessionFile: string) => boolean;
   private syncing: Promise<void> | undefined;
   private readonly deferredFiles = new Set<string>();
   private syncTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: SessionSearchServiceOptions) {
     this.sessionRoot = path.resolve(options.sessionRoot);
-    this.titleWeight = options.titleWeight ?? 4;
+    this.titleWeight = finitePositive(options.titleWeight, 4);
+    this.includeSession = options.includeSession ?? (() => true);
+    mkdirSync(path.dirname(options.databasePath), { recursive: true });
     this.db = new DatabaseSync(options.databasePath);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;");
     this.db.exec(`
@@ -222,12 +228,12 @@ export class SessionSearchService {
       .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
       .map((entry) => path.join(this.sessionRoot, entry.name));
     const known = new Map<string, FileIndexRow>();
-    for (const row of this.db.prepare("SELECT session_file, mtime_ms, size FROM session_documents").all() as unknown as FileIndexRow[]) {
+    for (const row of this.db.prepare("SELECT session_file, cwd, mtime_ms, size FROM session_documents").all() as unknown as FileIndexRow[]) {
       known.set(row.session_file, row);
     }
     const liveFiles = new Set(files);
-    for (const [sessionFile] of known) {
-      if (!liveFiles.has(sessionFile)) this.deleteFile(sessionFile);
+    for (const [sessionFile, row] of known) {
+      if (!liveFiles.has(sessionFile) || !this.includeSession(row.cwd, sessionFile)) this.deleteFile(sessionFile);
     }
     for (const sessionFile of files) {
       let stat: import("node:fs").Stats;
@@ -236,9 +242,9 @@ export class SessionSearchService {
       const old = known.get(sessionFile);
       if (old && old.mtime_ms === stat.mtimeMs && old.size === stat.size) continue;
       const parsed = await parseSession(sessionFile);
-      if (!parsed) {
-        // A metadata-only stub is not a transcript and must never linger in
-        // search after a source file is replaced with one.
+      if (!parsed || !this.includeSession(parsed.cwd, sessionFile)) {
+        // Metadata-only stubs and out-of-policy sessions must never linger in
+        // search after a source file is replaced or access scope changes.
         this.deleteFile(sessionFile);
         continue;
       }
@@ -298,6 +304,13 @@ async function parseSession(sessionFile: string): Promise<ParsedSession | undefi
   const transcript: string[] = [];
   const chunks: ParsedChunk[] = [];
   let transcriptChars = 0;
+  const appendTranscript = (text: string): string => {
+    if (transcriptChars >= MAX_SESSION_TRANSCRIPT_CHARS) return "";
+    const retained = text.slice(0, MAX_SESSION_TRANSCRIPT_CHARS - transcriptChars);
+    transcript.push(retained);
+    transcriptChars += retained.length;
+    return retained;
+  };
 
   const input = createReadStream(sessionFile, { encoding: "utf8" });
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
@@ -325,9 +338,8 @@ async function parseSession(sessionFile: string): Promise<ParsedSession | undefi
     if (entry.type === "custom_message") {
       const text = contentText(entry.content);
       if (text) {
-        transcript.push(text);
-        transcriptChars += text.length;
-        addChunk(chunks, { ...optionalEntryId(entry.id), role: "custom", timestamp: asTimestamp(entry.timestamp), text });
+        const retained = appendTranscript(text);
+        if (retained) addChunk(chunks, { ...optionalEntryId(entry.id), role: "custom", timestamp: asTimestamp(entry.timestamp), text: retained });
       }
       continue;
     }
@@ -340,12 +352,8 @@ async function parseSession(sessionFile: string): Promise<ParsedSession | undefi
     if (timestamp !== null) lastActivity = Math.max(lastActivity ?? 0, timestamp);
     if (!text) continue;
     if (role === "user" && !firstPrompt) firstPrompt = text.slice(0, 4_000);
-    if (transcriptChars < MAX_SESSION_TRANSCRIPT_CHARS) {
-      const retained = text.slice(0, MAX_SESSION_TRANSCRIPT_CHARS - transcriptChars);
-      transcript.push(retained);
-      transcriptChars += retained.length;
-    }
-    addChunk(chunks, { ...optionalEntryId(entry.id), role, timestamp, text });
+    const retained = appendTranscript(text);
+    if (retained) addChunk(chunks, { ...optionalEntryId(entry.id), role, timestamp, text: retained });
   }
   if (!sessionId) return undefined;
   return {
@@ -392,6 +400,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function clampLimit(value: number | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_LIMIT;
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(value!)));
+}
+
+function finitePositive(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 /** Escape ordinary user text into an AND query. We deliberately do not expose

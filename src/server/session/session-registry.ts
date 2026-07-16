@@ -158,16 +158,25 @@ export class SessionRegistry {
     const allowedCwd = cwd === undefined ? undefined : this.pathPolicy.assertAllowedCwd(cwd);
     const sessions = await this.adapter.listSessions(allowedCwd, options);
     return sessions.filter((session) => {
-      try {
-        if (!options.includeHidden && session.hiddenFromList) return false;
-        if (!options.includeSubagents && session.subagent) return false;
-        this.pathPolicy.assertAllowedCwd(session.cwd);
-        this.pathPolicy.assertAllowedSessionFile(session.sessionFile);
-        return true;
-      } catch {
-        return false;
-      }
+      if (!options.includeHidden && session.hiddenFromList) return false;
+      if (!options.includeSubagents && session.subagent) return false;
+      return this.isSearchableSession(session.cwd, session.sessionFile);
     });
+  }
+
+  /** Shared policy gate for session listing and the durable transcript index. */
+  isSearchableSession(cwd: string, sessionFile: string): boolean {
+    try {
+      this.assertSearchableSession(cwd, sessionFile);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  assertSearchableSession(cwd: string, sessionFile: string): void {
+    this.pathPolicy.assertAllowedCwd(cwd);
+    this.pathPolicy.assertAllowedSessionFile(sessionFile);
   }
 
   hasSession(sessionId: string): boolean {

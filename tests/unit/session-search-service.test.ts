@@ -79,6 +79,27 @@ describe("SessionSearchService", () => {
     expect((await service.search("partial drafts"))[0]?.sessionId).toBe("live");
   });
 
+  it("caps custom-message text consistently in session and chunk indexes", async () => {
+    await writeSession("custom", [
+      header("custom", "/work/a"),
+      { type: "custom_message", id: "large", timestamp: 100, content: "x".repeat(2_000_000) + " unique-tail-term", display: true },
+    ]);
+    expect(await service.search("unique-tail-term")).toEqual([]);
+  });
+
+  it("does not retain sessions excluded by the host policy", async () => {
+    service.close();
+    service = new SessionSearchService({
+      sessionRoot: sessions,
+      databasePath: path.join(root, "filtered.sqlite"),
+      includeSession: (cwd) => cwd !== "/private",
+    });
+    await writeSession("private", [header("private", "/private"), message("u1", "user", "never searchable", 100)]);
+    await writeSession("public", [header("public", "/work/a"), message("u2", "user", "always searchable", 100)]);
+    expect(await service.search("searchable")).toHaveLength(1);
+    expect(await service.search("never searchable")).toEqual([]);
+  });
+
   it("indexes compaction summaries but excludes tool result content", async () => {
     await writeSession("scoped", [
       header("scoped", "/work/a"),
