@@ -42,6 +42,25 @@ export interface SessionCardData {
   readonly lastActivity: number;
 }
 
+export interface SessionSearchMatch {
+  readonly entryId?: string;
+  readonly role: "user" | "assistant" | "summary" | "custom";
+  readonly timestamp: number | null;
+  /** HTML-safe FTS5 snippet. Only `<mark>` tags are emitted by the server. */
+  readonly snippet: string;
+}
+
+export interface SessionSearchResult {
+  readonly sessionId: string;
+  readonly sessionFile: string;
+  readonly sessionName?: string;
+  readonly cwd: string;
+  readonly createdAt: number | null;
+  readonly lastActivity: number | null;
+  readonly score: number;
+  readonly matches: readonly SessionSearchMatch[];
+}
+
 export interface SessionCardStats {
   readonly inputTokens: number;
   readonly outputTokens: number;
@@ -416,6 +435,8 @@ export interface SessionDashboardApi {
   updateExtensionPackage?(source: string): Promise<ExtensionUpdateResult>;
   runExtensionCommand?(extensionId: string, invocationName: string, input?: unknown): Promise<unknown>;
   listSessions(cwd?: string, options?: { readonly includeSubagents?: boolean }): Promise<readonly SessionCardData[]>;
+  /** Full-text search of local Pi transcripts. An empty query returns no results. */
+  searchSessions?(query: string, options?: { readonly cwd?: string; readonly limit?: number; readonly includeSubagents?: boolean }): Promise<readonly SessionSearchResult[]>;
   /** Lightweight sidebar status refresh; does not open cold sessions or fetch messages. */
   listSessionStatuses?(cwd?: string, options?: { readonly includeSubagents?: boolean }): Promise<readonly SessionCardData[]>;
   createSession(input: NewSessionInput): Promise<SessionCardData>;

@@ -1,5 +1,5 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
-import type { AppBrandingInfo, AppBrandingSettings, AuthMutationResponse, AuthProviderListResponse, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, ExtensionUpdateResult, ExtensionUpdatesResponse, GetMessagesOptions, ModelOption, NewSessionInput, OAuthLoginSnapshot, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi } from "./session-api.js";
+import type { AppBrandingInfo, AppBrandingSettings, AuthMutationResponse, AuthProviderListResponse, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, ExtensionUpdateResult, ExtensionUpdatesResponse, GetMessagesOptions, ModelOption, NewSessionInput, OAuthLoginSnapshot, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi, SessionSearchResult } from "./session-api.js";
 import { recordClientEvent, getTabSessionId } from "../utils/client-telemetry.js";
 import { createStreamEvents, selectRealtimeTransport, type StreamEvents } from "./session-streamer.js";
 import { createRealtimeConnection, type RealtimeConnection, type RealtimeTransport } from "./realtime-connection.js";
@@ -108,6 +108,14 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     if (options.includeSubagents) params.set("includeSubagents", "true");
     const query = params.toString() ? `?${params.toString()}` : "";
     return request<SessionCardData[]>(`/api/sessions${query}`);
+  }
+
+  async searchSessions(query: string, options: { readonly cwd?: string; readonly limit?: number; readonly includeSubagents?: boolean } = {}): Promise<readonly SessionSearchResult[]> {
+    const params = new URLSearchParams({ q: query });
+    if (options.cwd) params.set("cwd", options.cwd);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.includeSubagents) params.set("includeSubagents", "true");
+    return request<SessionSearchResult[]>(`/api/sessions/search?${params.toString()}`);
   }
 
   async listSessionStatuses(cwd?: string, options: { readonly includeSubagents?: boolean } = {}): Promise<readonly SessionCardData[]> {
