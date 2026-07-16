@@ -142,6 +142,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
   const [homeCwd, setHomeCwd] = useState<string>("");
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<readonly import("../api/session-api.js").SessionSearchResult[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [showPaths, setShowPaths] = useState(false);
   const [namedOnly, setNamedOnly] = useState(false);
   const [showSubagents, setShowSubagents] = useState(false);
@@ -563,14 +564,16 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     const trimmed = query.trim();
     if (!trimmed || !api.searchSessions) {
       setSearchResults(null);
+      setSearchLoading(false);
       return;
     }
     let cancelled = false;
+    setSearchLoading(true);
     const timer = window.setTimeout(() => {
       void api.searchSessions!(trimmed, { includeSubagents: showSubagents }).then((results) => {
-        if (!cancelled) setSearchResults(results);
+        if (!cancelled) { setSearchResults(results); setSearchLoading(false); }
       }).catch((caught) => {
-        if (!cancelled) { setSearchResults([]); setError(errorMessage(caught)); }
+        if (!cancelled) { setSearchResults([]); setSearchLoading(false); setError(errorMessage(caught)); }
       });
     }, 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
@@ -578,15 +581,23 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
 
   const visibleSessions = useMemo(() => {
     const lowered = query.toLowerCase();
-    const fullTextIds = searchResults === null ? undefined : new Set(searchResults.map((result) => result.sessionId));
-    const filtered = sessions.filter((session) => {
-      if (!showSubagents && (session.subagent || session.hiddenFromList)) return false;
-      if (namedOnly && !session.sessionName) return false;
-      if (fullTextIds) return fullTextIds.has(session.id);
-      const haystack = [session.sessionName, session.cwd, session.id, session.model].filter(Boolean).join(" ").toLowerCase();
-      return haystack.includes(lowered);
-    });
-    return [...filtered].sort((a, b) => {
+    const sessionById = new Map(sessions.map((session) => [session.id, session]));
+    const filtered = searchResults === null
+      ? sessions.filter((session) => {
+          if (!showSubagents && (session.subagent || session.hiddenFromList)) return false;
+          if (namedOnly && !session.sessionName) return false;
+          const haystack = [session.sessionName, session.cwd, session.id, session.model].filter(Boolean).join(" ").toLowerCase();
+          return haystack.includes(lowered);
+        })
+      : searchResults.map((result) => sessionById.get(result.sessionId) ?? {
+          id: result.sessionId,
+          cwd: result.cwd,
+          ...(result.sessionName ? { sessionName: result.sessionName } : {}),
+          status: "idle" as const,
+          createdAt: result.createdAt,
+          lastActivity: result.lastActivity ?? 0,
+        });
+    return searchResults === null ? [...filtered].sort((a, b) => {
       if (sortMode === "name") return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
       if (sortMode === "cwd") return a.cwd.localeCompare(b.cwd);
       // 'Recent' is defined as the last time the user authored input in
@@ -599,7 +610,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       const createdDelta = (b.createdAt ?? 0) - (a.createdAt ?? 0);
       if (createdDelta !== 0) return createdDelta;
       return (a.sessionName ?? a.id).localeCompare(b.sessionName ?? b.id);
-    });
+    }) : filtered;
   }, [namedOnly, query, sessions, searchResults, showSubagents, sortMode, lastUserActivityById]);
 
   const virtualSessionRows = useMemo(() => {
@@ -1404,6 +1415,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
         <section aria-label="Session browser controls" className="session-controls">
           <div className="session-search" ref={filterRef}>
             <input placeholder="Search sessions" value={query} onChange={(event) => setQuery(event.target.value)} />
+            {searchLoading ? <span className="session-search-loading" aria-label="Searching sessions">Searching…</span> : null}
             <button
               type="button"
               className={`session-filter-toggle ${filtersOpen ? "open" : ""}`}
