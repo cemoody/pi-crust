@@ -1095,8 +1095,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && url.pathname === "/api/sessions/search") {
     const query = url.searchParams.get("q") ?? "";
-    const rawLimit = Number(url.searchParams.get("limit") ?? "");
-    const limit = Number.isFinite(rawLimit) ? rawLimit : undefined;
+    // Number(null) is 0, which silently collapsed every normal browser query
+    // to one result through SessionSearchService's minimum-limit clamp. Only
+    // parse an explicitly supplied non-empty query parameter.
+    const rawLimit = url.searchParams.get("limit");
+    const parsedLimit = rawLimit === null || rawLimit.trim() === "" ? undefined : Number(rawLimit);
+    const limit = parsedLimit !== undefined && Number.isFinite(parsedLimit) ? parsedLimit : undefined;
     const includeSubagents = url.searchParams.get("includeSubagents") === "true";
     return sendJson(res, 200, await context.sessionSearch.search(query, {
       ...(url.searchParams.get("cwd") ? { cwd: url.searchParams.get("cwd")! } : {}),
