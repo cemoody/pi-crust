@@ -1641,17 +1641,43 @@ async function listSessionCards(
   cwd?: string,
   options: { readonly includeSubagents?: boolean; readonly includeHidden?: boolean } = {},
 ) {
-  const sessions = await context.registry.listSessions(cwd, options);
+  // SQLite is the durable session read model: it already has full-file titles,
+  // timestamps, and visibility flags. A sync reconciles only changed JSONL
+  // files; after that, listing never needs a head/tail JSONL scan.
+  await context.sessionSearch.sync();
+  const indexedSessions = context.sessionSearch.listIndexedMetadata({
+    ...(cwd ? { cwd } : {}),
+    ...(options.includeSubagents ? { includeSubagents: true } : {}),
+    ...(options.includeHidden ? { includeHidden: true } : {}),
+  });
+  // Mocks and adapters that persist sessions outside Pi JSONL cannot populate
+  // the SQLite read model. Keep that narrow compatibility fallback; normal Pi
+  // sessions always take the index-only path above.
+  const sessions: readonly SessionListItem[] = indexedSessions.length > 0
+    ? indexedSessions.map((session) => ({
+        id: session.sessionId,
+        cwd: session.cwd,
+        sessionFile: session.sessionFile,
+        ...(session.sessionName ? { sessionName: session.sessionName } : {}),
+        ...(session.subagent ? { subagent: true } : {}),
+        ...(session.hiddenFromList ? { hiddenFromList: true } : {}),
+        createdAt: session.createdAt,
+        lastUserActivity: session.lastUserActivity,
+        lastActivity: session.lastActivity ?? 0,
+      }))
+    : await context.registry.listSessions(cwd, options);
   for (const session of sessions) context.coldSessionFiles.set(session.id, session.sessionFile);
-  const cards = await Promise.all(sessions.map((session) => sessionCardWithLiveState(context, session)));
-  // Persist any updated timeline-metadata entries to disk so the next process
-  // restart can skip re-scanning multi-MB session files on the cold path.
-  await flushDirtyTimelineIndexes();
-  return cards;
+  return Promise.all(sessions.map((session) => sessionCardWithLiveState(context, session)));
 }
 
-async function sessionCardWithLiveState(context: HttpApiServerContext, session: SessionListItem) {
-  const metadata = await readSessionTimelineMetadata(session.sessionFile);
+async function sessionCardWithLiveState(
+  context: HttpApiServerContext,
+  session: SessionListItem,
+) {
+  const metadata: SessionTimelineMetadata = {
+    createdAt: session.createdAt ?? null,
+    lastUserActivity: session.lastUserActivity ?? null,
+  };
   if (context.registry.hasSession(session.id)) {
     const registered = context.registry.getSession(session.id);
     const handle = registered.handle;
@@ -1662,6 +1688,9 @@ async function sessionCardWithLiveState(context: HttpApiServerContext, session: 
         const card = toSessionCard(state, metadata);
         return {
           ...card,
+          // SQLite's fully parsed title is authoritative over the hot worker
+          // state, which can be stale after a restart/reattach.
+          ...(session.sessionName ? { sessionName: session.sessionName } : {}),
           // getState() is an observation and some adapters report Date.now()
           // there. Sidebar snapshots should sort by real session activity from
           // the session index, not by the time this polling request ran.
