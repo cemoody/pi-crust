@@ -32,6 +32,19 @@ export interface SessionSearchMatch {
   readonly snippet: string;
 }
 
+export interface IndexedSessionMetadata {
+  readonly sessionId: string;
+  readonly sessionFile: string;
+  readonly cwd: string;
+  readonly sessionName?: string;
+  readonly subagent: boolean;
+  readonly hiddenFromList: boolean;
+  readonly createdAt: number | null;
+  /** Last user prompt timestamp, parsed from the full session JSONL. */
+  readonly lastUserActivity: number | null;
+  readonly lastActivity: number | null;
+}
+
 export interface SessionSearchResult {
   readonly sessionId: string;
   readonly sessionFile: string;
@@ -54,6 +67,7 @@ interface ParsedSession {
   readonly sessionId: string;
   readonly cwd: string;
   readonly createdAt: number | null;
+  readonly lastUserActivity: number | null;
   readonly lastActivity: number | null;
   readonly sessionName?: string;
   readonly subagent: boolean;
@@ -69,6 +83,18 @@ interface FileIndexRow {
   readonly cwd: string;
   readonly mtime_ms: number;
   readonly size: number;
+}
+
+interface IndexedMetadataRow {
+  readonly session_id: string;
+  readonly session_file: string;
+  readonly cwd: string;
+  readonly session_name: string | null;
+  readonly subagent: number;
+  readonly hidden_from_list: number;
+  readonly created_at: number | null;
+  readonly last_user_activity: number | null;
+  readonly last_activity: number | null;
 }
 
 interface SearchRow {
@@ -120,6 +146,7 @@ export class SessionSearchService {
         subagent INTEGER NOT NULL DEFAULT 0,
         hidden_from_list INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER,
+        last_user_activity INTEGER,
         last_activity INTEGER,
         mtime_ms REAL NOT NULL,
         size INTEGER NOT NULL
@@ -144,6 +171,7 @@ export class SessionSearchService {
     for (const statement of [
       "ALTER TABLE session_documents ADD COLUMN subagent INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE session_documents ADD COLUMN hidden_from_list INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE session_documents ADD COLUMN last_user_activity INTEGER",
     ]) {
       try { this.db.exec(statement); } catch { /* column already exists */ }
     }
@@ -180,6 +208,41 @@ export class SessionSearchService {
   async sync(): Promise<void> {
     if (!this.syncing) this.syncing = this.syncImpl().finally(() => { this.syncing = undefined; });
     return this.syncing;
+  }
+
+  /**
+   * Return full-file-derived display metadata for already-indexed sessions.
+   * This intentionally does not sync: sidebar polling stays cheap and falls
+   * back to the fast JSONL scanner for a new or changed source file.
+   */
+  /** Full indexed sidebar metadata. Call sync() first when source freshness matters. */
+  listIndexedMetadata(filters: Pick<SessionSearchFilters, "cwd" | "includeSubagents" | "includeHidden"> = {}): readonly IndexedSessionMetadata[] {
+    const conditions: string[] = [];
+    const params: string[] = [];
+    if (filters.cwd) { conditions.push("cwd = ?"); params.push(filters.cwd); }
+    if (!filters.includeSubagents) conditions.push("subagent = 0");
+    if (!filters.includeHidden) conditions.push("hidden_from_list = 0");
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const rows = this.db.prepare(`
+      SELECT session_id, session_file, cwd, session_name, subagent, hidden_from_list, created_at, last_user_activity, last_activity
+      FROM session_documents
+      ${where}
+      ORDER BY last_activity DESC, created_at DESC
+    `).all(...params) as unknown as IndexedMetadataRow[];
+    return rows.map(toIndexedMetadata);
+  }
+
+  getIndexedMetadata(sessionFiles: readonly string[]): ReadonlyMap<string, IndexedSessionMetadata> {
+    const result = new Map<string, IndexedSessionMetadata>();
+    if (sessionFiles.length === 0) return result;
+    const placeholders = sessionFiles.map(() => "?").join(", ");
+    const rows = this.db.prepare(`
+      SELECT session_id, session_file, cwd, session_name, subagent, hidden_from_list, created_at, last_user_activity, last_activity
+      FROM session_documents
+      WHERE session_file IN (${placeholders})
+    `).all(...sessionFiles) as unknown as IndexedMetadataRow[];
+    for (const row of rows) result.set(row.session_file, toIndexedMetadata(row));
+    return result;
   }
 
   async search(query: string, filters: SessionSearchFilters = {}): Promise<readonly SessionSearchResult[]> {
@@ -289,9 +352,9 @@ export class SessionSearchService {
     this.db.exec("BEGIN");
     try {
       const result = this.db.prepare(`
-        INSERT INTO session_documents (session_id, session_file, cwd, session_name, subagent, hidden_from_list, created_at, last_activity, mtime_ms, size)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(parsed.sessionId, sessionFile, parsed.cwd, parsed.sessionName ?? null, Number(parsed.subagent), Number(parsed.hiddenFromList), parsed.createdAt, parsed.lastActivity, stat.mtimeMs, stat.size);
+        INSERT INTO session_documents (session_id, session_file, cwd, session_name, subagent, hidden_from_list, created_at, last_user_activity, last_activity, mtime_ms, size)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(parsed.sessionId, sessionFile, parsed.cwd, parsed.sessionName ?? null, Number(parsed.subagent), Number(parsed.hiddenFromList), parsed.createdAt, parsed.lastUserActivity, parsed.lastActivity, stat.mtimeMs, stat.size);
       const documentId = Number(result.lastInsertRowid);
       this.db.prepare("INSERT INTO session_fts(rowid, title, first_prompt, summaries, transcript) VALUES (?, ?, ?, ?, ?)")
         .run(documentId, parsed.sessionName ?? "", parsed.firstPrompt, parsed.summaries, parsed.transcript);
@@ -313,6 +376,7 @@ async function parseSession(sessionFile: string): Promise<ParsedSession | undefi
   let sessionId: string | undefined;
   let cwd = "";
   let createdAt: number | null = null;
+  let lastUserActivity: number | null = null;
   let lastActivity: number | null = null;
   let sessionName: string | undefined;
   let subagent = false;
@@ -369,7 +433,10 @@ async function parseSession(sessionFile: string): Promise<ParsedSession | undefi
     if (role !== "user" && role !== "assistant") continue;
     const text = contentText(message.content);
     const timestamp = asTimestamp(message.timestamp) ?? asTimestamp(entry.timestamp);
-    if (timestamp !== null) lastActivity = Math.max(lastActivity ?? 0, timestamp);
+    if (timestamp !== null) {
+      lastActivity = Math.max(lastActivity ?? 0, timestamp);
+      if (role === "user") lastUserActivity = Math.max(lastUserActivity ?? 0, timestamp);
+    }
     if (!text) continue;
     if (role === "user" && !firstPrompt) firstPrompt = text.slice(0, 4_000);
     const retained = appendTranscript(text);
@@ -377,7 +444,7 @@ async function parseSession(sessionFile: string): Promise<ParsedSession | undefi
   }
   if (!sessionId) return undefined;
   return {
-    sessionId, cwd, createdAt, lastActivity, ...(sessionName ? { sessionName } : {}), subagent, hiddenFromList,
+    sessionId, cwd, createdAt, lastUserActivity, lastActivity, ...(sessionName ? { sessionName } : {}), subagent, hiddenFromList,
     firstPrompt, summaries: summaries.join("\n\n"), transcript: transcript.join("\n\n"), chunks,
   };
 }
@@ -420,6 +487,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function clampLimit(value: number | undefined): number {
   if (!Number.isFinite(value)) return DEFAULT_LIMIT;
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(value!)));
+}
+
+function toIndexedMetadata(row: IndexedMetadataRow): IndexedSessionMetadata {
+  return {
+    sessionId: row.session_id,
+    sessionFile: row.session_file,
+    cwd: row.cwd,
+    ...(row.session_name ? { sessionName: row.session_name } : {}),
+    subagent: row.subagent !== 0,
+    hiddenFromList: row.hidden_from_list !== 0,
+    createdAt: row.created_at,
+    lastUserActivity: row.last_user_activity,
+    lastActivity: row.last_activity,
+  };
 }
 
 function finitePositive(value: number | undefined, fallback: number): number {

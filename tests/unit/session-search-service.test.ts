@@ -66,6 +66,31 @@ describe("SessionSearchService", () => {
     expect(results[0]).toMatchObject({ sessionId: "rename" });
   });
 
+  it("lists full-file-derived sidebar metadata with the same title as search", async () => {
+    await writeSession("rename", [
+      header("rename", "/work/a"),
+      { type: "session_info", name: "Old title" },
+      { type: "session_info", name: "Correct latest title" },
+      message("u1", "user", "indexed metadata", 100),
+    ]);
+    await service.sync();
+
+    expect(service.listIndexedMetadata()).toEqual([expect.objectContaining({ sessionId: "rename", sessionName: "Correct latest title" })]);
+  });
+
+  it("returns latest indexed display metadata without scanning the source again", async () => {
+    const filename = await writeSession("rename", [
+      header("rename", "/work/a"),
+      { type: "session_info", name: "Old title" },
+      { type: "session_info", name: "Correct latest title" },
+      message("u1", "user", "indexed metadata", 100),
+    ]);
+    await service.sync();
+
+    const metadata = service.getIndexedMetadata([filename]).get(filename);
+    expect(metadata).toMatchObject({ sessionId: "rename", sessionName: "Correct latest title" });
+  });
+
   it("defers an active session until the agent has settled", async () => {
     const filename = await writeSession("live", [
       header("live", "/work/a"),
