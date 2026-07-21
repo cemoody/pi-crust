@@ -24,6 +24,12 @@ interface RingEntry {
   readonly event: PiEvent;
 }
 
+interface PendingSessionMetadata {
+  readonly sessionName?: string;
+  readonly subagent: boolean;
+  readonly hiddenFromList: boolean;
+}
+
 interface SessionInternal {
   readonly registered: RegisteredSession;
   readonly ring: RingEntry[];
@@ -57,6 +63,12 @@ export class SessionRegistry {
   private readonly workerRegistry: WorkerRegistry;
   private readonly ringSize: number;
   private readonly sessions = new Map<string, SessionInternal>();
+  /**
+   * Pi creates a new JSONL lazily on its first prompt. Metadata therefore
+   * must not be appended from createSession(): creating the file ourselves
+   * causes Pi's first persistence attempt to fail with EEXIST.
+   */
+  private readonly pendingSessionMetadata = new Map<string, PendingSessionMetadata>();
   /** Process-wide observers for services such as the durable session index. */
   private readonly eventObservers = new Set<(session: RegisteredSession, event: PiEvent) => void>();
 
@@ -106,14 +118,18 @@ export class SessionRegistry {
   async createSession(options: CreateSessionOptions): Promise<RegisteredSession> {
     const cwd = this.pathPolicy.assertAllowedCwd(options.cwd);
     const handle = await this.adapter.createSession({ ...options, cwd });
+    const registered = this.register(handle);
     if (options.subagent || options.hiddenFromList) {
-      await appendHiddenSessionMetadata(handle.sessionFile, {
+      // Do not write the JSONL here. Pi's SessionManager creates a new file
+      // with exclusive creation during the first prompt; a pre-emptive
+      // session_info append makes that prompt fail with EEXIST.
+      this.pendingSessionMetadata.set(registered.id, {
         ...(options.sessionName ? { sessionName: options.sessionName } : {}),
         subagent: options.subagent === true,
         hiddenFromList: options.hiddenFromList === true || options.subagent === true,
       });
     }
-    return this.register(handle);
+    return registered;
   }
 
   async openSession(sessionFile: string): Promise<RegisteredSession> {
@@ -221,12 +237,15 @@ export class SessionRegistry {
       await handle.detach().catch(() => undefined);
     }
     this.sessions.delete(sessionId);
+    this.pendingSessionMetadata.delete(sessionId);
     await this.workerRegistry.removeSession(sessionId).catch(() => undefined);
     return true;
   }
 
   async prompt(sessionId: string, message: string, attachments: readonly PromptAttachment[] = []): Promise<void> {
-    await this.getSession(sessionId).handle.prompt(message, attachments);
+    const registered = this.getSession(sessionId);
+    await registered.handle.prompt(message, attachments);
+    await this.persistPendingSessionMetadata(registered);
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -374,6 +393,7 @@ export class SessionRegistry {
     internal.unsubscribeHandle();
     await internal.registered.handle.dispose();
     this.sessions.delete(sessionId);
+    this.pendingSessionMetadata.delete(sessionId);
   }
 
   /** API shutdown: close the socket but keep the worker (supervisor) alive. */
@@ -393,6 +413,7 @@ export class SessionRegistry {
     internal.unsubscribeHandle();
     await internal.registered.handle.dispose();
     this.sessions.delete(sessionId);
+    this.pendingSessionMetadata.delete(sessionId);
     await fs.rm(internal.registered.sessionFile, { force: true });
     await this.workerRegistry.removeSession(sessionId);
   }
@@ -406,6 +427,15 @@ export class SessionRegistry {
   async detachAll(): Promise<void> {
     const ids = [...this.sessions.keys()];
     await Promise.all(ids.map((id) => this.detachSession(id).catch(() => undefined)));
+  }
+
+  private async persistPendingSessionMetadata(registered: RegisteredSession): Promise<void> {
+    const metadata = this.pendingSessionMetadata.get(registered.id);
+    if (!metadata) return;
+    // Pi owns initial JSONL creation. Once prompt() resolves, it has completed
+    // the child turn (including an error turn), so the file is safe to append.
+    await appendHiddenSessionMetadata(registered.sessionFile, metadata);
+    this.pendingSessionMetadata.delete(registered.id);
   }
 
   private getInternal(sessionId: string): SessionInternal {
