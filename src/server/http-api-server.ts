@@ -1650,10 +1650,11 @@ async function listSessionCards(
     ...(options.includeSubagents ? { includeSubagents: true } : {}),
     ...(options.includeHidden ? { includeHidden: true } : {}),
   });
-  // Mocks and adapters that persist sessions outside Pi JSONL cannot populate
-  // the SQLite read model. Keep that narrow compatibility fallback; normal Pi
-  // sessions always take the index-only path above.
-  const sessions: readonly SessionListItem[] = indexedSessions.length > 0
+  // Mock sessions are JSON blobs, while the index intentionally tracks only
+  // Pi JSONL. If a mock root also contains a JSONL fixture, the index is
+  // non-empty but incomplete; always ask the mock adapter for the authoritative
+  // mixed-format list. Normal Pi sessions retain the index-only fast path.
+  const sessions: readonly SessionListItem[] = context.adapterKind !== "mock" && indexedSessions.length > 0
     ? indexedSessions.map((session) => ({
         id: session.sessionId,
         cwd: session.cwd,

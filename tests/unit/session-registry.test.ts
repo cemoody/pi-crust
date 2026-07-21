@@ -94,6 +94,51 @@ describe("SessionRegistry", () => {
     expect(listed.find((item) => item.id === subagent.id)).toMatchObject({ subagent: true, hiddenFromList: true });
   });
 
+  it("defers subagent JSONL metadata until Pi has exclusively created the first session file", async () => {
+    const { root, projectA, sessionRoot } = await makeRegistry();
+    await fs.mkdir(sessionRoot, { recursive: true });
+    const sessionFile = path.join(sessionRoot, "lazy-child.jsonl");
+    const id = "lazy-child";
+    const handle = {
+      id,
+      cwd: projectA,
+      sessionFile,
+      async prompt() {
+        // This mirrors Pi SessionManager's first-write behavior: the session
+        // file must not exist yet, and the write is exclusive.
+        await fs.writeFile(sessionFile, `${JSON.stringify({ type: "session", id, cwd: projectA })}\n`, { flag: "wx" });
+      },
+      async getState() { return { id, cwd: projectA, sessionFile, status: "idle", messageCount: 0, lastActivity: Date.now() }; },
+      async getMessages() { return []; },
+      async abort() {},
+      async setSessionName() { return { id, cwd: projectA, sessionFile, status: "idle" as const, messageCount: 0, lastActivity: Date.now() }; },
+      async setModel() { return { id, cwd: projectA, sessionFile, status: "idle" as const, messageCount: 0, lastActivity: Date.now() }; },
+      subscribe() { return () => {}; },
+      async dispose() {},
+    } as unknown as PiSessionHandle;
+    const adapter = {
+      createSession: async () => handle,
+      openSession: async () => handle,
+      listSessions: async () => [],
+      listModels: async () => [],
+    } satisfies PiAdapter;
+    const registry = new SessionRegistry({
+      adapter,
+      pathPolicy: new PathPolicy({ allowedProjectRoots: [path.join(root, "projects")], allowedSessionRoots: [sessionRoot] }),
+    });
+
+    const subagent = await registry.createSession({ cwd: projectA, sessionName: "deferred child", subagent: true });
+    await expect(fs.access(sessionFile)).rejects.toThrow();
+
+    await registry.prompt(subagent.id, "run child work");
+
+    const lines = (await fs.readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines).toEqual([
+      { type: "session", id, cwd: projectA },
+      expect.objectContaining({ type: "session_info", name: "deferred child", subagent: true, hiddenFromList: true }),
+    ]);
+  });
+
   it("persists renamed sessions across reopen and list", async () => {
     const { registry, projectA } = await makeRegistry();
     const created = await registry.createSession({ cwd: projectA });
