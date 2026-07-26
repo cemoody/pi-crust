@@ -1655,20 +1655,47 @@ async function listSessionCards(
   // non-empty but incomplete; always ask the mock adapter for the authoritative
   // mixed-format list. Normal Pi sessions retain the index-only fast path.
   const sessions: readonly SessionListItem[] = context.adapterKind !== "mock" && indexedSessions.length > 0
-    ? indexedSessions.map((session) => ({
-        id: session.sessionId,
-        cwd: session.cwd,
-        sessionFile: session.sessionFile,
-        ...(session.sessionName ? { sessionName: session.sessionName } : {}),
-        ...(session.subagent ? { subagent: true } : {}),
-        ...(session.hiddenFromList ? { hiddenFromList: true } : {}),
-        createdAt: session.createdAt,
-        lastUserActivity: session.lastUserActivity,
-        lastActivity: session.lastActivity ?? 0,
-      }))
+    ? mergeIndexedAndRegisteredSessions(
+        indexedSessions.map((session) => ({
+          id: session.sessionId,
+          cwd: session.cwd,
+          sessionFile: session.sessionFile,
+          ...(session.sessionName ? { sessionName: session.sessionName } : {}),
+          ...(session.subagent ? { subagent: true } : {}),
+          ...(session.hiddenFromList ? { hiddenFromList: true } : {}),
+          createdAt: session.createdAt,
+          lastUserActivity: session.lastUserActivity,
+          lastActivity: session.lastActivity ?? 0,
+        })),
+        context.registry.listRegisteredSessions(options),
+      )
     : await context.registry.listSessions(cwd, options);
   for (const session of sessions) context.coldSessionFiles.set(session.id, session.sessionFile);
   return Promise.all(sessions.map((session) => sessionCardWithLiveState(context, session)));
+}
+
+/**
+ * The durable index deliberately defers active JSONL files so search never
+ * exposes a partial streamed response. Preserve those live workers in the
+ * sidebar by overlaying registry sessions that are absent from the index.
+ */
+function mergeIndexedAndRegisteredSessions(
+  indexedSessions: readonly SessionListItem[],
+  registeredSessions: readonly RegisteredSession[],
+): readonly SessionListItem[] {
+  const sessions = new Map(indexedSessions.map((session) => [session.id, session]));
+  for (const registered of registeredSessions) {
+    if (sessions.has(registered.id)) continue;
+    sessions.set(registered.id, {
+      id: registered.id,
+      cwd: registered.cwd,
+      sessionFile: registered.sessionFile,
+      ...(registered.subagent ? { subagent: true } : {}),
+      ...(registered.hiddenFromList ? { hiddenFromList: true } : {}),
+      lastActivity: 0,
+    });
+  }
+  return [...sessions.values()].sort((a, b) => b.lastActivity - a.lastActivity);
 }
 
 async function sessionCardWithLiveState(

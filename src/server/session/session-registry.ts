@@ -17,6 +17,8 @@ export interface RegisteredSession {
   readonly cwd: string;
   readonly sessionFile: string;
   readonly handle: PiSessionHandle;
+  readonly subagent?: boolean;
+  readonly hiddenFromList?: boolean;
 }
 
 interface RingEntry {
@@ -118,7 +120,7 @@ export class SessionRegistry {
   async createSession(options: CreateSessionOptions): Promise<RegisteredSession> {
     const cwd = this.pathPolicy.assertAllowedCwd(options.cwd);
     const handle = await this.adapter.createSession({ ...options, cwd });
-    const registered = this.register(handle);
+    const registered = this.register(handle, options);
     if (options.subagent || options.hiddenFromList) {
       // Do not write the JSONL here. Pi's SessionManager creates a new file
       // with exclusive creation during the first prompt; a pre-emptive
@@ -197,6 +199,16 @@ export class SessionRegistry {
 
   hasSession(sessionId: string): boolean {
     return this.sessions.has(sessionId);
+  }
+
+  /**
+   * Return every locally attached session so callers can overlay live workers
+   * on durable indexes that intentionally defer active transcript writes.
+   */
+  listRegisteredSessions(options: ListSessionsOptions = {}): readonly RegisteredSession[] {
+    return [...this.sessions.values()]
+      .map((session) => session.registered)
+      .filter((session) => (options.includeHidden || !session.hiddenFromList) && (options.includeSubagents || !session.subagent));
   }
 
   getSession(sessionId: string): RegisteredSession {
@@ -444,12 +456,14 @@ export class SessionRegistry {
     return session;
   }
 
-  private register(handle: PiSessionHandle): RegisteredSession {
+  private register(handle: PiSessionHandle, metadata: Pick<CreateSessionOptions, "subagent" | "hiddenFromList"> = {}): RegisteredSession {
     const registered: RegisteredSession = {
       id: handle.id,
       cwd: handle.cwd,
       sessionFile: handle.sessionFile,
       handle,
+      ...(metadata.subagent ? { subagent: true } : {}),
+      ...(metadata.hiddenFromList || metadata.subagent ? { hiddenFromList: true } : {}),
     };
     const internal: SessionInternal = {
       registered,
