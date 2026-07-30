@@ -3,7 +3,7 @@
  * parity, leak-free teardown, fromSeq semantics, ordering, large payloads,
  * consumer isolation, abort delivery.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   connectRealtimeSocket,
   createRealtimeHarness,
@@ -21,6 +21,16 @@ afterEach(async () => {
 });
 
 describe("Socket.IO realtime edge cases", () => {
+  it("serializes structured cold-session resolution failures in the subscribe ack", async () => {
+    const harness = await setup();
+    const { id } = await harness.createSessionViaHttp();
+    await harness.coolSession(id);
+    vi.spyOn(harness.adapter, "openSession").mockRejectedValue({ code: "EREOPEN", retryable: true });
+
+    const socket = await connect(harness.baseUrl);
+    await expect(socket.subscribe(id, null)).resolves.toEqual({ ok: false, error: '{"code":"EREOPEN","retryable":true}' });
+  });
+
   it("opens a cold (disk-resident) session on subscribe — parity with the SSE route", async () => {
     const harness = await setup();
     const { id } = await harness.createSessionViaHttp();

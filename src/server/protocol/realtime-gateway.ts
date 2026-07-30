@@ -4,6 +4,7 @@ import type { PiEvent } from "../pi/types.js";
 import type { PtyManager } from "../pty/pty-manager.js";
 import type { PrcRealtimeConnection, PrcRealtimeConnectionDisposer } from "../../extensions/api.js";
 import type { RegisteredSession, SessionRegistry } from "../session/session-registry.js";
+import { errorMessage } from "../../shared/util.js";
 
 /** A per-connection realtime handler contributed by an extension. Invoked for
  *  every new Socket.IO connection; the returned disposer (if any) runs when
@@ -146,8 +147,7 @@ export function attachRealtimeGateway(options: AttachRealtimeGatewayOptions): Re
       try {
         session = await resolveSession(sessionId);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        ack?.({ ok: false, error: /unknown session/i.test(message) ? `unknown session: ${sessionId}` : message });
+        ack?.({ ok: false, error: sessionResolutionError(sessionId, error) });
         return;
       }
 
@@ -223,8 +223,7 @@ export function attachRealtimeGateway(options: AttachRealtimeGatewayOptions): Re
         try {
           session = await resolveSession(sessionId);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          ack?.({ ok: false, error: /unknown session/i.test(message) ? `unknown session: ${sessionId}` : message });
+          ack?.({ ok: false, error: sessionResolutionError(sessionId, error) });
           return;
         }
         try {
@@ -234,7 +233,7 @@ export function attachRealtimeGateway(options: AttachRealtimeGatewayOptions): Re
           ownedPtys.add(ptyId);
           ack?.({ ok: true, ptyId });
         } catch (error) {
-          ack?.({ ok: false, error: error instanceof Error ? error.message : String(error) });
+          ack?.({ ok: false, error: errorMessage(error) });
         }
       });
 
@@ -293,6 +292,11 @@ export function attachRealtimeGateway(options: AttachRealtimeGatewayOptions): Re
       await new Promise<void>((resolve) => io.close(() => resolve()));
     },
   };
+}
+
+function sessionResolutionError(sessionId: string, error: unknown): string {
+  const message = errorMessage(error);
+  return /unknown session/i.test(message) ? `unknown session: ${sessionId}` : message;
 }
 
 function normalizeFromSeq(value: unknown): number | null {
