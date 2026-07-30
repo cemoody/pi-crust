@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadPrcExtensionFactory, loadResolvedExtensionEntries } from "../../src/extensions/loader.js";
+import { inferPrcExtensionId, loadPrcExtensionFactory, loadResolvedExtensionEntries } from "../../src/extensions/loader.js";
 import { resolvePackageExtensions } from "../../src/extensions/packages.js";
 import { createPrcExtensionHost } from "../../src/extensions/registry.js";
 import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
@@ -48,6 +48,23 @@ describe("pi-crust extension dynamic loader", () => {
     const filePath = await writeExtensionModule("bad-syntax.mjs", "export default function activate( {\n");
 
     await expect(loadPrcExtensionFactory(filePath)).rejects.toThrow();
+  });
+
+  it("uses the package manifest name for a stable extension id", async () => {
+    const home = await makeHome();
+    const packageDir = path.join(home.root, "folder-name-does-not-matter");
+    await fs.mkdir(packageDir);
+    await fs.writeFile(path.join(packageDir, "package.json"), JSON.stringify({ name: "manifest-extension" }));
+
+    await expect(inferPrcExtensionId(packageDir, path.join(packageDir, "index.mjs"))).resolves.toBe("manifest-extension");
+  });
+
+  it("falls back to the package directory name when its manifest is unavailable", async () => {
+    const home = await makeHome();
+    const packageDir = path.join(home.root, "local-extension");
+    await fs.mkdir(packageDir);
+
+    await expect(inferPrcExtensionId(packageDir, path.join(packageDir, "index.mjs"))).resolves.toBe("local-extension");
   });
 
   it("loads and activates multiple manifest-declared extension entries", async () => {
