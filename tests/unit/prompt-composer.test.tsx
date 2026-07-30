@@ -213,6 +213,30 @@ describe("PromptComposer", () => {
     })]);
   });
 
+  it("keeps an attachment committed by a native paste before Send", async () => {
+    const handlers = renderComposer();
+    const draft = screen.getByLabelText("Prompt draft");
+    const file = new File(["abc"], "pasted.png", { type: "image/png" });
+    const clipboardData = {
+      files: [file] as unknown as FileList,
+      items: { length: 0 } as unknown as DataTransferItemList,
+      types: ["Files"] as readonly string[],
+      getData: () => "",
+    };
+
+    fireEvent.paste(draft, { clipboardData });
+    await screen.findByText("pasted.png");
+    fireEvent.change(draft, { target: { value: "send pasted image" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(handlers.onPrompt).toHaveBeenCalledWith("send pasted image", [expect.objectContaining({
+      name: "pasted.png",
+      type: "image",
+      mimeType: "image/png",
+      data: "YWJj",
+    })]);
+  });
+
   it("submits non-image files as file attachments with base64 data", async () => {
     const handlers = renderComposer();
     const file = new File(["zipbytes"], "archive.zip", { type: "application/zip" });
