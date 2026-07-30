@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { validatePrStoryRelationships } from './pr-story-validation.js';
 
 export const PR_STORY_MIME = 'application/vnd.pi.pr-story+json';
 export const PR_STORY_ARTIFACT_KIND = 'pr-story';
@@ -98,37 +99,10 @@ export interface ValidationResult {
 
 export function validatePrStory(input: unknown): ValidationResult {
   const parsed = PrStorySchemaBase.safeParse(input);
-  if (!parsed.success) return { ok: false, errors: parsed.error.issues.map((i) => `${i.path.join('.') || 'story'}: ${i.message}`) };
-  const story = parsed.data;
-  const errors: string[] = [];
-
-  const frameIds = new Set<string>();
-  for (const frame of story.frames) {
-    if (frameIds.has(frame.id)) errors.push(`duplicate frame id: ${frame.id}`);
-    frameIds.add(frame.id);
+  if (!parsed.success) {
+    return { ok: false, errors: parsed.error.issues.map((issue) => `${issue.path.join('.') || 'story'}: ${issue.message}`) };
   }
-  const chapterIds = new Set<string>();
-  for (const chapter of story.chapters) {
-    if (chapterIds.has(chapter.id)) errors.push(`duplicate chapter id: ${chapter.id}`);
-    chapterIds.add(chapter.id);
-    for (const frameId of chapter.frameIds) if (!frameIds.has(frameId)) errors.push(`chapter ${chapter.id} references missing frame ${frameId}`);
-  }
-  for (const frame of story.frames) {
-    if (frame.chapterId && !chapterIds.has(frame.chapterId)) errors.push(`frame ${frame.id} references missing chapter ${frame.chapterId}`);
-    const rowIds = new Set<string>();
-    for (const row of frame.rows) {
-      if (row.kind !== 'hunk' && row.lineId) {
-        if (rowIds.has(row.lineId)) errors.push(`frame ${frame.id} has duplicate row lineId ${row.lineId}`);
-        rowIds.add(row.lineId);
-      }
-    }
-    for (const id of frame.coverage?.changedLineIds ?? []) if (!rowIds.has(id)) errors.push(`frame ${frame.id} coverage references missing row lineId ${id}`);
-  }
-  if (story.coverage && story.coverage.reviewedChangedLines > story.coverage.totalChangedLines) errors.push('coverage reviewedChangedLines exceeds totalChangedLines');
-  if (story.coverage) {
-    const expectedPercent = story.coverage.totalChangedLines === 0 ? 100 : Math.round((story.coverage.reviewedChangedLines / story.coverage.totalChangedLines) * 10000) / 100;
-    if (Math.abs(expectedPercent - story.coverage.percent) > 0.01) errors.push(`coverage percent ${story.coverage.percent} does not match ${expectedPercent}`);
-  }
+  const errors = validatePrStoryRelationships(parsed.data);
   return { ok: errors.length === 0, errors };
 }
 
