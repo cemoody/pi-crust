@@ -12,7 +12,7 @@ import {
 } from "./packages.js";
 import { createPrcExtensionHost, type ActivateExtensionInput, type PrcExtensionHost } from "./registry.js";
 
-import { optional } from "../shared/util.js";
+import { errorMessage, optional } from "../shared/util.js";
 export interface BuiltInPrcExtension {
   readonly id: string;
   readonly factory: PrcExtensionFactory;
@@ -175,7 +175,7 @@ async function resolveExplicitExtensionPlan(paths: readonly string[], cwd: strin
       const resolvedPaths = await resolveSinglePackageExtensions(absolute);
       for (const resolvedPath of resolvedPaths) entries.push({ packageSource: absolute, path: resolvedPath, scope: "explicit" });
     } catch (error) {
-      diagnostics.push({ source: absolute, level: "error", message: error instanceof Error ? error.message : String(error) });
+      diagnostics.push({ source: absolute, level: "error", message: errorMessage(error) });
     }
   }
   return resolveExtensionContributionPlan(entries, [], diagnostics, new Set(), inferExplicitExtensionId);
@@ -206,14 +206,14 @@ async function resolveExtensionContributionPlan(
     try {
       await update(await inferId(entry.path, entry), entry.packageSource, entry.scope, { serverEntry: entry.path });
     } catch (error) {
-      diagnostics.push({ source: entry.path, level: "error", message: error instanceof Error ? error.message : String(error) });
+      diagnostics.push({ source: entry.path, level: "error", message: errorMessage(error) });
     }
   }
   for (const entry of webEntries) {
     try {
       await update(await inferPrcExtensionId(entry.packageSource, entry.path), entry.packageSource, entry.scope, { webEntry: entry.path });
     } catch (error) {
-      diagnostics.push({ source: entry.path, level: "error", message: error instanceof Error ? error.message : String(error) });
+      diagnostics.push({ source: entry.path, level: "error", message: errorMessage(error) });
     }
   }
   return [...plan.values()].sort((a, b) => a.scope.localeCompare(b.scope) || a.id.localeCompare(b.id));
@@ -226,7 +226,7 @@ async function loadPlannedServerInputs(plan: readonly ResolvedPrcExtensionContri
     try {
       inputs.push({ id: contribution.id, factory: await loadPrcExtensionFactory(contribution.serverEntry) });
     } catch (error) {
-      diagnostics.push({ source: contribution.serverEntry, level: "error", message: error instanceof Error ? error.message : String(error) });
+      diagnostics.push({ source: contribution.serverEntry, level: "error", message: errorMessage(error) });
     }
   }
   return inputs;

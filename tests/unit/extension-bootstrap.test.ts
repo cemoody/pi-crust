@@ -189,6 +189,24 @@ describe("pi-crust extension bootstrap integration", () => {
     expect(result.diagnostics[0]?.message).toContain("does not export an activate function");
   });
 
+  it("preserves a plain-object extension load error message in diagnostics", async () => {
+    const home = await makeHome();
+    const badPackage = await writeLocalExtensionPackage(home.configDir, {
+      name: "plain-object-error-extension",
+      extensionCode: "throw { message: 'extension initialization failed', code: 'EINIT' };\n",
+    });
+    await writePrcSettings(home.configDir, { packages: [path.relative(home.configDir, badPackage)] });
+
+    const result = await bootstrapPrcExtensions({ configDir: home.configDir, cwd: home.projectRoot });
+
+    expect(result.host.commands.list()).toEqual([]);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      source: path.join(badPackage, "index.mjs"),
+      level: "error",
+      message: "extension initialization failed",
+    }));
+  });
+
   it("does not fatally error when a bundled extension is also added as a user source (deduped, bundled wins)", async () => {
     // Mirrors the real report: @cemoody/pi-crust-ext-schedule ships bundled with
     // the host AND the user re-adds it as an npm source. Both copies register the
