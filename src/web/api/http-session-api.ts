@@ -1,21 +1,20 @@
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import type { AppBrandingInfo, AppBrandingSettings, AuthMutationResponse, AuthProviderListResponse, CronApi, CronJobInput, CronJobPatch, CronJobView, CronListResponse, CronRunResponse, DashboardMessage, ExtensionRegistryInfo, ExtensionReloadResponse, ExtensionSettingsResponse, ExtensionUpdateResult, ExtensionUpdatesResponse, GetMessagesOptions, ModelOption, NewSessionInput, OAuthLoginSnapshot, PromptAttachment, ServerInfo, SessionCardData, SessionDashboardApi, SessionSearchResult } from "./session-api.js";
-import { recordClientEvent, getTabSessionId } from "../utils/client-telemetry.js";
+import { recordClientEvent } from "../utils/client-telemetry.js";
+import { createDashboardApiRequest, type DashboardApiRequestOptions } from "./dashboard-api-request.js";
+import { createDashboardRealtimeConnection } from "./dashboard-realtime-connection.js";
 import { createStreamEvents, selectRealtimeTransport, type StreamEvents } from "./session-streamer.js";
-import { createRealtimeConnection, type RealtimeConnection, type RealtimeTransport } from "./realtime-connection.js";
 import { createSseSessionStream } from "./sse-session-stream.js";
 
 export { SSE_SILENCE_CHECK_INTERVAL_MS, SSE_SILENCE_THRESHOLD_MS } from "./sse-session-stream.js";
-import { io as socketIoClient } from "socket.io-client";
 
 const API_BASE = import.meta.env.VITE_PI_CRUST_API_BASE ?? "";
-
-const lazyIo = () => socketIoClient;
+const request = createDashboardApiRequest(API_BASE);
 
 export class HttpSessionDashboardApi implements SessionDashboardApi {
   /** Lazily-built streamer; selects SSE (default) or the Socket.IO gateway. */
   private streamer?: StreamEvents;
-  async request<T = unknown>(path: string, options: { readonly method?: string; readonly body?: unknown } = {}): Promise<T> {
+  async request<T = unknown>(path: string, options: DashboardApiRequestOptions = {}): Promise<T> {
     return request<T>(path, options);
   }
 
@@ -191,43 +190,13 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
       this.streamer = createStreamEvents({
         transport: selectRealtimeTransport(import.meta.env as unknown as Record<string, string | undefined>),
         sse: (id, cb) => this.streamEventsViaSse(id, cb),
-        socketio: () => this.buildRealtimeConnection(),
+        socketio: () => createDashboardRealtimeConnection({ apiBase: API_BASE }),
         onClientEvent: (event) => recordClientEvent(event),
       });
     }
     return this.streamer(sessionId, onEvent);
   }
 
-  /** Build the multiplexed Socket.IO connection (one per tab) used when the
-   *  VITE_PI_CRUST_REALTIME=socketio flag is set. Falls back to SSE on repeated
-   *  connect failures. */
-  private buildRealtimeConnection(): RealtimeConnection {
-    const transportFactory = (): RealtimeTransport => {
-      const socket = lazyIo()(API_BASE || undefined, { path: "/socket.io/", transports: ["websocket", "polling"], autoConnect: false });
-      return {
-        get connected() { return socket.connected; },
-        connect() { socket.connect(); },
-        disconnect() { socket.disconnect(); },
-        on: (event, handler) => { socket.on(event as never, handler as never); },
-        off: (event, handler) => { socket.off(event as never, handler as never); },
-        emit: (event, payload, ack) => { if (ack) socket.emit(event as never, payload as never, ack as never); else socket.emit(event as never, payload as never); },
-      };
-    };
-    const broadcast = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("pi-crust-realtime") : undefined;
-    const visibility = typeof document !== "undefined" ? {
-      isVisible: () => document.visibilityState === "visible",
-      subscribe: (cb: () => void) => { document.addEventListener("visibilitychange", cb); return () => document.removeEventListener("visibilitychange", cb); },
-    } : undefined;
-    return createRealtimeConnection({
-      transportFactory,
-      // May be "" before telemetry init; the connection self-assigns a unique
-      // id in that case (empty/duplicate ids break leader election).
-      tabId: getTabSessionId() || undefined,
-      broadcast,
-      visibility,
-      onClientEvent: (event) => recordClientEvent(event),
-    } as Parameters<typeof createRealtimeConnection>[0]);
-  }
 
   private streamEventsViaSse(sessionId: string, onEvent: (event: unknown) => void): () => void {
     return createSseSessionStream({ apiBase: API_BASE, sessionId, onEvent });
@@ -252,36 +221,4 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     delete: async (id: string) => { await request(`/api/cron/${encodeURIComponent(id)}/delete`, { method: "POST", body: {} }); },
     runNow: (id: string) => request<CronRunResponse>(`/api/cron/${encodeURIComponent(id)}/run`, { method: "POST", body: {} }),
   };
-}
-
-async function request<T>(path: string, options: { readonly method?: string; readonly body?: unknown } = {}): Promise<T> {
-  const init: RequestInit = { method: options.method ?? "GET" };
-  if (options.body !== undefined) {
-    init.headers = { "Content-Type": "application/json" };
-    init.body = JSON.stringify(options.body);
-  }
-  const startedAt = Date.now();
-  const response = await fetch(`${API_BASE}${path}`, init);
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : undefined;
-  if (!response.ok) {
-    // Emit an 'api-error' telemetry event for every non-2xx API response.
-    // This pairs 1:1 with the server-side pirpc.request.rejected_handle_closed
-    // log when the failure is the closed-handle bug; for any other 5xx it
-    // still surfaces the symptom client-side. Best-effort: the throw below
-    // must not be blocked by telemetry.
-    try {
-      recordClientEvent({
-        kind: "api-error",
-        method: init.method ?? "GET",
-        path,
-        status: response.status,
-        ageMs: Date.now() - startedAt,
-        tabSessionId: getTabSessionId(),
-        errorPreview: typeof data?.error === "string" ? String(data.error).slice(0, 200) : undefined,
-      });
-    } catch { /* telemetry must never break the app */ }
-    throw new Error(data?.error ?? `Request failed: ${response.status}`);
-  }
-  return data as T;
 }
