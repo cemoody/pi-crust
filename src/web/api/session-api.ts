@@ -18,6 +18,13 @@ export type SessionCardStatus =
 export interface GetMessagesOptions {
   readonly limit?: number;
   readonly before?: number;
+  /**
+   * Resume cursor for reconnect catch-up. The API validates that this
+   * timestamp is still present in the transcript and returns only rows after
+   * it. A missing/invalid cursor is reported as an error so the
+   * caller can fall back to a bounded tail refresh.
+   */
+  readonly after?: number;
 }
 
 export interface SessionCardData {

@@ -146,6 +146,7 @@ export class HttpSessionDashboardApi implements SessionDashboardApi {
     const query: string[] = [];
     if (options?.limit !== undefined) query.push(`limit=${encodeURIComponent(options.limit)}`);
     if (options?.before !== undefined) query.push(`before=${encodeURIComponent(options.before)}`);
+    if (options?.after !== undefined) query.push(`after=${encodeURIComponent(options.after)}`);
     const suffix = query.length === 0 ? "" : `?${query.join("&")}`;
     return request<DashboardMessage[]>(`/api/sessions/${encodeURIComponent(sessionId)}/messages${suffix}`);
   }

@@ -1801,25 +1801,25 @@ describe("SessionDashboard", () => {
     await waitFor(() => expect(screen.getByLabelText("Session status")).not.toHaveTextContent(/reconnecting/i));
   });
 
-  // Regression: on mobile (iOS Safari / Android Chrome) the SSE is torn down
-  // by the OS when the tab is backgrounded for many minutes. After the SSE
-  // layer reconnects it forwards a synthetic `stream_reconnected` event so
-  // the dashboard can refetch /messages and pick up everything that happened
-  // while suspended. Without this catch-up the transcript stays frozen on
-  // whatever frame was last received before suspend.
-  it("refetches messages when the SSE emits a synthetic `stream_reconnected` event (mobile background catch-up)", async () => {
+  // Deterministic mobile reconnect repro: no API server is involved. The
+  // captured API contract proves that a background resume requests only the
+  // suffix after the newest rendered timestamp, then appends it without
+  // replacing prior transcript rows.
+  it("incrementally catches up missed mobile SSE messages after its timestamp cursor", async () => {
     let pushEvent: ((event: unknown) => void) | undefined;
-    let getMessagesCalls = 0;
-    let assistantText = "first response";
+    const messageOptions: unknown[] = [];
     const api: SessionDashboardApi = {
       ...makeApi([
         { id: "a", cwd: "/repo/a", sessionName: "Mobile", status: "idle", model: "m", lastActivity: 1 },
       ]),
-      async getMessages() {
-        getMessagesCalls += 1;
+      async getMessages(_sessionId, options) {
+        messageOptions.push(options);
+        if (options?.after === 2) {
+          return [{ id: "a-2", role: "assistant", text: "missed response", timestamp: 3 }];
+        }
         return [
-          { id: "u-1", role: "user", text: "hi" },
-          { id: "a-1", role: "assistant", text: assistantText },
+          { id: "u-1", role: "user", text: "hi", timestamp: 1 },
+          { id: "a-1", role: "assistant", text: "first response", timestamp: 2 },
         ];
       },
       streamEvents(_sessionId: string, onEvent: (event: unknown) => void) {
@@ -1831,19 +1831,51 @@ describe("SessionDashboard", () => {
     render(<SessionDashboard api={api} />);
     await screen.findByText("Mobile");
     fireEvent.click(screen.getByRole("link", { name: /Mobile/ }));
-    await waitFor(() => expect(pushEvent).toBeDefined());
-    await waitFor(() => expect(getMessagesCalls).toBeGreaterThanOrEqual(1));
-    const initialCalls = getMessagesCalls;
     await screen.findByText("first response");
+    await waitFor(() => expect(pushEvent).toBeDefined());
 
-    // While the user was away on their phone, the assistant produced more
-    // output. The SSE layer reconnects on visibility and notifies us so we
-    // can pull the new transcript.
-    assistantText = "updated response after suspend";
     act(() => { pushEvent?.({ type: "stream_reconnected", reason: "visibility-restored-stream-closed" }); });
 
-    await waitFor(() => expect(getMessagesCalls).toBeGreaterThan(initialCalls));
-    await screen.findByText("updated response after suspend");
+    await screen.findByText("missed response");
+    expect(messageOptions).toContainEqual({ after: 2 });
+    expect(messageOptions.filter((options) => typeof options === "object" && options !== null && "limit" in options)).toHaveLength(1);
+    expect(screen.getByText("hi")).toBeInTheDocument();
+    expect(screen.getByText("first response")).toBeInTheDocument();
+  });
+
+  it("falls back to the bounded tail refresh when the mobile reconnect cursor is invalid", async () => {
+    let pushEvent: ((event: unknown) => void) | undefined;
+    const messageOptions: unknown[] = [];
+    const api: SessionDashboardApi = {
+      ...makeApi([
+        { id: "a", cwd: "/repo/a", sessionName: "Mobile", status: "idle", model: "m", lastActivity: 1 },
+      ]),
+      async getMessages(_sessionId, options) {
+        messageOptions.push(options);
+        if (options?.after !== undefined) throw new Error("message cursor is no longer available");
+        if (messageOptions.filter((call) => typeof call === "object" && call !== null && "limit" in call).length === 1) {
+          return [{ id: "a-1", role: "assistant", text: "stale pre-rewrite tail", timestamp: 2 }];
+        }
+        return [{ id: "a-2", role: "assistant", text: "canonical tail after rewrite", timestamp: 4 }];
+      },
+      streamEvents(_sessionId: string, onEvent: (event: unknown) => void) {
+        pushEvent = onEvent;
+        return () => undefined;
+      },
+    };
+
+    render(<SessionDashboard api={api} />);
+    await screen.findByText("Mobile");
+    fireEvent.click(screen.getByRole("link", { name: /Mobile/ }));
+    await screen.findByText("stale pre-rewrite tail");
+    await waitFor(() => expect(pushEvent).toBeDefined());
+
+    act(() => { pushEvent?.({ type: "stream_reconnected", reason: "visibility-restored-stream-closed" }); });
+
+    await waitFor(() => expect(messageOptions).toContainEqual({ after: 2 }));
+    await waitFor(() => expect(messageOptions.filter((options) => typeof options === "object" && options !== null && "limit" in options)).toHaveLength(2));
+    expect(screen.getByText("canonical tail after rewrite")).toBeInTheDocument();
+    expect(screen.queryByText("stale pre-rewrite tail")).not.toBeInTheDocument();
   });
 });
 

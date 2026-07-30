@@ -1296,10 +1296,33 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const session = await getOrOpenSession(context, sessionId);
     const limitRaw = url.searchParams.get("limit");
     const beforeRaw = url.searchParams.get("before");
+    const afterRaw = url.searchParams.get("after");
     const limit = limitRaw && /^\d+$/.test(limitRaw) ? Math.min(Number(limitRaw), MAX_MESSAGES_LIMIT) : undefined;
     const before = beforeRaw && /^-?\d+$/.test(beforeRaw) ? Number(beforeRaw) : undefined;
+    const after = afterRaw && /^-?\d+$/.test(afterRaw) ? Number(afterRaw) : undefined;
+    if (afterRaw !== null && after === undefined) return sendJson(res, 400, { error: "after must be a numeric message timestamp" });
+    if (before !== undefined && after !== undefined) return sendJson(res, 400, { error: "before and after cannot be combined" });
     let messages: readonly SessionMessage[];
-    if (limit !== undefined) {
+    if (after !== undefined) {
+      // Reconnect catch-up is deliberately cursor based: the dashboard sends
+      // the timestamp of its newest persisted row and receives only records
+      // appended after it. Do not turn this into another tail-window fetch —
+      // on a long mobile transcript that would repeatedly re-download the
+      // same 80-message window after every background resume.
+      //
+      // Validate the boundary rather than silently treating an unknown cursor
+      // as the beginning/end. A rewritten/truncated transcript must make the
+      // client take its bounded tail-refresh fallback; otherwise it could
+      // append an unrelated suffix to stale history.
+      const all = await session.handle.getMessages();
+      const cursorIndexes = all.flatMap((message, index) => message.timestamp === after ? [index] : []);
+      // Timestamp is intentionally the portable, back-compatible cursor. It
+      // cannot safely distinguish siblings created in the same millisecond;
+      // reject that ambiguous boundary rather than skip a sibling and let the
+      // dashboard take its bounded full-tail fallback.
+      if (cursorIndexes.length !== 1) return sendJson(res, 409, { error: "message cursor is no longer available" });
+      messages = all.slice(cursorIndexes[0]! + 1);
+    } else if (limit !== undefined) {
       // Tail-window query: read only the trailing chunk of the session file
       // directly so a huge transcript doesn't have to be slurped + parsed in
       // full. Falls back to the adapter if a tail-read isn't possible (e.g.
@@ -1643,61 +1666,26 @@ async function listSessionCards(
   cwd?: string,
   options: { readonly includeSubagents?: boolean; readonly includeHidden?: boolean } = {},
 ) {
-  // SQLite is the durable session read model: it already has full-file titles,
-  // timestamps, and visibility flags. A sync reconciles only changed JSONL
-  // files; after that, listing never needs a head/tail JSONL scan.
-  await context.sessionSearch.sync();
-  const indexedSessions = context.sessionSearch.listIndexedMetadata({
-    ...(cwd ? { cwd } : {}),
-    ...(options.includeSubagents ? { includeSubagents: true } : {}),
-    ...(options.includeHidden ? { includeHidden: true } : {}),
+  // Search indexing deliberately reads complete transcripts. Do not make a
+  // sidebar/status poll pay for that work: the production adapter has a
+  // bounded head/tail lister, while the durable index (when already warm)
+  // supplies richer metadata without another scan. Apart from avoiding a
+  // multi-megabyte cold request, this keeps a newly written session visible
+  // immediately instead of waiting for the asynchronous search index.
+  const listed = await context.registry.listSessions(cwd, options);
+  const indexedByFile = context.sessionSearch.getIndexedMetadata(listed.map((session) => session.sessionFile));
+  const sessions = listed.map((session) => {
+    const indexed = indexedByFile.get(session.sessionFile);
+    if (!indexed) return session;
+    return {
+      ...session,
+      ...(session.sessionName === undefined && indexed.sessionName ? { sessionName: indexed.sessionName } : {}),
+      ...(session.createdAt === undefined ? { createdAt: indexed.createdAt } : {}),
+      ...(session.lastUserActivity === undefined ? { lastUserActivity: indexed.lastUserActivity } : {}),
+    };
   });
-  // Mock sessions are JSON blobs, while the index intentionally tracks only
-  // Pi JSONL. If a mock root also contains a JSONL fixture, the index is
-  // non-empty but incomplete; always ask the mock adapter for the authoritative
-  // mixed-format list. Normal Pi sessions retain the index-only fast path.
-  const sessions: readonly SessionListItem[] = context.adapterKind !== "mock" && indexedSessions.length > 0
-    ? mergeIndexedAndRegisteredSessions(
-        indexedSessions.map((session) => ({
-          id: session.sessionId,
-          cwd: session.cwd,
-          sessionFile: session.sessionFile,
-          ...(session.sessionName ? { sessionName: session.sessionName } : {}),
-          ...(session.subagent ? { subagent: true } : {}),
-          ...(session.hiddenFromList ? { hiddenFromList: true } : {}),
-          createdAt: session.createdAt,
-          lastUserActivity: session.lastUserActivity,
-          lastActivity: session.lastActivity ?? 0,
-        })),
-        context.registry.listRegisteredSessions(options),
-      )
-    : await context.registry.listSessions(cwd, options);
   for (const session of sessions) context.coldSessionFiles.set(session.id, session.sessionFile);
   return Promise.all(sessions.map((session) => sessionCardWithLiveState(context, session)));
-}
-
-/**
- * The durable index deliberately defers active JSONL files so search never
- * exposes a partial streamed response. Preserve those live workers in the
- * sidebar by overlaying registry sessions that are absent from the index.
- */
-function mergeIndexedAndRegisteredSessions(
-  indexedSessions: readonly SessionListItem[],
-  registeredSessions: readonly RegisteredSession[],
-): readonly SessionListItem[] {
-  const sessions = new Map(indexedSessions.map((session) => [session.id, session]));
-  for (const registered of registeredSessions) {
-    if (sessions.has(registered.id)) continue;
-    sessions.set(registered.id, {
-      id: registered.id,
-      cwd: registered.cwd,
-      sessionFile: registered.sessionFile,
-      ...(registered.subagent ? { subagent: true } : {}),
-      ...(registered.hiddenFromList ? { hiddenFromList: true } : {}),
-      lastActivity: 0,
-    });
-  }
-  return [...sessions.values()].sort((a, b) => b.lastActivity - a.lastActivity);
 }
 
 async function sessionCardWithLiveState(
