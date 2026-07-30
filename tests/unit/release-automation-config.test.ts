@@ -30,6 +30,8 @@ describe("release automation configuration", () => {
     expect(workflow).toContain("npx semantic-release");
     expect(workflow).toContain("fetch-depth: 0");
     expect(workflow).toContain("always-auth: false");
+    expect(workflow).toContain("recover_full_version");
+    expect(workflow).toContain("publish-pi-crust-full.mjs");
   });
 
   it("turns dependency commits into patch releases", () => {

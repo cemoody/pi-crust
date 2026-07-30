@@ -14,6 +14,10 @@ on:
         required: false
         default: false
         type: boolean
+      recover_full_version:
+        description: Publish only pi-crust-full at this existing pi-crust version
+        required: false
+        type: string
 
 # npm trusted publishing exchanges this workflow's GitHub OIDC identity for a
 # short-lived npm credential. Configure the matching trusted publisher once in
@@ -56,14 +60,18 @@ jobs:
       - name: install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      - name: recover pi-crust-full publication
+        if: inputs.recover_full_version != ''
+        run: node scripts/publish-pi-crust-full.mjs "${{ inputs.recover_full_version }}"
+
       - name: preview release
-        if: inputs.dry_run == true
+        if: inputs.recover_full_version == '' && inputs.dry_run == true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npx semantic-release --dry-run
 
       - name: publish
-        if: inputs.dry_run != true
+        if: inputs.recover_full_version == '' && inputs.dry_run != true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npx semantic-release
