@@ -16,7 +16,18 @@
  * callers using `?? null` / `?? 0` keep working unchanged).
  */
 import { describe, expect, it } from "vitest";
-import { coerceTimestamp, numberOrNull, sumNumbers } from "../../src/shared/util.js";
+import { coerceTimestamp, isRecord, numberOrNull, sumNumbers } from "../../src/shared/util.js";
+
+describe("isRecord", () => {
+  it("accepts objects but excludes null, arrays, and primitives", () => {
+    expect(isRecord({ key: "value" })).toBe(true);
+    expect(isRecord(Object.create(null))).toBe(true);
+    expect(isRecord(null)).toBe(false);
+    expect(isRecord([])).toBe(false);
+    expect(isRecord("text")).toBe(false);
+    expect(isRecord(42)).toBe(false);
+  });
+});
 
 describe("coerceTimestamp", () => {
   it("passes a finite number through", () => {

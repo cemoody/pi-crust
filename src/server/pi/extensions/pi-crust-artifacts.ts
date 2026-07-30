@@ -5,7 +5,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { defaultArtifactFileRoots, encodeArtifactFilePath, resolveArtifactFile } from "../../artifact-file.js";
 
-import { optional } from "../../../shared/util.js";
+import { isRecord, optional } from "../../../shared/util.js";
 import { validatePresentationDeck } from "../../../presentations/schema.js";
 import { prepareLocalPresentationAssets } from "../../../presentations/local-assets.js";
 import type { PresentationDeck } from "../../../presentations/schema.js";
@@ -447,10 +447,6 @@ function extractMessageText(message: Record<string, unknown>): string | undefine
     if (typeof candidate === "string" && candidate.trim()) return candidate;
   }
   return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function resolvePiRemoteApiBase(): string {

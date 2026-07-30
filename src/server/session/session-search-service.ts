@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { createReadStream, mkdirSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { isRecord } from "../../shared/util.js";
 
 /**
  * Local, rebuildable FTS5 index over Pi JSONL session transcripts.
@@ -478,10 +479,6 @@ function asTimestamp(value: unknown): number | null {
 
 function optionalEntryId(value: unknown): { entryId?: string } {
   return typeof value === "string" && value ? { entryId: value } : {};
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function clampLimit(value: number | undefined): number {

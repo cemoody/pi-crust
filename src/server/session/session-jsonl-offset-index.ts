@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { isRecord } from "../../shared/util.js";
 
 /**
  * A durable, rebuildable line index for JSONL transcripts used by the
@@ -352,8 +353,4 @@ function isIndex(value: unknown): value is JsonlOffsetIndex {
     previousEnd = offset + length;
   }
   return true;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
