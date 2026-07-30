@@ -30,6 +30,14 @@ function indexPath(file: string): string { return path.join(path.dirname(file), 
  * first indexed rebuild expensive but prove the durable warm path reads/parses
  * only its requested records instead of tail-scanning 64KB blocks. */
 describe("durable JSONL message offset index", () => {
+  it("defers a cold build so the caller can keep its bounded legacy tail fallback", async () => {
+    const file = await fixture([{ type: "session", id: "cold" }, ...Array.from({ length: 50 }, (_, index) => line(index, "x".repeat(32 * 1024)))]);
+    const cold = metrics();
+    expect(await readIndexedJsonlTail(file, { limit: 2, normalize, metrics: cold })).toBeUndefined();
+    expect(cold.sourceBytesRead).toBe(0);
+    expect(cold.sourceRecordsParsed).toBe(0);
+  });
+
   it("warm tail page parses and reads dramatically less source than the legacy tail scan", async () => {
     const giant = "x".repeat(256 * 1024);
     // Giant non-message records are realistic session metadata/checkpoint
@@ -41,7 +49,7 @@ describe("durable JSONL message offset index", () => {
       ...Array.from({ length: 32 }, (_, index) => ({ type: "session_info", checkpoint: index, payload: giant })),
     ]);
     const cold = metrics();
-    await readIndexedJsonlTail(file, { limit: 2, normalize, metrics: cold }); // build durable sidecar
+    await readIndexedJsonlTail(file, { limit: 2, normalize, metrics: cold, eagerBuild: true }); // build durable sidecar
     const indexed = metrics();
     const result = await readIndexedJsonlTail(file, { limit: 2, normalize, metrics: indexed });
     const legacy = metrics();
@@ -58,26 +66,26 @@ describe("durable JSONL message offset index", () => {
 
   it("extends safely on append and rebuilds safely on replacement", async () => {
     const file = await fixture([{ type: "session", id: "safe" }, line(1), line(2)]);
-    expect((await readIndexedJsonlTail(file, { limit: 2, normalize }))?.map((m) => m.content)).toEqual(["message-1 ", "message-2 "]);
+    expect((await readIndexedJsonlTail(file, { limit: 2, normalize, eagerBuild: true }))?.map((m) => m.content)).toEqual(["message-1 ", "message-2 "]);
     await fsp.appendFile(file, `${JSON.stringify(line(3))}\n`);
     expect((await readIndexedJsonlTail(file, { limit: 2, normalize }))?.map((m) => m.content)).toEqual(["message-2 ", "message-3 "]);
     const replacement = [{ type: "session", id: "replacement" }, line(100), line(101)];
     const temp = `${file}.replacement`;
     await fsp.writeFile(temp, replacement.map((value) => JSON.stringify(value)).join("\n") + "\n");
     await fsp.rename(temp, file);
-    expect((await readIndexedJsonlTail(file, { limit: 2, normalize }))?.map((m) => m.content)).toEqual(["message-100 ", "message-101 "]);
+    expect((await readIndexedJsonlTail(file, { limit: 2, normalize, eagerBuild: true }))?.map((m) => m.content)).toEqual(["message-100 ", "message-101 "]);
   });
 
   it("discards corrupt/stale sidecars and preserves the old scanner fallback", async () => {
     const file = await fixture([{ type: "session", id: "bad" }, line(1), line(2)]);
     await fsp.writeFile(indexPath(file), "not json");
-    expect((await readIndexedJsonlTail(file, { limit: 1, normalize }))?.[0]?.content).toContain("message-2");
+    expect((await readIndexedJsonlTail(file, { limit: 1, normalize, eagerBuild: true }))?.[0]?.content).toContain("message-2");
     const stale = JSON.parse(await fsp.readFile(indexPath(file), "utf8"));
     stale.source.endAnchor = "wrong";
     stale.source.size -= 1;
     await fsp.writeFile(indexPath(file), JSON.stringify(stale));
     await fsp.appendFile(file, `${JSON.stringify(line(3))}\n`);
-    expect((await readIndexedJsonlTail(file, { limit: 1, normalize }))?.[0]?.content).toContain("message-3");
+    expect((await readIndexedJsonlTail(file, { limit: 1, normalize, eagerBuild: true }))?.[0]?.content).toContain("message-3");
 
     const nonJsonl = await fixture([{ unrelated: true }]);
     expect(await readSessionMessagesTail(nonJsonl, { limit: 1 })).toBeUndefined();

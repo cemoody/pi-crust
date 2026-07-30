@@ -20,7 +20,7 @@ import { resolveGitSha, createLiveGitSha } from "./git-sha.js";
 import { resolvePiVersion } from "./pi-version.js";
 import { SessionRegistry, type RegisteredSession } from "./session/session-registry.js";
 import { SessionSearchService } from "./session/session-search-service.js";
-import { readIndexedJsonlTail } from "./session/session-jsonl-offset-index.js";
+import { deferJsonlOffsetIndexBuild, readIndexedJsonlTail } from "./session/session-jsonl-offset-index.js";
 import { attachRealtimeGateway } from "./protocol/realtime-gateway.js";
 import { PtyManager } from "./pty/pty-manager.js";
 import { createNodePtySpawner } from "./pty/node-pty-spawner.js";
@@ -2256,7 +2256,11 @@ export async function readSessionMessagesTail(
     normalize: (raw) => toSessionMessages(raw),
   });
   if (indexed !== undefined) return indexed;
-  return readSessionMessagesTailLegacy(sessionFile, options);
+  const legacy = await readSessionMessagesTailLegacy(sessionFile, options);
+  // Keep the cold request bounded; a delayed best-effort pass builds the
+  // durable index for later requests without delaying this tail page.
+  if (legacy !== undefined) deferJsonlOffsetIndexBuild(sessionFile);
+  return legacy;
 }
 
 export async function readSessionMessagesTailLegacy(

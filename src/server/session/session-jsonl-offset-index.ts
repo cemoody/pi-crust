@@ -11,6 +11,8 @@ import path from "node:path";
  */
 const INDEX_VERSION = 1;
 const ANCHOR_BYTES = 4096;
+const DEFERRED_BUILD_DELAY_MS = 1_000;
+const deferredBuilds = new Set<string>();
 
 export interface JsonlTailReadMetrics {
   sourceBytesRead: number;
@@ -23,6 +25,8 @@ export interface JsonlTailReadOptions<T> {
   readonly normalize: (raw: readonly unknown[]) => readonly T[];
   /** Test-only observability; counts bytes read from the JSONL, never sidecars. */
   readonly metrics?: JsonlTailReadMetrics;
+  /** Test seam: build synchronously. Production deliberately defers cold builds. */
+  readonly eagerBuild?: boolean;
 }
 
 interface IndexedRecord {
@@ -72,11 +76,14 @@ export async function readIndexedJsonlTail<T>(
 
   let index = await loadIndex(sidecarPath(sessionFile));
   if (index) index = await reconcileIndex(sessionFile, stat, index, options.metrics);
-  else index = await rebuildIndex(sessionFile, stat, options.metrics);
+  // A missing, corrupt, or stale index must never turn a bounded first page
+  // into a full transcript scan. The caller uses the established backwards
+  // reader now; `deferJsonlOffsetIndexBuild` warms this sidecar after the
+  // response path is clear.
+  if (!index && options.eagerBuild) index = await rebuildIndex(sessionFile, stat, options.metrics);
   if (!index || !index.sawSessionShapedRecord) return undefined;
-
-  // Persist only after a successful rebuild/reconciliation. This is best effort:
-  // a read-only session directory must remain fully functional via memory index.
+  // Persistence is best effort. This branch runs only for an existing index,
+  // its bounded append reconciliation, or the explicit test eager-build seam.
   await persistIndex(sidecarPath(sessionFile), index);
 
   const candidates = index.records.filter((record) =>
@@ -103,6 +110,29 @@ export async function readIndexedJsonlTail<T>(
   return options.normalize(raw).slice(-options.limit);
 }
 
+/**
+ * Build a missing/stale sidecar after the request has returned. One delayed
+ * builder per file avoids duplicate full scans under concurrent cold requests;
+ * it intentionally never affects the current request's bounded I/O budget.
+ */
+export function deferJsonlOffsetIndexBuild(sessionFile: string): void {
+  if (!sessionFile || deferredBuilds.has(sessionFile)) return;
+  deferredBuilds.add(sessionFile);
+  const timer = setTimeout(() => {
+    void buildDeferredIndex(sessionFile).finally(() => deferredBuilds.delete(sessionFile));
+  }, DEFERRED_BUILD_DELAY_MS);
+  timer.unref();
+}
+
+async function buildDeferredIndex(sessionFile: string): Promise<void> {
+  let stat: Stats;
+  try { stat = await fsp.stat(sessionFile); } catch { return; }
+  if (!stat.isFile() || stat.size === 0) return;
+  const existing = await loadIndex(sidecarPath(sessionFile));
+  const index = existing ? await reconcileIndex(sessionFile, stat, existing) : await rebuildIndex(sessionFile, stat);
+  if (index?.sawSessionShapedRecord) await persistIndex(sidecarPath(sessionFile), index);
+}
+
 async function loadIndex(indexFile: string): Promise<JsonlOffsetIndex | undefined> {
   let content: string;
   try { content = await fsp.readFile(indexFile, "utf8"); } catch { return undefined; }
@@ -124,7 +154,7 @@ async function reconcileIndex(
   const source = index.source;
   if (sameSource(source, stat)) return index;
   if (stat.size <= source.size || stat.dev !== source.dev || stat.ino !== source.ino) {
-    return rebuildIndex(sessionFile, stat, metrics);
+    return undefined;
   }
 
   // mtime/ctime necessarily move during a normal append, so verify immutable
@@ -132,7 +162,7 @@ async function reconcileIndex(
   const oldHead = await hashRange(sessionFile, 0, Math.min(ANCHOR_BYTES, source.size), metrics);
   const oldEnd = await hashRange(sessionFile, Math.max(0, source.size - ANCHOR_BYTES), Math.min(ANCHOR_BYTES, source.size), metrics);
   if (oldHead !== source.headAnchor || oldEnd !== source.endAnchor || index.scanOffset > stat.size) {
-    return rebuildIndex(sessionFile, stat, metrics);
+    return undefined;
   }
   return extendIndex(sessionFile, stat, index, metrics);
 }

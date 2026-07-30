@@ -12,15 +12,23 @@ for the `before` cursor, and a source fingerprint. It deliberately does **not**
 contain message bodies. A warm tail request seeks and parses only indexed message
 records until the existing `toSessionMessages` fan-out yields the requested page.
 
+On a **cold** missing, stale, or corrupt sidecar, the request intentionally uses
+the pre-existing bounded backwards tail scanner and schedules one unref'd,
+best-effort sidecar build after the response path. This preserves the
+`/messages` source-I/O budget on the first page instead of trading it for a full
+transcript index rebuild.
+
 ## Safety / invalidation
 
 * **Append:** source size grows and the prior head/end anchors still hash-match.
   Only the suffix after the last complete indexed newline is scanned and appended
   to the index.
 * **Replacement, truncation, or stale index:** inode/device changes, shrinking
-  size, or an anchor mismatch causes a full rebuild from JSONL.
+  size, or an anchor mismatch invalidate the sidecar. The current page uses the
+  bounded legacy tail scanner; a deferred builder makes a clean JSONL sidecar.
 * **Corruption:** malformed JSON, wrong version, invalid/overlapping/out-of-range
-  record offsets, or impossible fingerprint fields are ignored and rebuilt.
+  record offsets, or impossible fingerprint fields are ignored; the same bounded
+  fallback plus deferred rebuild applies.
 * **Concurrent write/race:** rebuild and read paths verify a stable stat before
   accepting results; a changed source returns `undefined`, preserving the
   established backwards tail scanner and adapter fallback.
