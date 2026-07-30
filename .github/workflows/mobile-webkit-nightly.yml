@@ -31,7 +31,12 @@ jobs:
 
       - name: resolve playwright version
         id: pw
-        run: echo "version=$(node -p \"require('@playwright/test/package.json').version\")" >> "$GITHUB_OUTPUT"
+        # Keep the shell quotes literal. Escaping the inner quotes inside this
+        # YAML scalar turns them into shell syntax and prevents the job from
+        # reaching the WebKit tests.
+        run: |
+          version="$(node -p "require('@playwright/test/package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: cache playwright browsers
         uses: actions/cache@v4
