@@ -59,6 +59,7 @@ export function PromptComposer(props: PromptComposerProps) {
     lastPersisted: new Map([[storageKey, draft]]),
   });
   const resizeFrameRef = useRef<number | undefined>(undefined);
+  const lastDraftLengthRef = useRef(draft.length);
   const lastTextareaHeightRef = useRef<string | undefined>(undefined);
   const [history, setHistory] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -176,11 +177,15 @@ export function PromptComposer(props: PromptComposerProps) {
       resizeFrameRef.current = undefined;
       const el = textareaRef.current;
       if (!el) return;
+      // A fixed inline height can make browsers report that old height as
+      // scrollHeight after the draft is shortened. Reset before measuring in
+      // that case so a sent or deleted long prompt returns to its natural
+      // size, while ordinary typing avoids needless style invalidations.
+      const mayNeedToShrink = draft.length < lastDraftLengthRef.current;
+      if (mayNeedToShrink) el.style.height = "auto";
       const height = `${el.scrollHeight}px`;
-      // Avoid a style invalidation when a keystroke does not change the
-      // wrapped line count. scrollHeight also lets the textarea shrink
-      // without first writing a transient "auto" height.
-      if (height === lastTextareaHeightRef.current || height === el.style.height) return;
+      lastDraftLengthRef.current = draft.length;
+      if (!mayNeedToShrink && (height === lastTextareaHeightRef.current || height === el.style.height)) return;
       el.style.height = height;
       lastTextareaHeightRef.current = height;
     });
