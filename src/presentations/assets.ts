@@ -20,12 +20,14 @@ export function resolvePresentationAssetSrc(src: string, resolver?: Presentation
   const resolved = resolver?.(src);
   if (resolved === undefined) return src;
   if (typeof resolved === "string") return resolved;
-  return `data:${resolved.mimeType};base64,${toBase64(resolved.data)}`;
+  return presentationAssetDataUri(resolved);
 }
 
-function toBase64(data: Uint8Array): string {
-  if (typeof Buffer !== "undefined") return Buffer.from(data).toString("base64");
+/** Encode a binary presentation asset for use in HTML `src` attributes. */
+export function presentationAssetDataUri(asset: PresentationAsset): string {
+  const { data, mimeType } = asset;
+  if (typeof Buffer !== "undefined") return `data:${mimeType};base64,${Buffer.from(data).toString("base64")}`;
   let binary = "";
   for (const byte of data) binary += String.fromCharCode(byte);
-  return btoa(binary);
+  return `data:${mimeType};base64,${btoa(binary)}`;
 }
