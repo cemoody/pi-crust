@@ -44,6 +44,22 @@ export function optional<T extends Record<string, unknown>>(
 }
 
 /**
+ * Return the first value for each key while preserving input order.
+ * Keys are compared with Set's SameValueZero semantics.
+ */
+export function uniqueBy<T, TKey>(values: readonly T[], keyFor: (value: T) => TKey): T[] {
+  const seen = new Set<TKey>();
+  const unique: T[] = [];
+  for (const value of values) {
+    const key = keyFor(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
+}
+
+/**
  * Return values in their original order with later duplicates removed.
  * Values are compared with Set's SameValueZero semantics.
  */

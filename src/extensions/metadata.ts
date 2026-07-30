@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { PrcExtensionHost } from "./registry.js";
 
-import { optional } from "../shared/util.js";
+import { optional, uniqueBy } from "../shared/util.js";
 export interface SerializedExtensionRegistry {
   readonly commands: readonly {
     readonly id: string;
@@ -115,22 +115,17 @@ export function serializeExtensionPackages(
 ): SerializedExtensionPackage[] {
   const plan = extensions?.contributionPlan ?? [];
   const readManifest = deps.readManifest ?? defaultReadManifest;
-  const seen = new Set<string>();
-  const result: SerializedExtensionPackage[] = [];
-  for (const contribution of plan) {
-    if (seen.has(contribution.id)) continue;
-    seen.add(contribution.id);
+  return uniqueBy(plan, (contribution) => contribution.id).map((contribution) => {
     const manifest = readManifest(contribution.packageSource) ?? {};
     const sha = manifest.gitHead ?? deps.gitShaForPackage?.(manifest.name);
-    result.push({
+    return {
       id: contribution.id,
       ...optional({ name: manifest.name }),
       ...optional({ version: manifest.version }),
       ...optional({ sha: typeof sha === "string" ? sha.slice(0, 12) : undefined }),
       scope: contribution.scope,
-    });
-  }
-  return result;
+    };
+  });
 }
 
 export function serializeExtensions(extensions: PrcExtensionHost | undefined): SerializedExtensionRegistry {

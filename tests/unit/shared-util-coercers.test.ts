@@ -16,7 +16,7 @@
  * callers using `?? null` / `?? 0` keep working unchanged).
  */
 import { describe, expect, it } from "vitest";
-import { coerceTimestamp, errorMessage, isRecord, numberOrNull, sumNumbers, uniqueValues } from "../../src/shared/util.js";
+import { coerceTimestamp, errorMessage, isRecord, numberOrNull, sumNumbers, uniqueBy, uniqueValues } from "../../src/shared/util.js";
 
 describe("isRecord", () => {
   it("accepts objects but excludes null, arrays, and primitives", () => {
@@ -42,6 +42,27 @@ describe("uniqueValues", () => {
     const values = ["one", "one", "two"];
     expect(uniqueValues(values)).toEqual(["one", "two"]);
     expect(values).toEqual(["one", "one", "two"]);
+  });
+});
+
+describe("uniqueBy", () => {
+  it("keeps the first value for each key in insertion order", () => {
+    const values = [
+      { id: "alpha", value: 1 },
+      { id: "beta", value: 2 },
+      { id: "alpha", value: 3 },
+    ];
+
+    expect(uniqueBy(values, (value) => value.id)).toEqual([
+      { id: "alpha", value: 1 },
+      { id: "beta", value: 2 },
+    ]);
+  });
+
+  it("does not mutate the input array", () => {
+    const values = [{ id: "one" }, { id: "one" }, { id: "two" }];
+    expect(uniqueBy(values, (value) => value.id)).toEqual([{ id: "one" }, { id: "two" }]);
+    expect(values).toEqual([{ id: "one" }, { id: "one" }, { id: "two" }]);
   });
 });
 
