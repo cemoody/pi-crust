@@ -1,4 +1,4 @@
-import { type ClipboardEvent as ReactClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ClipboardEvent as ReactClipboardEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
 import { errorMessage, optional } from "../../shared/util.js";
 import { downscaleImageIfNeeded } from "../utils/image-downscale.js";
@@ -43,9 +43,23 @@ export interface PromptComposerProps {
   readonly statusTokens?: string;
 }
 
+const DRAFT_PERSIST_DELAY_MS = 300;
+
 export function PromptComposer(props: PromptComposerProps) {
   const storageKey = `draft:${props.sessionId}`;
   const [draft, setDraft] = useState(() => storageGet(storageKey) ?? "");
+  const draftRef = useRef(draft);
+  const storageKeyRef = useRef(storageKey);
+  const draftPersistenceRef = useRef({
+    key: storageKey,
+    value: draft,
+    timer: undefined as ReturnType<typeof setTimeout> | undefined,
+    // The initial value was just read from storage, so mounting must not turn
+    // it into a redundant synchronous write.
+    lastPersisted: new Map([[storageKey, draft]]),
+  });
+  const resizeFrameRef = useRef<number | undefined>(undefined);
+  const lastTextareaHeightRef = useRef<string | undefined>(undefined);
   const [history, setHistory] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   // Paste warnings are surfaced through the global toast system when
@@ -93,8 +107,45 @@ export function PromptComposer(props: PromptComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLElement | null>(null);
 
+  function flushDraftPersistence() {
+    const pending = draftPersistenceRef.current;
+    if (pending.timer !== undefined) clearTimeout(pending.timer);
+    pending.timer = undefined;
+    if (pending.lastPersisted.get(pending.key) === pending.value) return;
+    storageSet(pending.key, pending.value);
+    pending.lastPersisted.set(pending.key, pending.value);
+  }
+
+  function scheduleDraftPersistence(key: string, value: string, flush = false) {
+    const pending = draftPersistenceRef.current;
+    if (pending.timer !== undefined) clearTimeout(pending.timer);
+    pending.key = key;
+    pending.value = value;
+    if (flush) {
+      flushDraftPersistence();
+    } else {
+      pending.timer = setTimeout(flushDraftPersistence, DRAFT_PERSIST_DELAY_MS);
+    }
+  }
+
+  function updateDraft(next: string | ((current: string) => string), flush = false) {
+    const value = typeof next === "function" ? next(draftRef.current) : next;
+    draftRef.current = value;
+    setDraft(value);
+    scheduleDraftPersistence(storageKeyRef.current, value, flush);
+  }
+
   useEffect(() => {
-    setDraft(storageGet(storageKey) ?? "");
+    // A session switch must not strand a just-typed draft in the debounce
+    // window. Flush it under the old key before loading the next session.
+    flushDraftPersistence();
+    storageKeyRef.current = storageKey;
+    const restored = storageGet(storageKey) ?? "";
+    draftRef.current = restored;
+    draftPersistenceRef.current.key = storageKey;
+    draftPersistenceRef.current.value = restored;
+    draftPersistenceRef.current.lastPersisted.set(storageKey, restored);
+    setDraft(restored);
     // Attachments are not session-scoped, so changing sessions must drop
     // the previous session's pending attachments. Otherwise the user
     // reports the image "stays attached" after navigating to another
@@ -102,31 +153,50 @@ export function PromptComposer(props: PromptComposerProps) {
     clearAttachments();
   }, [storageKey]);
 
+  useEffect(() => () => flushDraftPersistence(), []);
+
   useEffect(() => {
     if (!props.draftSeed) return;
-    setDraft(props.draftSeed.value);
+    updateDraft(props.draftSeed.value);
     textareaRef.current?.focus({ preventScroll: true });
   }, [props.draftSeed]);
 
   useEffect(() => {
-    storageSet(storageKey, draft);
-  }, [draft, storageKey]);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    const requestFrame = typeof requestAnimationFrame === "function"
+      ? requestAnimationFrame
+      : (callback: FrameRequestCallback) => setTimeout(callback, 0) as unknown as number;
+    const cancelFrame = typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : clearTimeout;
+    if (resizeFrameRef.current !== undefined) cancelFrame(resizeFrameRef.current);
+    resizeFrameRef.current = requestFrame(() => {
+      resizeFrameRef.current = undefined;
+      const el = textareaRef.current;
+      if (!el) return;
+      const height = `${el.scrollHeight}px`;
+      // Avoid a style invalidation when a keystroke does not change the
+      // wrapped line count. scrollHeight also lets the textarea shrink
+      // without first writing a transient "auto" height.
+      if (height === lastTextareaHeightRef.current || height === el.style.height) return;
+      el.style.height = height;
+      lastTextareaHeightRef.current = height;
+    });
+    return () => {
+      if (resizeFrameRef.current !== undefined) cancelFrame(resizeFrameRef.current);
+      resizeFrameRef.current = undefined;
+    };
   }, [draft]);
 
   const mode = draft.startsWith("!!") ? "hidden-bash" : draft.startsWith("!") ? "bash" : "prompt";
   const activeToken = draft.split(/\s/).at(-1) ?? "";
-  const fileMatches = activeToken.startsWith("@")
-    ? props.fileSuggestions.filter((file) => file.toLowerCase().includes(activeToken.slice(1).toLowerCase()))
-    : [];
-  const commandMatches = draft.startsWith("/")
-    ? uniqueStrings(props.commandSuggestions).filter((command) => command.toLowerCase().includes(draft.slice(1).toLowerCase()))
-    : [];
+  // Filtering a potentially large project-file/command list is non-urgent
+  // visual work; keep typing and controlled textarea updates responsive.
+  const deferredDraft = useDeferredValue(draft);
+  const deferredActiveToken = deferredDraft.split(/\s/).at(-1) ?? "";
+  const fileMatches = useMemo(() => deferredActiveToken.startsWith("@")
+    ? props.fileSuggestions.filter((file) => file.toLowerCase().includes(deferredActiveToken.slice(1).toLowerCase()))
+    : [], [deferredActiveToken, props.fileSuggestions]);
+  const commandMatches = useMemo(() => deferredDraft.startsWith("/")
+    ? uniqueStrings(props.commandSuggestions).filter((command) => command.toLowerCase().includes(deferredDraft.slice(1).toLowerCase()))
+    : [], [deferredDraft, props.commandSuggestions]);
 
   const queueSummary = useMemo(() => [
     ...props.steeringQueue.map((item) => `Steer: ${item}`),
@@ -137,7 +207,7 @@ export function PromptComposer(props: PromptComposerProps) {
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     if (text) setHistory((current) => [text, ...current]);
-    setDraft("");
+    updateDraft("", true);
     if (mode === "bash" || mode === "hidden-bash") {
       await props.onBash(mode === "hidden-bash" ? text.slice(2) : text.slice(1), mode === "bash");
       clearAttachments();
@@ -163,11 +233,11 @@ export function PromptComposer(props: PromptComposerProps) {
   }
 
   function completeFile(file: string) {
-    setDraft((current) => current.replace(/@\S*$/, `@${file}`));
+    updateDraft((current) => current.replace(/@\S*$/, `@${file}`));
   }
 
   function completeCommand(command: string) {
-    setDraft(`/${command}`);
+    updateDraft(`/${command}`);
   }
 
   function pathComplete() {
@@ -175,7 +245,7 @@ export function PromptComposer(props: PromptComposerProps) {
     const needle = activeToken.replace(/^@/, "").toLowerCase();
     const match = props.fileSuggestions.find((file) => file.toLowerCase().startsWith(needle));
     if (match) {
-      setDraft((current) => current.replace(/\S*$/, `@${match}`));
+      updateDraft((current) => current.replace(/\S*$/, `@${match}`));
     }
   }
 
@@ -322,7 +392,7 @@ export function PromptComposer(props: PromptComposerProps) {
 
     if (text && insertTextWhenNotFocused) {
       preventDefault();
-      setDraft((current) => current ? `${current}${text}` : text);
+      updateDraft((current) => current ? `${current}${text}` : text);
       textareaRef.current?.focus({ preventScroll: true });
       return;
     }
@@ -340,14 +410,20 @@ export function PromptComposer(props: PromptComposerProps) {
     return active === null || active === document.body || active === document.documentElement;
   }
 
+  // Keep the document listener stable across draft renders. Its callback
+  // intentionally reads refs/current state through the component closure only
+  // for event-time behavior; re-registering it per keystroke is needless DOM
+  // listener churn and opens tiny remove/add gaps.
+  const documentPasteHandlerRef = useRef<(event: ClipboardEvent) => void>(() => {});
+  documentPasteHandlerRef.current = (event) => {
+    if (!event.clipboardData || !shouldHandleDocumentPaste(event.target)) return;
+    void handleClipboardPaste(event.clipboardData, () => event.preventDefault(), true);
+  };
   useEffect(() => {
-    function onDocumentPaste(event: ClipboardEvent) {
-      if (!event.clipboardData || !shouldHandleDocumentPaste(event.target)) return;
-      void handleClipboardPaste(event.clipboardData, () => event.preventDefault(), true);
-    }
+    const onDocumentPaste = (event: ClipboardEvent) => documentPasteHandlerRef.current(event);
     document.addEventListener("paste", onDocumentPaste);
     return () => document.removeEventListener("paste", onDocumentPaste);
-  });
+  }, []);
 
   const canSubmit = draft.trim().length > 0 || attachments.length > 0;
 
@@ -381,7 +457,7 @@ export function PromptComposer(props: PromptComposerProps) {
           aria-label="Prompt draft"
           placeholder={placeholder}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => updateDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && event.altKey) {
               event.preventDefault();
@@ -408,7 +484,7 @@ export function PromptComposer(props: PromptComposerProps) {
             }
             if (event.key === "ArrowUp" && event.altKey && history[0]) {
               event.preventDefault();
-              setDraft(history[0]);
+              updateDraft(history[0]);
             }
           }}
           onPaste={(event) => void handlePaste(event)}
