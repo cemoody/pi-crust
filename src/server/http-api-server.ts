@@ -48,6 +48,7 @@ import { defaultArtifactFileRoots, resolveArtifactFile, resolveArtifactFileForWr
 import { coerceTimestamp, isRecord } from "../shared/util.js";
 import { findSessionMessageBySyntheticId, lookupSessionMessage } from "./http-api-message-lookup.js";
 import { hydrateTranscriptSidecars } from "./pi/transcript-sidecars.js";
+import { SessionTranscriptPageCache } from "./session-transcript-page-cache.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -122,6 +123,8 @@ interface HttpApiServerContext extends HttpApiServerOptions {
    * "Supervisor connection closed before frame arrived" on the first.
    */
   readonly openingSessions: Map<string, Promise<import("./session/session-registry.js").RegisteredSession>>;
+  /** Coalesced, LRU-cached pages for /messages?limit=&before= JSONL reads. */
+  readonly transcriptPageCache: SessionTranscriptPageCache;
   /**
    * Active SSE streams keyed by `tabSessionId`. When a new SSE arrives for a
    * tab that already has one open, the previous one is closed so the browser
@@ -595,6 +598,7 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
     coldSessionFiles: new Map(),
     sessionAliases: new Map(),
     openingSessions: new Map(),
+    transcriptPageCache: new SessionTranscriptPageCache(readSessionMessagesTail),
     activeSseByTab: new Map(),
     sessionSearch: new SessionSearchService({
       sessionRoot: options.sessionRoot,
@@ -621,7 +625,10 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
       return sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
     });
   });
-  server.once("close", () => context.sessionSearch.close());
+  server.once("close", () => {
+    context.transcriptPageCache.clear();
+    context.sessionSearch.close();
+  });
   // Index only after the agent settles: Pi persists JSONL incrementally while
   // streaming, and search must never expose a partial assistant response.
   const unsubscribeSearchIndexing = context.registry.subscribeAll((session, event) => {
@@ -1327,7 +1334,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
       // directly so a huge transcript doesn't have to be slurped + parsed in
       // full. Falls back to the adapter if a tail-read isn't possible (e.g.
       // session file doesn't exist on disk yet).
-      const tail = await readSessionMessagesTail(session.sessionFile, before === undefined ? { limit } : { limit, before });
+      const tail = await context.transcriptPageCache.get({
+        sessionId: session.id,
+        sessionFile: session.sessionFile,
+        limit,
+        ...(before === undefined ? {} : { before }),
+      });
       if (tail === undefined) {
         // Fallback for adapters / files that the tail-reader can't parse
         // (e.g. the mock adapter's pretty-printed JSON blobs). Apply the
