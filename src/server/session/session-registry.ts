@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import { sanitizePiDynamicCommands } from "../../shared/slash-command-routing.js";
 import type { PathPolicy } from "../security/path-policy.js";
-import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ListSessionsOptions, ModelInfo, PiAdapter, PiEvent, PiEventListener, PiSessionHandle, PromptAttachment, SeqEventListener, SessionListItem, SessionState, Unsubscribe } from "../pi/types.js";
+import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ListSessionsOptions, ModelInfo, PiAdapter, PiEvent, PiEventListener, PiSessionHandle, PromptAttachment, SeqEventListener, SessionListItem, SessionState } from "../pi/types.js";
+import { SessionEventStream } from "./session-event-stream.js";
 import { WorkerRegistry } from "./worker-registry.js";
 import { persistOversizedTranscriptBodies, transcriptSidecarDirectory } from "../pi/transcript-sidecars.js";
 
@@ -22,11 +23,6 @@ export interface RegisteredSession {
   readonly hiddenFromList?: boolean;
 }
 
-interface RingEntry {
-  readonly seq: number;
-  readonly event: PiEvent;
-}
-
 interface PendingSessionMetadata {
   readonly sessionName?: string;
   readonly subagent: boolean;
@@ -35,12 +31,7 @@ interface PendingSessionMetadata {
 
 interface SessionInternal {
   readonly registered: RegisteredSession;
-  readonly ring: RingEntry[];
-  readonly subscribers: Set<SeqEventListener>;
-  unsubscribeHandle: Unsubscribe;
-  nextLocalSeq: number;
-  /** Greatest seq we've delivered (used so the SSE layer can read "current top"). */
-  lastSeq: number;
+  readonly eventStream: SessionEventStream;
 }
 
 const DEFAULT_RING_SIZE = 500;
@@ -243,8 +234,8 @@ export class SessionRegistry {
   async evictDeadSession(sessionId: string): Promise<boolean> {
     const internal = this.sessions.get(sessionId);
     if (!internal) return false;
-    internal.subscribers.clear();
-    try { internal.unsubscribeHandle(); } catch { /* ignore */ }
+    internal.eventStream.clear();
+    try { internal.eventStream.unsubscribe(); } catch { /* ignore */ }
     const handle = internal.registered.handle;
     if (typeof handle.detach === "function") {
       await handle.detach().catch(() => undefined);
@@ -362,9 +353,7 @@ export class SessionRegistry {
   }
 
   subscribeWithSeq(sessionId: string, listener: SeqEventListener): () => void {
-    const internal = this.getInternal(sessionId);
-    internal.subscribers.add(listener);
-    return () => { internal.subscribers.delete(listener); };
+    return this.getInternal(sessionId).eventStream.subscribe(listener);
   }
 
   /**
@@ -374,36 +363,24 @@ export class SessionRegistry {
    * has missed history and should refetch state.
    */
   subscribeFromSeq(sessionId: string, fromSeq: number | null, listener: SeqEventListener): () => void {
-    const internal = this.getInternal(sessionId);
-    if (fromSeq !== null && Number.isFinite(fromSeq)) {
-      const ringLow = internal.ring.length > 0 ? internal.ring[0]!.seq : null;
-      if (ringLow !== null && fromSeq < ringLow - 1) {
-        listener({ type: "session_resync", fromSeq, ringLowSeq: ringLow, lastSeq: internal.lastSeq } as unknown as PiEvent, internal.lastSeq);
-      }
-      for (const entry of internal.ring) {
-        if (entry.seq > fromSeq) listener(entry.event, entry.seq);
-      }
-    }
-    return this.subscribeWithSeq(sessionId, listener);
+    return this.getInternal(sessionId).eventStream.subscribeFromSeq(fromSeq, listener);
   }
 
   /** Greatest seq delivered for a session (0 if nothing emitted yet). */
   lastSeq(sessionId: string): number {
-    return this.getInternal(sessionId).lastSeq;
+    return this.getInternal(sessionId).eventStream.lastSeq;
   }
 
   /** Number of live realtime subscribers for a session. Used by the realtime
    *  gateway's leak tests and operator health snapshots. */
   subscriberCount(sessionId: string): number {
-    const internal = this.sessions.get(sessionId);
-    return internal ? internal.subscribers.size : 0;
+    return this.sessions.get(sessionId)?.eventStream.subscriberCount ?? 0;
   }
 
   /** Explicit session delete: RPC-shutdown the worker and forget. */
   async disposeSession(sessionId: string): Promise<void> {
     const internal = this.getInternal(sessionId);
-    internal.subscribers.clear();
-    internal.unsubscribeHandle();
+    internal.eventStream.close();
     await internal.registered.handle.dispose();
     this.sessions.delete(sessionId);
     this.pendingSessionMetadata.delete(sessionId);
@@ -412,8 +389,7 @@ export class SessionRegistry {
   /** API shutdown: close the socket but keep the worker (supervisor) alive. */
   async detachSession(sessionId: string): Promise<void> {
     const internal = this.getInternal(sessionId);
-    internal.subscribers.clear();
-    internal.unsubscribeHandle();
+    internal.eventStream.close();
     const handle = internal.registered.handle;
     if (handle.detach) await handle.detach();
     else await handle.dispose();
@@ -422,8 +398,7 @@ export class SessionRegistry {
 
   async deleteSession(sessionId: string): Promise<void> {
     const internal = this.getInternal(sessionId);
-    internal.subscribers.clear();
-    internal.unsubscribeHandle();
+    internal.eventStream.close();
     await internal.registered.handle.dispose();
     this.sessions.delete(sessionId);
     this.pendingSessionMetadata.delete(sessionId);
@@ -467,55 +442,36 @@ export class SessionRegistry {
       ...(metadata.subagent ? { subagent: true } : {}),
       ...(metadata.hiddenFromList || metadata.subagent ? { hiddenFromList: true } : {}),
     };
-    const internal: SessionInternal = {
-      registered,
-      ring: [],
-      subscribers: new Set(),
-      unsubscribeHandle: () => undefined,
-      nextLocalSeq: 1,
-      lastSeq: 0,
-    };
-    const onEvent = (event: PiEvent, seq: number) => {
-      // Pi owns JSONL persistence. Once it reports the end of a turn, compact
-      // newly-written giant tool/artifact bodies into private sidecars. This is
-      // deliberately asynchronous: durable sidecar work must never delay SSE
-      // delivery or poison the agent event stream.
-      if (event.type === "agent_end") {
-        void persistOversizedTranscriptBodies(registered.sessionFile).catch(() => undefined);
-      }
-      internal.lastSeq = seq;
-      internal.ring.push({ seq, event });
-      if (internal.ring.length > this.ringSize) internal.ring.shift();
-      for (const listener of internal.subscribers) {
-        try { listener(event, seq); } catch { /* listener errors must not break the bus */ }
-      }
-      for (const observer of this.eventObservers) {
-        try { observer(registered, event); } catch { /* observers must not break the bus */ }
-      }
-    };
-
-    internal.unsubscribeHandle = handle.subscribeWithSeq
-      ? handle.subscribeWithSeq(onEvent)
-      : handle.subscribe((event) => {
-          const seq = internal.nextLocalSeq++;
-          onEvent(event, seq);
-        });
+    const eventStream = new SessionEventStream({
+      handle,
+      ringSize: this.ringSize,
+      onEvent: (event) => this.observeSessionEvent(registered, event),
+    });
+    const internal: SessionInternal = { registered, eventStream };
 
     this.sessions.set(handle.id, internal);
     return registered;
   }
 
+  private observeSessionEvent(registered: RegisteredSession, event: PiEvent): void {
+    // Pi owns JSONL persistence. Sidecar work must never delay realtime delivery.
+    if (event.type === "agent_end") {
+      void persistOversizedTranscriptBodies(registered.sessionFile).catch(() => undefined);
+    }
+    for (const observer of this.eventObservers) {
+      try { observer(registered, event); } catch { /* observers must not break the bus */ }
+    }
+  }
+
   private replaceSessionId(oldSessionId: string, handle: PiSessionHandle): RegisteredSession {
     const old = this.sessions.get(oldSessionId);
     this.sessions.delete(oldSessionId);
-    if (old) old.unsubscribeHandle();
+    if (old) old.eventStream.unsubscribe();
     const registered = this.register(handle);
     if (old) {
       // Transfer any remaining subscribers to the new session id, so SSE
       // clients survive fork/clone identity changes.
-      const next = this.sessions.get(handle.id)!;
-      for (const listener of old.subscribers) next.subscribers.add(listener);
-      old.subscribers.clear();
+      old.eventStream.transferSubscribersTo(this.sessions.get(handle.id)!.eventStream);
     }
     return registered;
   }
