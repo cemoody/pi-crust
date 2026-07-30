@@ -4,6 +4,7 @@ import { coerceMarkdownInput } from "../utils/safe-markdown.js";
 import remarkGfm from "remark-gfm";
 import { PRESENTATION_MIME } from "../../presentations/schema.js";
 import { truncateWithEllipsis } from "../../shared/truncation.js";
+import { slugify } from "../../shared/util.js";
 import { copyTextToClipboard } from "../utils/clipboard.js";
 import "./message-timeline.css";
 import { Icon } from "./Icon.js";
@@ -892,10 +893,6 @@ function artifactBasename(candidate: string | undefined): string | undefined {
   return base && base.length > 0 ? base : undefined;
 }
 
-function slugifyTitle(title: string, fallback = "artifact"): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || fallback;
-}
-
 /**
  * Computes a `{ href, name }` download target for any artifact kind. Inline
  * artifacts (html/markdown/json/table/vega-lite) become client-side blobs;
@@ -930,12 +927,12 @@ function useArtifactDownload(
   useEffect(() => () => { if (objectUrl) URL.revokeObjectURL(objectUrl); }, [objectUrl]);
 
   if (objectUrl && blob) {
-    const name = artifactBasename(artifact.path) ?? `${slugifyTitle(title)}.${blob.ext}`;
+    const name = artifactBasename(artifact.path) ?? `${slugify(title, "artifact")}.${blob.ext}`;
     return { href: objectUrl, name };
   }
   const src = resolveArtifactSrc(artifact.url ?? artifact.path);
   if (src) {
-    return { href: src, name: artifactBasename(artifact.path ?? artifact.url) ?? slugifyTitle(title) };
+    return { href: src, name: artifactBasename(artifact.path ?? artifact.url) ?? slugify(title, "artifact") };
   }
   return null;
 }
