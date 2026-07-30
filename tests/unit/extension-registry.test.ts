@@ -105,8 +105,9 @@ describe("pi-crust extension registry harness", () => {
     expect(host.activity.list()).toEqual([]);
   });
 
-  it("serializes an activity's requested icon so the sidebar can render it", async () => {
+  it("serializes an activity's requested icon and web module URL", async () => {
     const host = createPrcExtensionHost();
+    host.registerWebAsset("term", "/abs/path/to/terminal.web.mjs");
     await host.activate({
       id: "term",
       factory: (prc) => {
@@ -116,6 +117,7 @@ describe("pi-crust extension registry harness", () => {
     const activities = serializeExtensions(host).activities;
     const term = activities.find((a) => a.id === "term.view");
     expect(term?.icon).toBe("terminal");
+    expect(term?.webModuleUrl).toContain("/api/extensions/term/assets/terminal.web.mjs");
 
     // Activities without an icon must omit the field (not emit undefined).
     const host2 = createPrcExtensionHost();
