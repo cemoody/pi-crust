@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PromptComposer } from "../../src/web/components/PromptComposer.js";
 
 function renderComposer(overrides = {}) {
@@ -27,6 +27,7 @@ function renderComposer(overrides = {}) {
 }
 
 beforeEach(() => {
+  vi.useRealTimers();
   const store = new Map<string, string>();
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
@@ -40,6 +41,8 @@ beforeEach(() => {
   URL.createObjectURL = vi.fn(() => "blob://preview");
   vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000001");
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("PromptComposer", () => {
   it("submits prompt when idle", () => {
@@ -67,10 +70,75 @@ describe("PromptComposer", () => {
     renderComposer();
     const draft = screen.getByLabelText("Prompt draft");
     fireEvent.change(draft, { target: { value: "remember me" } });
-    expect(localStorage.getItem("draft:s1")).toBe("remember me");
+    // Submit clears the pending debounce, so a just-entered prompt cannot
+    // overwrite the cleared composer state after it has been dispatched.
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     fireEvent.keyDown(draft, { key: "ArrowUp", altKey: true });
     expect(screen.getByLabelText("Prompt draft")).toHaveValue("remember me");
+  });
+
+  it("debounces localStorage writes across a burst of keystrokes", () => {
+    vi.useFakeTimers();
+    renderComposer();
+    const setItem = localStorage.setItem as ReturnType<typeof vi.fn>;
+    setItem.mockClear(); // Ignore any unrelated setup behavior.
+    const draft = screen.getByLabelText("Prompt draft");
+
+    fireEvent.change(draft, { target: { value: "a" } });
+    fireEvent.change(draft, { target: { value: "ab" } });
+    fireEvent.change(draft, { target: { value: "abc" } });
+    expect(setItem).not.toHaveBeenCalled();
+
+    act(() => { vi.advanceTimersByTime(299); });
+    expect(setItem).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(setItem).toHaveBeenCalledTimes(1);
+    expect(setItem).toHaveBeenLastCalledWith("draft:s1", "abc");
+  });
+
+  it("coalesces textarea resize work into a frame and skips unchanged height writes", () => {
+    let frameId = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
+      const id = ++frameId;
+      frames.set(id, callback);
+      return id;
+    }));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn((id: number) => frames.delete(id)));
+
+    renderComposer();
+    const draft = screen.getByLabelText("Prompt draft") as HTMLTextAreaElement;
+    Object.defineProperty(draft, "scrollHeight", { configurable: true, value: 72 });
+    const heightWrite = vi.spyOn(draft.style, "height", "set");
+    const runOnlyFrame = () => {
+      expect(frames.size).toBe(1);
+      const callback = [...frames.values()][0]!;
+      frames.clear();
+      callback(0);
+    };
+
+    // Several input renders before paint leave just one live rAF callback.
+    fireEvent.change(draft, { target: { value: "a" } });
+    fireEvent.change(draft, { target: { value: "ab" } });
+    fireEvent.change(draft, { target: { value: "abc" } });
+    runOnlyFrame();
+    expect(heightWrite).toHaveBeenCalledTimes(1);
+    expect(draft.style.height).toBe("72px");
+
+    fireEvent.change(draft, { target: { value: "abcd" } });
+    runOnlyFrame();
+    expect(heightWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one document paste listener while typing", () => {
+    const addListener = vi.spyOn(document, "addEventListener");
+    renderComposer();
+    const initialPasteListeners = addListener.mock.calls.filter(([type]) => type === "paste").length;
+    const draft = screen.getByLabelText("Prompt draft");
+    fireEvent.change(draft, { target: { value: "a" } });
+    fireEvent.change(draft, { target: { value: "ab" } });
+    fireEvent.change(draft, { target: { value: "abc" } });
+    expect(addListener.mock.calls.filter(([type]) => type === "paste")).toHaveLength(initialPasteListeners);
   });
 
   it("hides Abort and Follow-up while idle", () => {
