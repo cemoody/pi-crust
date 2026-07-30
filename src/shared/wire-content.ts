@@ -28,10 +28,15 @@
  */
 import { isRecord } from "./util.js";
 
+export interface ContentImage {
+  readonly data: string;
+  readonly mimeType: string;
+}
+
 export interface DecomposedContent {
   readonly text: string;
   readonly thinking: string;
-  readonly images: readonly { readonly data: string; readonly mimeType: string }[];
+  readonly images: readonly ContentImage[];
 }
 
 export function contentTextAndThinking(content: unknown): DecomposedContent {
@@ -45,7 +50,7 @@ export function contentTextAndThinking(content: unknown): DecomposedContent {
   }
   const text: string[] = [];
   const thinking: string[] = [];
-  const images: { data: string; mimeType: string }[] = [];
+  const images: ContentImage[] = [];
   for (const block of content) {
     if (!isRecord(block)) continue;
     // Order matters for stop-reason-error edge cases: a thinking block
@@ -53,9 +58,8 @@ export function contentTextAndThinking(content: unknown): DecomposedContent {
     // bubble stays empty (thinking renders in its own collapsed widget).
     if (typeof block.thinking === "string") thinking.push(block.thinking);
     if (typeof block.text === "string") text.push(block.text);
-    if (block.type === "image" && typeof block.data === "string") {
-      images.push({ data: block.data, mimeType: String(block.mimeType ?? "image/png") });
-    }
+    const image = contentImage(block);
+    if (image) images.push(image);
     // Unknown blocks (toolCall, extension types, etc.) are intentionally
     // skipped — the prior session-dashboard-helpers copy JSON-stringified
     // them into `text`, which leaked tool-call JSON into the assistant
@@ -86,13 +90,19 @@ export function toolResultText(result: unknown): string {
  * actual image inline in the timeline instead of only its `[Read image
  * file …]` text note. Returns [] for any other shape.
  */
-export function toolResultImages(result: unknown): readonly { readonly data: string; readonly mimeType: string }[] {
+export function toolResultImages(result: unknown): readonly ContentImage[] {
   if (!isRecord(result) || !Array.isArray(result.content)) return [];
-  const images: { data: string; mimeType: string }[] = [];
+  const images: ContentImage[] = [];
   for (const item of result.content) {
-    if (isRecord(item) && item.type === "image" && typeof item.data === "string") {
-      images.push({ data: item.data, mimeType: String(item.mimeType ?? "image/png") });
-    }
+    if (!isRecord(item)) continue;
+    const image = contentImage(item);
+    if (image) images.push(image);
   }
   return images;
+}
+
+/** Keeps image extraction identical for message content and tool results. */
+function contentImage(block: Record<string, unknown>): ContentImage | undefined {
+  if (block.type !== "image" || typeof block.data !== "string") return undefined;
+  return { data: block.data, mimeType: String(block.mimeType ?? "image/png") };
 }
