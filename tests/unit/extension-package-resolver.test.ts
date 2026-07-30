@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolvePackageExtensions, resolveSinglePackageExtensions } from "../../src/extensions/packages.js";
+import { resolvePackageExtensionFiles } from "../../src/extensions/package-extension-resolver.js";
 import { createTempPrcHome, type TempPrcHome } from "../helpers/temp-pi-crust-home.js";
 import { writeLocalExtensionPackage } from "../helpers/local-extension-package.js";
 
@@ -29,13 +30,20 @@ describe("pi-crust extension package resolver", () => {
     expect(result).toEqual({ extensions: [], webExtensions: [], diagnostics: [] });
   });
 
-  it("resolves a package.json piRemoteControl.extension entry", async () => {
+  it("resolves a package.json piRemoteControl.extension entry through the extracted file resolver", async () => {
     const home = await makeHome();
     const packageDir = await writeLocalExtensionPackage(home.root, { extensionFile: "src/extension.mjs" });
 
-    const entries = await resolveSinglePackageExtensions(packageDir);
+    const entries = await resolvePackageExtensionFiles(packageDir);
 
     expect(entries).toEqual([path.join(packageDir, "src", "extension.mjs")]);
+  });
+
+  it("keeps the public package resolver entry point compatible", async () => {
+    const home = await makeHome();
+    const packageDir = await writeLocalExtensionPackage(home.root, { extensionFile: "src/extension.mjs" });
+
+    await expect(resolveSinglePackageExtensions(packageDir)).resolves.toEqual([path.join(packageDir, "src", "extension.mjs")]);
   });
 
   it("reports diagnostics for missing explicit manifest paths", async () => {
