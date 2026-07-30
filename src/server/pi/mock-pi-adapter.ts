@@ -20,9 +20,8 @@ import type {
   SessionStatus,
   Unsubscribe,
 } from "./types.js";
-import type { ExtensionUiRequest } from "../../shared/protocol.js";
-
 import { optional } from "../../shared/util.js";
+import { runMockPromptScenario } from "./mock-prompt-scenarios.js";
 interface PersistedMockSession {
   readonly id: string;
   readonly cwd: string;
@@ -235,43 +234,7 @@ class MockPiSessionHandle implements PiSessionHandle {
   }
 
   async prompt(message: string, attachments: readonly PromptAttachment[] = []): Promise<void> {
-    // Test/load directive: `@@burst <intervalMs> <durationMs>` drives a
-    // sustained synthetic token stream (one text_delta every intervalMs for
-    // durationMs) without any LLM. Used by the multi-tab pressure test to
-    // prove concurrent, long-lived streaming + per-session isolation.
-    const burst = /^@@burst\s+(\d+)\s+(\d+)\s*$/.exec(message.trim());
-    if (burst) {
-      await this.runBurst(Number(burst[1]), Number(burst[2]));
-      return;
-    }
-    // Test directive: `@@artifact` emits a LIVE image artifact exactly the way
-    // the @cemoody/pi-artifact `display(...)` tool does in production: it writes
-    // a real PNG under <cwd>/.pi/artifacts/<sessionId>/ and emits a paired
-    // message_start/message_end carrying a `role: "custom"`, `customType:
-    // "artifact"` WireMessage whose image src is the extension-served URL
-    // /api/sessions/:id/artifacts/:file. Used by artifact-live-render.spec.ts to
-    // prove the artifact renders AND its bytes load without a page reload
-    // (the PR #204 realtime-reducer + PR #205 byte-serving paths combined).
-    if (message.trim() === "@@artifact") {
-      await this.runArtifact();
-      return;
-    }
-    // Test directive: `@@extension-ui` emits generic extension UI status/widget
-    // requests exactly as RPC-backed extensions do for ctx.ui.setStatus and
-    // ctx.ui.setWidget. Used by extension-ui-generic.spec.ts to pin the web
-    // renderer without depending on a specific third-party extension.
-    if (message.trim() === "@@extension-ui") {
-      await this.runExtensionUiDemo(message);
-      return;
-    }
-    // Test directive: `@@login` reproduces the browser-extension login handoff —
-    // the LLM explains it needs a sign-in, then calls `browser_request_login`,
-    // whose result carries a `kind:"html"` artifact rendered as an inline live
-    // browser card (Tier-B reveal) right in the conversation turn.
-    if (message.trim() === "@@login") {
-      await this.runLoginHandoff(message);
-      return;
-    }
+    if (await runMockPromptScenario(message, this.promptScenarioContext())) return;
     this.status = "running";
     this.emit({ type: "agent_start" });
     const timestamp = Date.now();
@@ -308,208 +271,16 @@ class MockPiSessionHandle implements PiSessionHandle {
     this.emit({ type: "agent_end", messages: [userMessage, assistantMessage] });
   }
 
-  private async runLoginHandoff(message: string): Promise<void> {
-    this.status = "running";
-    this.emit({ type: "agent_start" });
-    const t = Date.now();
-    const userMessage: SessionMessage = { role: "user", content: message, timestamp: t };
-    this.messages.push(userMessage);
-    this.emit({ type: "message", message: userMessage });
-    await new Promise((r) => setTimeout(r, 40));
-
-    const assistantMessage: SessionMessage = {
-      role: "assistant",
-      content:
-        "I need to access your private GitHub repos, but you're not signed in. " +
-        "I've opened the GitHub login page in the live browser below \u2014 please " +
-        "enter your username and password, then I'll continue.",
-      timestamp: t + 1,
+  private promptScenarioContext() {
+    return {
+      id: this.id,
+      cwd: this.cwd,
+      appendMessage: (message: SessionMessage) => this.messages.push(message),
+      emit: (event: PiEvent) => this.emit(event),
+      persist: () => this.persist(),
+      setStatus: (status: SessionStatus) => { this.status = status; },
+      setLastActivity: (timestamp: number) => { this.lastActivity = timestamp; },
     };
-    this.messages.push(assistantMessage);
-    this.emit({ type: "message", message: assistantMessage });
-    await new Promise((r) => setTimeout(r, 40));
-
-    // The live browser card. Emitted as a persisted custom "artifact" message
-    // with a text/html representation (rendered inline as a sandboxed
-    // allow-scripts iframe), so it survives the post-turn /messages refetch.
-    // The embedded canvas connects to the browser stream server over WebSocket.
-    const wsUrl = process.env.PI_CRUST_BROWSER_WS ?? "ws://127.0.0.1:4000";
-    const viewerHtml = [
-      "<!doctype html><meta charset=utf8>",
-      "<style>html,body{margin:0;height:100%;background:#15151a;font:12px system-ui;color:#ddd}",
-      ".bar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid #333}",
-      ".dot{width:8px;height:8px;border-radius:50%;background:#3c6;display:inline-block}",
-      "#u{opacity:.75;font-family:ui-monospace,monospace}",
-      ".wrap{display:flex;align-items:center;justify-content:center;padding:6px}",
-      "canvas{max-width:100%;max-height:460px;background:#fff;cursor:crosshair;box-shadow:0 0 0 1px #333}</style>",
-      "<div class=bar><span class=dot></span><b>\uD83C\uDF10 Browser</b><span id=u>connecting\u2026</span></div>",
-      "<div class=wrap><canvas id=c width=1280 height=800 tabindex=0></canvas></div>",
-      "<script>",
-      "var c=document.getElementById('c'),x=c.getContext('2d'),u=document.getElementById('u'),w=1280,h=800;",
-      "var ws=new WebSocket('" + wsUrl + "');",
-      "ws.onopen=function(){u.textContent='live';};",
-      "ws.onmessage=function(e){var m=JSON.parse(e.data);",
-      " if(m.type==='frame'){var i=new Image();i.onload=function(){if(c.width!==m.w){c.width=m.w;c.height=m.h;}w=m.w;h=m.h;x.drawImage(i,0,0,m.w,m.h);};i.src='data:image/jpeg;base64,'+m.data;}",
-      " else if(m.type==='meta'&&m.url){u.textContent=m.url;}};",
-      "function pt(ev){var r=c.getBoundingClientRect();return{x:Math.round((ev.clientX-r.left)*(w/r.width)),y:Math.round((ev.clientY-r.top)*(h/r.height))};}",
-      "function snd(o){if(ws.readyState===1)ws.send(JSON.stringify(o));}",
-      "c.addEventListener('mousedown',function(e){var p=pt(e);snd({kind:'mouse',type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});c.focus();});",
-      "c.addEventListener('mouseup',function(e){var p=pt(e);snd({kind:'mouse',type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});});",
-      "c.addEventListener('keydown',function(e){snd({kind:'key',type:'keyDown',key:e.key,code:e.code,text:e.key.length===1?e.key:undefined});e.preventDefault();});",
-      "<\/script>",
-    ].join("\n");
-
-    const groupId = crypto.randomBytes(8).toString("hex");
-    const artifactMessage = {
-      role: "custom" as const,
-      content: "browser_request_login: Sign in to GitHub to continue",
-      timestamp: Date.now(),
-      customType: "artifact",
-      details: {
-        version: 1,
-        artifactGroupId: groupId,
-        caption: "\uD83D\uDD10 Sign in to GitHub \u2014 the agent is waiting for you to log in",
-        artifacts: [
-          { mime: "text/html", html: viewerHtml, height: 520 },
-          { mime: "text/plain", text: "Live GitHub login \u2014 sign in to continue" },
-        ],
-      },
-    };
-    this.messages.push(artifactMessage as unknown as SessionMessage);
-    await this.persist();
-    this.emit({ type: "message_start", message: artifactMessage } as unknown as PiEvent);
-    await new Promise((r) => setTimeout(r, 30));
-    this.emit({ type: "message_end", message: artifactMessage } as unknown as PiEvent);
-    this.status = "idle";
-    this.lastActivity = Date.now();
-    this.emit({ type: "agent_end", messages: [] });
-  }
-
-  private async runExtensionUiDemo(message: string): Promise<void> {
-    this.status = "running";
-    this.emit({ type: "agent_start" });
-    const timestamp = Date.now();
-    const userMessage: SessionMessage = { role: "user", content: message, timestamp };
-    this.messages.push(userMessage);
-    this.emit({ type: "message", message: userMessage });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-
-    const extensionUiRequests = [
-      { id: "status-loop", method: "setStatus", statusKey: "loop", statusText: "⟳ loop · 1 active" },
-      { id: "status-review", method: "setStatus", statusKey: "review", statusText: "review · waiting" },
-      {
-        id: "widget-loop",
-        method: "setWidget",
-        widgetKey: "loop",
-        widgetLines: [
-          "⟳ #3 Read /home/coder/PROMPT_roofing_dma_pipeline_orchestrator.md — cron: */5 * * * * · next 4m28s 4/500",
-        ],
-      },
-      {
-        id: "widget-audit",
-        method: "setWidget",
-        widgetKey: "audit",
-        widgetLines: [
-          "finding JSONs: 4/5",
-          "finding MDs: 4/5",
-          "corrected/artifact files: 22",
-        ],
-      },
-    ] satisfies ExtensionUiRequest[];
-
-    const assistantMessage: SessionMessage = {
-      role: "assistant",
-      content: "Emitted generic extension UI demo requests.",
-      timestamp: timestamp + 1,
-    };
-    this.messages.push(assistantMessage);
-    await this.persist();
-    this.status = "idle";
-    this.lastActivity = Date.now();
-    this.emit({ type: "message", message: assistantMessage });
-    this.emit({ type: "agent_end", messages: [userMessage, assistantMessage] });
-    for (const delayMs of [50, 250, 750, 1500]) {
-      setTimeout(() => {
-        for (const request of extensionUiRequests) {
-          this.emit({ type: "extension_ui_request", ...request } as PiEvent);
-        }
-      }, delayMs).unref?.();
-    }
-  }
-
-  private async runBurst(intervalMs: number, durationMs: number): Promise<void> {
-    this.status = "running";
-    this.lastActivity = Date.now();
-    this.emit({ type: "agent_start" });
-    const start = Date.now();
-    let ticks = 0;
-    while (Date.now() - start < durationMs) {
-      await new Promise((resolve) => setTimeout(resolve, Math.max(1, intervalMs)));
-      ticks += 1;
-      this.lastActivity = Date.now();
-      this.emit({
-        type: "message_update",
-        message: { role: "assistant", content: [] },
-        assistantMessageEvent: { type: "text_delta", delta: `tick-${ticks}` },
-      } as PiEvent);
-    }
-    const assistantMessage: SessionMessage = {
-      role: "assistant",
-      content: `burst complete: ${ticks} ticks over ${durationMs}ms`,
-      timestamp: Date.now(),
-    };
-    this.messages.push(assistantMessage);
-    this.lastActivity = Date.now();
-    await this.persist();
-    this.status = "idle";
-    this.emit({ type: "agent_end", messages: [assistantMessage] });
-  }
-
-  private async runArtifact(): Promise<void> {
-    this.status = "running";
-    this.lastActivity = Date.now();
-    this.emit({ type: "agent_start" });
-
-    // Write a real 2x2 PNG so naturalWidth becomes 2 once the bytes load.
-    const groupId = crypto.randomBytes(8).toString("hex");
-    const fileName = `${groupId}.png`;
-    const pngBase64 =
-      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGNkYPj/n4EIwDiqEAAlMQMG0V8XdQAAAABJRU5ErkJggg==";
-    const artifactDir = path.join(this.cwd, ".pi", "artifacts", this.id);
-    await fs.mkdir(artifactDir, { recursive: true });
-    await fs.writeFile(path.join(artifactDir, fileName), Buffer.from(pngBase64, "base64"));
-
-    const timestamp = Date.now();
-    const url = `/api/sessions/${encodeURIComponent(this.id)}/artifacts/${fileName}`;
-    const artifactMessage = {
-      role: "custom" as const,
-      content: `live-artifact.png (live-artifact.png, 0.1 KB)`,
-      timestamp,
-      customType: "artifact",
-      details: {
-        version: 1,
-        artifactGroupId: groupId,
-        caption: "Live artifact render",
-        artifacts: [
-          { mime: "image/png", src: { kind: "url", url }, alt: "live artifact demo image" },
-          { mime: "text/plain", text: "Live artifact render" },
-        ],
-      },
-    };
-    // Persist the artifact (production-faithful: the display tool writes a
-    // custom_message line to the jsonl) so it survives the scheduled /messages
-    // refetch that message_end/agent_end trigger, AND emit the live paired
-    // events exactly as sendCustomMessage does. The combination exercises both
-    // the live reducer and the byte-serving route end to end.
-    this.messages.push(artifactMessage as unknown as SessionMessage);
-    await this.persist();
-    this.emit({ type: "message_start", message: artifactMessage } as unknown as PiEvent);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    this.emit({ type: "message_end", message: artifactMessage } as unknown as PiEvent);
-
-    this.status = "idle";
-    this.lastActivity = Date.now();
-    this.emit({ type: "agent_end", messages: [] });
   }
 
   async abort(): Promise<void> {
