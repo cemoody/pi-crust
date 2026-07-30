@@ -14,6 +14,10 @@
 }
 
 :root {
+  /* Drives native UA widgets (scrollbars, <select> dropdowns, autofill,
+     form controls) so they match the palette instead of forcing a light
+     chrome. The dark block below flips this to `dark`. */
+  color-scheme: light;
   --gold-100: #FBF6E2; --gold-200: #F7ECC5; --gold-500: #ECD06F; --gold-600: #BDA659; --gold-700: #8E7D43;
   --blue-100: #EEE4FB; --blue-200: #DDC8F8; --blue-500: #A976ED; --blue-600: #875EBE; --blue-800: #442F5F;
   --blue-accent: #A976ED; --blue-accent-dark: #875EBE; --blue-focus: #DDC8F8;
@@ -48,6 +52,38 @@
   --composer-max: 720px;
 }
 
+/* ---------- Dark theme ----------
+   Activated by `data-theme="dark"` on the document element. We override
+   both the semantic tokens and the raw gray/black/white scale so the
+   whole UI flips without touching per-component CSS. The scale stays
+   ordered (low numbers = dark surfaces, high numbers = light text) which
+   mirrors how the light palette is used throughout the app. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --gold-100: #2a2a14; --gold-200: #3a3818;
+  --blue-100: #1e1830; --blue-200: #2a2148;
+  --red-100: #2a1712; --red-200: #3a1f17;
+
+  --gray-050: #14160e; --gray-060: #1a1d13; --gray-080: #222617; --gray-100: #2a2f1d;
+  --gray-200: #363c26; --gray-300: #444b30; --gray-400: #565e3e; --gray-500: #6b7350;
+  --gray-600: #828a66; --gray-700: #9aa187; --gray-800: #b3b8a2; --gray-900: #cccfc0;
+  --gray-1000: #e6e8dc;
+  --black-900: #f4f1e0; --black-1000: #ffffff; --white-000: #1a1d13;
+
+  --background-1: #111309;
+  --background-2: var(--gray-060);
+  --surface-1: #1a1d13;
+  --hairline: var(--gray-100);
+  --text-primary: var(--black-900);
+  --text-secondary: var(--gray-700);
+  --text-primary-inverted: var(--gray-050);
+  --tile: var(--white-000);
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-2: 0 2px 8px rgba(0,0,0,0.45);
+  --shadow-3: 0 12px 32px rgba(0,0,0,0.55);
+}
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body {
@@ -68,6 +104,7 @@ code, pre, .mono { font-family: var(--font-mono); font-size: 13px; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--gray-200); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: var(--gray-300); border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
 
 /* On coarse-pointer (touch) devices, ensure focusable text inputs are ≥16px so
    iOS Safari does not auto-zoom the viewport when they gain focus. */
