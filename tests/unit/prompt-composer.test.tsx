@@ -130,6 +130,42 @@ describe("PromptComposer", () => {
     expect(heightWrite).toHaveBeenCalledTimes(1);
   });
 
+  it("shrinks back to its single-line height after a long draft is cleared", () => {
+    let frameId = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
+      const id = ++frameId;
+      frames.set(id, callback);
+      return id;
+    }));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn((id: number) => frames.delete(id)));
+
+    renderComposer();
+    const draft = screen.getByLabelText("Prompt draft") as HTMLTextAreaElement;
+    // A textarea whose inline height is fixed at its long-content height
+    // reports that height as its scrollHeight until it is reset for
+    // measurement — the browser behavior that caused the composer to stay
+    // expanded after sending a long prompt.
+    Object.defineProperty(draft, "scrollHeight", {
+      configurable: true,
+      get: () => draft.style.height === "240px" ? 240 : draft.value.length > 10 ? 240 : 44,
+    });
+    const runOnlyFrame = () => {
+      expect(frames.size).toBe(1);
+      const callback = [...frames.values()][0]!;
+      frames.clear();
+      callback(0);
+    };
+
+    fireEvent.change(draft, { target: { value: "a sufficiently long prompt that expands the composer" } });
+    runOnlyFrame();
+    expect(draft.style.height).toBe("240px");
+
+    fireEvent.change(draft, { target: { value: "" } });
+    runOnlyFrame();
+    expect(draft.style.height).toBe("44px");
+  });
+
   it("keeps one document paste listener while typing", () => {
     const addListener = vi.spyOn(document, "addEventListener");
     renderComposer();
