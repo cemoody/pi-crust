@@ -1666,61 +1666,26 @@ async function listSessionCards(
   cwd?: string,
   options: { readonly includeSubagents?: boolean; readonly includeHidden?: boolean } = {},
 ) {
-  // SQLite is the durable session read model: it already has full-file titles,
-  // timestamps, and visibility flags. A sync reconciles only changed JSONL
-  // files; after that, listing never needs a head/tail JSONL scan.
-  await context.sessionSearch.sync();
-  const indexedSessions = context.sessionSearch.listIndexedMetadata({
-    ...(cwd ? { cwd } : {}),
-    ...(options.includeSubagents ? { includeSubagents: true } : {}),
-    ...(options.includeHidden ? { includeHidden: true } : {}),
+  // Search indexing deliberately reads complete transcripts. Do not make a
+  // sidebar/status poll pay for that work: the production adapter has a
+  // bounded head/tail lister, while the durable index (when already warm)
+  // supplies richer metadata without another scan. Apart from avoiding a
+  // multi-megabyte cold request, this keeps a newly written session visible
+  // immediately instead of waiting for the asynchronous search index.
+  const listed = await context.registry.listSessions(cwd, options);
+  const indexedByFile = context.sessionSearch.getIndexedMetadata(listed.map((session) => session.sessionFile));
+  const sessions = listed.map((session) => {
+    const indexed = indexedByFile.get(session.sessionFile);
+    if (!indexed) return session;
+    return {
+      ...session,
+      ...(session.sessionName === undefined && indexed.sessionName ? { sessionName: indexed.sessionName } : {}),
+      ...(session.createdAt === undefined ? { createdAt: indexed.createdAt } : {}),
+      ...(session.lastUserActivity === undefined ? { lastUserActivity: indexed.lastUserActivity } : {}),
+    };
   });
-  // Mock sessions are JSON blobs, while the index intentionally tracks only
-  // Pi JSONL. If a mock root also contains a JSONL fixture, the index is
-  // non-empty but incomplete; always ask the mock adapter for the authoritative
-  // mixed-format list. Normal Pi sessions retain the index-only fast path.
-  const sessions: readonly SessionListItem[] = context.adapterKind !== "mock" && indexedSessions.length > 0
-    ? mergeIndexedAndRegisteredSessions(
-        indexedSessions.map((session) => ({
-          id: session.sessionId,
-          cwd: session.cwd,
-          sessionFile: session.sessionFile,
-          ...(session.sessionName ? { sessionName: session.sessionName } : {}),
-          ...(session.subagent ? { subagent: true } : {}),
-          ...(session.hiddenFromList ? { hiddenFromList: true } : {}),
-          createdAt: session.createdAt,
-          lastUserActivity: session.lastUserActivity,
-          lastActivity: session.lastActivity ?? 0,
-        })),
-        context.registry.listRegisteredSessions(options),
-      )
-    : await context.registry.listSessions(cwd, options);
   for (const session of sessions) context.coldSessionFiles.set(session.id, session.sessionFile);
   return Promise.all(sessions.map((session) => sessionCardWithLiveState(context, session)));
-}
-
-/**
- * The durable index deliberately defers active JSONL files so search never
- * exposes a partial streamed response. Preserve those live workers in the
- * sidebar by overlaying registry sessions that are absent from the index.
- */
-function mergeIndexedAndRegisteredSessions(
-  indexedSessions: readonly SessionListItem[],
-  registeredSessions: readonly RegisteredSession[],
-): readonly SessionListItem[] {
-  const sessions = new Map(indexedSessions.map((session) => [session.id, session]));
-  for (const registered of registeredSessions) {
-    if (sessions.has(registered.id)) continue;
-    sessions.set(registered.id, {
-      id: registered.id,
-      cwd: registered.cwd,
-      sessionFile: registered.sessionFile,
-      ...(registered.subagent ? { subagent: true } : {}),
-      ...(registered.hiddenFromList ? { hiddenFromList: true } : {}),
-      lastActivity: 0,
-    });
-  }
-  return [...sessions.values()].sort((a, b) => b.lastActivity - a.lastActivity);
 }
 
 async function sessionCardWithLiveState(
