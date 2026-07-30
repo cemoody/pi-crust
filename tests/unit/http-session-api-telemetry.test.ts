@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import {
   SSE_SILENCE_THRESHOLD_MS,
   SSE_SILENCE_CHECK_INTERVAL_MS,
-} from "../../src/web/api/http-session-api.js";
+} from "../../src/web/api/sse-session-stream.js";
 
 // We have to import from the module under test AFTER stubbing globals,
 // otherwise its top-level `recordClientEvent` import would not see the
