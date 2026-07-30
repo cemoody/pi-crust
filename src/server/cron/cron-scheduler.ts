@@ -1,6 +1,6 @@
 import type { SessionRegistry } from "../session/session-registry.js";
 import type { CronJob, CronStore } from "./cron-store.js";
-import { parseCron, nextRun, CronParseError } from "./cron-expression.js";
+import { parseCron, nextRun, matches, CronParseError } from "./cron-expression.js";
 
 export interface CronSchedulerOptions {
   readonly store: CronStore;
@@ -90,7 +90,7 @@ export class CronScheduler {
         continue;
       }
       // Match against current minute.
-      if (!matchesMinute(parsed, tickDate)) continue;
+      if (!matches(parsed, tickDate)) continue;
       // De-dupe in case of overlapping ticks.
       if (job.lastRun && Math.floor(job.lastRun / 60_000) === minuteKey) continue;
       this.fireJob(job).catch((error) => this.logger(`Job "${job.name}" failed`, error));
@@ -148,17 +148,4 @@ export class CronScheduler {
     this.logger(`Fired job "${job.name}" → session ${created.id}`);
     return { job, sessionId: created.id, sessionFile: created.sessionFile };
   }
-}
-
-function matchesMinute(parsed: ReturnType<typeof parseCron>, date: Date): boolean {
-  const d = new Date(date.getTime());
-  d.setSeconds(0, 0);
-  // Reuse the matcher from cron-expression by importing it lazily would be cleaner,
-  // but inlining keeps coupling tight.
-  return parsed.minute.has(d.getMinutes())
-    && parsed.hour.has(d.getHours())
-    && parsed.month.has(d.getMonth() + 1)
-    && ((parsed.domStar || parsed.dowStar)
-      ? (parsed.dom.has(d.getDate()) && parsed.dow.has(d.getDay()))
-      : (parsed.dom.has(d.getDate()) || parsed.dow.has(d.getDay())));
 }
