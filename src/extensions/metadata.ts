@@ -150,7 +150,7 @@ export function serializeExtensions(extensions: PrcExtensionHost | undefined): S
       ...optional({ order: view.order }),
       ...optional({ icon: view.icon }),
       extensionId: view.extensionId,
-      ...(extensions.getWebAsset(view.extensionId)?.urlPath === undefined ? {} : { webModuleUrl: extensions.getWebAsset(view.extensionId)!.urlPath }),
+      ...extensionWebModuleUrl(extensions, view.extensionId),
     })),
     settings: extensions.settings.list().map((section) => ({
       id: section.id,
@@ -158,7 +158,7 @@ export function serializeExtensions(extensions: PrcExtensionHost | undefined): S
       ...optional({ order: section.order }),
       ...optional({ description: section.description }),
       extensionId: section.extensionId,
-      ...(extensions.getWebAsset(section.extensionId)?.urlPath === undefined ? {} : { webModuleUrl: extensions.getWebAsset(section.extensionId)!.urlPath }),
+      ...extensionWebModuleUrl(extensions, section.extensionId),
     })),
     routes: extensions.serverRoutes.list().map((route) => ({
       method: route.method,
@@ -168,4 +168,9 @@ export function serializeExtensions(extensions: PrcExtensionHost | undefined): S
     })),
     diagnostics: extensions.diagnostics,
   };
+}
+
+/** Keep optional web-module serialization consistent for all UI contributions. */
+function extensionWebModuleUrl(extensions: PrcExtensionHost, extensionId: string): { webModuleUrl?: string } {
+  return optional({ webModuleUrl: extensions.getWebAsset(extensionId)?.urlPath });
 }
