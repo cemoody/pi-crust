@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ToolCard, ToolList } from "../../src/web/components/ToolCard.js";
+import { ToolOutputRenderer } from "../../src/web/components/tool-output-renderer.js";
 
 beforeEach(() => {
   Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
@@ -45,6 +46,13 @@ describe("ToolCard", () => {
     render(<ToolCard expanded tool={{ id: "1", name: "custom_tool", status: "error", args: { value: 1 }, output: "failed" }} />);
     expect(screen.getByText(/"value": 1/)).toBeInTheDocument();
     expect(screen.getByText("failed")).toBeInTheDocument();
+  });
+
+  it("renders write output through the extracted output renderer", () => {
+    render(<ToolOutputRenderer tool={{ id: "1", name: "write", status: "success", args: { file: "notes.txt" }, output: "written" }} />);
+    expect(screen.getByText("Written file:")).toBeInTheDocument();
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    expect(screen.getByText("written")).toBeInTheDocument();
   });
 
   it("copies and links full output when available", () => {
