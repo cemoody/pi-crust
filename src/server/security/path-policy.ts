@@ -43,9 +43,8 @@ function normalizeDir(value: string): string {
  * on case-insensitive filesystems where a naive prefix check would falsely
  * accept e.g. `/home/coderdocs` as inside `/home/coder`.
  *
- * Exported because two server modules (path-policy itself and the
- * artifact-resolution code in http-api-server.ts) need the same check;
- * keep them on one implementation to avoid drift.
+ * Exported so server routes and filesystem-backed presentation assets share
+ * one containment check and cannot drift apart.
  */
 export function isPathWithinRoot(candidate: string, root: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));

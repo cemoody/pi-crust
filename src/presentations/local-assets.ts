@@ -28,6 +28,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
+import { isPathWithinRoot } from "../server/security/path-policy.js";
 import type {
   PresentationDeck,
   PresentationImage,
@@ -93,12 +94,7 @@ export async function prepareLocalPresentationAssets(
       return src;
     }
     // Lexical containment check: abs must be inside cwd, no '..' escapes.
-    const relFromCwd = path.relative(options.cwd, abs);
-    if (
-      relFromCwd === "" ||
-      relFromCwd.startsWith("..") ||
-      path.isAbsolute(relFromCwd)
-    ) {
+    if (!isPathWithinRoot(abs, options.cwd)) {
       byAbsSrc.set(src, { src });
       return src;
     }
@@ -122,12 +118,7 @@ export async function prepareLocalPresentationAssets(
       byAbsSrc.set(src, { src });
       return src;
     }
-    const realRelFromCwd = path.relative(realCwd, realAbs);
-    if (
-      realRelFromCwd === "" ||
-      realRelFromCwd.startsWith("..") ||
-      path.isAbsolute(realRelFromCwd)
-    ) {
+    if (!isPathWithinRoot(realAbs, realCwd)) {
       byAbsSrc.set(src, { src });
       return src;
     }
