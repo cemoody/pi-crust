@@ -1,4 +1,5 @@
 import { isRecord } from "../shared/util.js";
+import { classifyPresentationAssetPath } from "./asset-path-safety.js";
 
 export const PRESENTATION_MIME = "application/vnd.pi.presentation+json";
 
@@ -157,17 +158,13 @@ function describeType(value: unknown): string {
 // an actionable validation error at tool-call time instead of a render-time
 // 'Unsafe presentation asset path' card it can't see. Returns a remediation
 // fragment ('is unsafe (...): ...') or undefined when the path is fine.
-const ASSET_DATA_URI_PATTERN = /^data:/i;
-const ASSET_REMOTE_URL_PATTERN = /^https?:\/\//i;
-const ASSET_ABSOLUTE_OR_SCHEME_PATTERN = /^(?:[a-z][a-z0-9+.-]*:|\/)/i;
 export function describeUnsafeAssetPath(src: string): string | undefined {
-  if (ASSET_DATA_URI_PATTERN.test(src)) return undefined;
-  if (ASSET_REMOTE_URL_PATTERN.test(src)) return undefined;
+  const safety = classifyPresentationAssetPath(src);
   const hint = `must be one of: an https:// URL, a data: URI, or a path RELATIVE to the session's .pi/presentations/<deckId>/ directory (no leading slash, no ".."). Save the file into that directory first (e.g. with the file-writing tool) and pass just the filename, e.g. "chart.png".`;
-  if (ASSET_ABSOLUTE_OR_SCHEME_PATTERN.test(src)) {
+  if (safety === "absolute-or-scheme") {
     return `is unsafe (${JSON.stringify(src)} is an absolute path or non-http(s) scheme): ${hint}`;
   }
-  if (src.split(/[\\/]+/).some((part) => part === "..")) {
+  if (safety === "path-traversal") {
     return `is unsafe (${JSON.stringify(src)} contains ".." path traversal): ${hint}`;
   }
   return undefined;
