@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { PrcExtensionFactory, PrcSessionsApi } from "./api.js";
-import { loadPrcExtensionFactory } from "./loader.js";
+import { inferPrcExtensionId, loadPrcExtensionFactory } from "./loader.js";
 import {
   readPrcSettings,
   resolvePackageExtensions,
@@ -186,7 +186,7 @@ async function resolveExtensionContributionPlan(
   webEntries: readonly ResolvedWebExtensionEntry[],
   diagnostics: PackageDiagnostic[],
   disabledExtensionIds: ReadonlySet<string>,
-  inferId: (filePath: string, entry: ResolvedExtensionEntry) => string | Promise<string> = defaultExtensionId,
+  inferId: (filePath: string, entry: ResolvedExtensionEntry) => string | Promise<string> = (filePath, entry) => inferPrcExtensionId(entry.packageSource, filePath),
 ): Promise<ResolvedPrcExtensionContribution[]> {
   const plan = new Map<string, ResolvedPrcExtensionContribution>();
   const piExtensionEntriesByPackage = new Map<string, readonly string[]>();
@@ -211,7 +211,7 @@ async function resolveExtensionContributionPlan(
   }
   for (const entry of webEntries) {
     try {
-      await update(await defaultWebExtensionId(entry), entry.packageSource, entry.scope, { webEntry: entry.path });
+      await update(await inferPrcExtensionId(entry.packageSource, entry.path), entry.packageSource, entry.scope, { webEntry: entry.path });
     } catch (error) {
       diagnostics.push({ source: entry.path, level: "error", message: error instanceof Error ? error.message : String(error) });
     }
@@ -248,22 +248,6 @@ async function readPackagePiExtensionEntries(packageSource: string): Promise<rea
     }
   } catch { /* no pi-side extension entries */ }
   return [];
-}
-
-async function defaultExtensionId(_filePath: string, entry: ResolvedExtensionEntry): Promise<string> {
-  try {
-    const manifest = JSON.parse(await fs.readFile(path.join(entry.packageSource, "package.json"), "utf8")) as { name?: unknown };
-    if (typeof manifest.name === "string" && manifest.name.trim()) return manifest.name;
-  } catch { /* fall back */ }
-  return path.basename(entry.packageSource) || inferExplicitExtensionId(entry.path);
-}
-
-async function defaultWebExtensionId(entry: ResolvedWebExtensionEntry): Promise<string> {
-  try {
-    const manifest = JSON.parse(await fs.readFile(path.join(entry.packageSource, "package.json"), "utf8")) as { name?: unknown };
-    if (typeof manifest.name === "string" && manifest.name.trim()) return manifest.name;
-  } catch { /* fall back */ }
-  return path.basename(entry.packageSource) || inferExplicitExtensionId(entry.path);
 }
 
 function inferExplicitExtensionId(filePath: string): string {

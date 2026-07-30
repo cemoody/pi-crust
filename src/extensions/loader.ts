@@ -22,19 +22,22 @@ export async function loadResolvedExtensionEntries(entries: readonly ResolvedExt
   const loaded: ActivateExtensionInput[] = [];
   for (const entry of entries) {
     loaded.push({
-      id: await inferExtensionId(entry),
+      id: await inferPrcExtensionId(entry.packageSource, entry.path),
       factory: await loadPrcExtensionFactory(entry.path),
     });
   }
   return loaded;
 }
 
-async function inferExtensionId(entry: ResolvedExtensionEntry): Promise<string> {
-  const manifestPath = path.join(entry.packageSource, "package.json");
+/**
+ * Resolve the stable id shared by all entries in one extension package.
+ * Package manifests take precedence; paths provide a useful fallback for
+ * single-file and malformed local packages.
+ */
+export async function inferPrcExtensionId(packageSource: string, fallbackPath: string): Promise<string> {
   try {
-    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as { name?: unknown };
+    const manifest = JSON.parse(await fs.readFile(path.join(packageSource, "package.json"), "utf8")) as { name?: unknown };
     if (typeof manifest.name === "string" && manifest.name.trim()) return manifest.name;
   } catch { /* fall back to directory/file name */ }
-  const packageName = path.basename(entry.packageSource);
-  return packageName || path.basename(entry.path, path.extname(entry.path));
+  return path.basename(packageSource) || path.basename(fallbackPath, path.extname(fallbackPath));
 }
