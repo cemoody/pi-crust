@@ -44,9 +44,13 @@ describe("heavy transcript tail worker", () => {
 
   it("caps concurrent workers and falls back without changing parsed output", async () => {
     const server = await startServer(1);
-    // Distinct cursor keys intentionally bypass the page cache: this verifies
-    // the worker pool cap rather than cache-level request coalescing.
-    const responses = await Promise.all([1, 2, 3].map((before) => fetch(`${server.url}/api/sessions/heavy/messages?limit=5&before=${before}`)));
+    // Start the first request and wait until it has occupied the only worker.
+    // Subsequent distinct cursor keys bypass the page cache and must take the
+    // bounded local fallback rather than queuing behind an unbounded pool.
+    const first = fetch(`${server.url}/api/sessions/heavy/messages?limit=5`);
+    await server.workerStarted;
+    const excess = await Promise.all([1, 2].map((before) => fetch(`${server.url}/api/sessions/heavy/messages?limit=5&before=${before}`)));
+    const responses = [await first, ...excess];
     expect(responses.every((response) => response.ok)).toBe(true);
     await Promise.all(responses.map((response) => response.json()));
     // maxWorkers=1 means the concurrent excess took the synchronous fallback,

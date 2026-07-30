@@ -3,6 +3,7 @@ import fsp from "node:fs/promises";
 import { toSessionMessages } from "../pi/pirpc-pi-adapter.js";
 import type { SessionMessage } from "../pi/types.js";
 import { isRecord } from "../../shared/util.js";
+import { hydrateTranscriptSidecars } from "../pi/transcript-sidecars.js";
 
 export interface TranscriptTailOptions {
   readonly limit: number;
@@ -167,7 +168,7 @@ export async function readSessionMessagesTail(
     // field) applies uniformly. THEN apply the limit, since the fan-out
     // can change the message count (one assistant turn with N toolCall
     // blocks expands to 1 assistant + N tool rows).
-    const normalized = toSessionMessages(collected);
+    const normalized = toSessionMessages(await hydrateTranscriptSidecars(sessionFile, collected));
     return normalized.slice(-options.limit);
   } finally {
     await fd.close();
