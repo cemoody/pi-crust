@@ -45,7 +45,7 @@ import { updateSource } from "../extensions/update-apply.js";
 import type { CommandOutputRunner } from "../extensions/update-check.js";
 import { createPrcExtensionRuntime, type PrcExtensionRuntime } from "../extensions/runtime.js";
 import { defaultArtifactFileRoots, resolveArtifactFile, resolveArtifactFileForWrite, streamArtifactFile, writeArtifactFileContent } from "./artifact-file.js";
-import { coerceTimestamp, isRecord } from "../shared/util.js";
+import { SessionTimelineMetadataStore, type SessionTimelineMetadata } from "./session/session-timeline-metadata-store.js";
 import { TranscriptTailWorkerPool } from "./session/transcript-tail-worker-pool.js";
 import { readSessionMessagesTail as readSessionMessagesTailFromWorkerModule } from "./session/transcript-tail-reader.js";
 import { findSessionMessageBySyntheticId, lookupSessionMessage } from "./http-api-message-lookup.js";
@@ -150,6 +150,8 @@ interface HttpApiServerContext extends HttpApiServerOptions {
   readonly sessionSearch: SessionSearchService;
   /** Bounded off-thread JSONL parsing for heavyweight transcript tails. */
   readonly transcriptTailWorkers: TranscriptTailWorkerPool;
+  /** Bounded, persisted timeline metadata for session cards. */
+  readonly timelineMetadata: SessionTimelineMetadataStore;
 }
 
 const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
@@ -620,6 +622,7 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
       },
     }),
     transcriptTailWorkers: options.transcriptTailWorkers ?? new TranscriptTailWorkerPool(),
+    timelineMetadata: new SessionTimelineMetadataStore(),
     ...(options.clientEventLogPath ? { clientEventLog: createClientEventLog(options.clientEventLogPath) } : {}),
   };
   const server = http.createServer((req, res) => {
@@ -638,6 +641,7 @@ export function createHttpApiServer(options: HttpApiServerOptions): http.Server 
     context.sessionSearch.close();
     // Do not leave parser workers keeping test processes or a stopped API alive.
     void context.transcriptTailWorkers.close();
+    void context.timelineMetadata.flush();
   });
   // Index only after the agent settles: Pi persists JSONL incrementally while
   // streaming, and search must never expose a partial assistant response.
@@ -1463,7 +1467,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
 
   if (req.method === "GET" && (action === "state" || action === undefined)) {
     const session = await getOrOpenSession(context, sessionId);
-    const metadata = await readSessionTimelineMetadata(session.sessionFile);
+    const metadata = await context.timelineMetadata.read(session.sessionFile);
     return sendJson(res, 200, toSessionCard(await session.handle.getState(), metadata));
   }
 
@@ -1522,7 +1526,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   if (req.method === "POST" && action === "reload") {
     const session = await getOrOpenSession(context, sessionId);
     const reloaded = await context.registry.reloadSession(session.id);
-    const metadata = await readSessionTimelineMetadata(reloaded.sessionFile);
+    const metadata = await context.timelineMetadata.read(reloaded.sessionFile);
     return sendJson(res, 200, toSessionCard(await reloaded.handle.getState(), metadata));
   }
 
@@ -1778,218 +1782,6 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
   return Promise.race([promise, deadline]).finally(() => {
     if (timeout) clearTimeout(timeout);
   });
-}
-
-interface SessionTimelineMetadata {
-  readonly createdAt: number | null;
-  readonly lastUserActivity: number | null;
-}
-
-interface CachedSessionTimelineMetadata {
-  readonly mtimeMs: number;
-  readonly size: number;
-  readonly metadata: SessionTimelineMetadata;
-}
-
-// Window sizes for head/tail jsonl scans. createdAt sits at the very top of
-// the file (the `type: "session"` record); lastUserActivity is approximated
-// from the trailing window — sufficient for sidebar sort because sessions
-// where the user only typed near the start of a very long transcript would
-// have an old lastUserActivity anyway and sort by createdAt.
-const TIMELINE_HEAD_SCAN_BYTES = 8 * 1024;
-const TIMELINE_TAIL_SCAN_BYTES = 32 * 1024;
-const TIMELINE_INDEX_FILENAME = ".pi-timeline-index.json";
-
-const sessionTimelineMetadataCache = new Map<string, CachedSessionTimelineMetadata>();
-// Track which session-file *directories* we've already loaded the persisted
-// index from. Index files live alongside the jsonl session files so the next
-// fresh server process can pick them up without re-scanning multi-MB files.
-const loadedTimelineIndexDirs = new Set<string>();
-const loadingTimelineIndexes = new Map<string, Promise<void>>();
-const dirtyTimelineIndexDirs = new Set<string>();
-
-async function readSessionTimelineMetadata(sessionFile: string): Promise<SessionTimelineMetadata> {
-  if (!sessionFile) return { createdAt: null, lastUserActivity: null };
-  const dir = path.dirname(sessionFile);
-  await ensureTimelineIndexLoaded(dir);
-  try {
-    const stat = await fsp.stat(sessionFile);
-    const cached = sessionTimelineMetadataCache.get(sessionFile);
-    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.metadata;
-    if (cached && stat.size > cached.size) {
-      // Incremental update: only read the bytes that have been appended since
-      // the last scan. This is the steady-state cost for the active session
-      // (the one being typed into) so it dominates the /statuses budget.
-      const metadata = await scanTimelineDelta(sessionFile, cached.size, stat.size, cached.metadata);
-      sessionTimelineMetadataCache.set(sessionFile, { mtimeMs: stat.mtimeMs, size: stat.size, metadata });
-      dirtyTimelineIndexDirs.add(dir);
-      return metadata;
-    }
-    // Cold (or invalidated) scan: head + tail only, never the whole file.
-    const metadata = await scanTimelineHeadAndTail(sessionFile, stat.size);
-    sessionTimelineMetadataCache.set(sessionFile, { mtimeMs: stat.mtimeMs, size: stat.size, metadata });
-    dirtyTimelineIndexDirs.add(dir);
-    return metadata;
-  } catch {
-    // Missing/unreadable historical session files degrade to null metadata.
-    return { createdAt: null, lastUserActivity: null };
-  }
-}
-
-async function scanTimelineHeadAndTail(sessionFile: string, fileSize: number): Promise<SessionTimelineMetadata> {
-  if (fileSize === 0) return { createdAt: null, lastUserActivity: null };
-  const fd = await fsp.open(sessionFile, "r");
-  try {
-    let createdAt: number | null = null;
-    let lastUserActivity: number | null = null;
-
-    const headSize = Math.min(TIMELINE_HEAD_SCAN_BYTES, fileSize);
-    const headBuf = Buffer.alloc(headSize);
-    await fd.read(headBuf, 0, headSize, 0);
-    const headHasFullFile = headSize === fileSize;
-    // If the head window doesn't reach EOF the last line may be partial; drop
-    // it so we don't JSON.parse half a record.
-    const headText = headBuf.toString("utf8");
-    const headSplit = headText.split("\n");
-    const headLines = headHasFullFile ? headSplit : headSplit.slice(0, -1);
-    for (const line of headLines) {
-      const parsed = parseTimelineLine(line);
-      if (!parsed) continue;
-      if (parsed.createdAt !== undefined && createdAt === null) createdAt = parsed.createdAt;
-      if (parsed.userActivity !== undefined) {
-        lastUserActivity = Math.max(lastUserActivity ?? 0, parsed.userActivity);
-      }
-    }
-
-    if (!headHasFullFile) {
-      const tailStart = Math.max(headSize, fileSize - TIMELINE_TAIL_SCAN_BYTES);
-      const tailSize = fileSize - tailStart;
-      const tailBuf = Buffer.alloc(tailSize);
-      await fd.read(tailBuf, 0, tailSize, tailStart);
-      const tailText = tailBuf.toString("utf8");
-      const firstNewline = tailText.indexOf("\n");
-      const safeTail = firstNewline >= 0 ? tailText.slice(firstNewline + 1) : tailText;
-      for (const line of safeTail.split("\n")) {
-        const parsed = parseTimelineLine(line);
-        if (!parsed) continue;
-        if (parsed.userActivity !== undefined) {
-          lastUserActivity = Math.max(lastUserActivity ?? 0, parsed.userActivity);
-        }
-      }
-    }
-
-    return { createdAt, lastUserActivity };
-  } finally {
-    await fd.close();
-  }
-}
-
-async function scanTimelineDelta(sessionFile: string, oldSize: number, newSize: number, previous: SessionTimelineMetadata): Promise<SessionTimelineMetadata> {
-  const delta = newSize - oldSize;
-  if (delta <= 0) return previous;
-  const fd = await fsp.open(sessionFile, "r");
-  try {
-    const buf = Buffer.alloc(delta);
-    await fd.read(buf, 0, delta, oldSize);
-    let lastUserActivity = previous.lastUserActivity;
-    // The first byte after `oldSize` may be a continuation of a line that was
-    // partially flushed before. The common case for our append-only sessions
-    // is that we begin exactly at a newline boundary, so the conservative
-    // approach is to just skip any incomplete leading line.
-    const text = buf.toString("utf8");
-    for (const line of text.split("\n")) {
-      const parsed = parseTimelineLine(line);
-      if (!parsed) continue;
-      if (parsed.userActivity !== undefined) {
-        lastUserActivity = Math.max(lastUserActivity ?? 0, parsed.userActivity);
-      }
-    }
-    return { createdAt: previous.createdAt, lastUserActivity };
-  } finally {
-    await fd.close();
-  }
-}
-
-function parseTimelineLine(line: string): { createdAt?: number | null; userActivity?: number } | undefined {
-  if (!line || !line.trim()) return undefined;
-  let entry: unknown;
-  try { entry = JSON.parse(line); } catch { return undefined; }
-  if (!isRecord(entry)) return undefined;
-  if (entry.type === "session") {
-    return { createdAt: coerceTimestamp(entry.timestamp) ?? null };
-  }
-  if (entry.type !== "message" || !isRecord(entry.message)) return undefined;
-  if (entry.message.role !== "user") return undefined;
-  const timestamp = coerceTimestamp(entry.message.timestamp) ?? coerceTimestamp(entry.timestamp);
-  if (timestamp === undefined) return undefined;
-  return { userActivity: timestamp };
-}
-
-async function ensureTimelineIndexLoaded(dir: string): Promise<void> {
-  if (loadedTimelineIndexDirs.has(dir)) return;
-  let pending = loadingTimelineIndexes.get(dir);
-  if (!pending) {
-    pending = loadTimelineIndex(dir).finally(() => {
-      loadingTimelineIndexes.delete(dir);
-      loadedTimelineIndexDirs.add(dir);
-    });
-    loadingTimelineIndexes.set(dir, pending);
-  }
-  await pending;
-}
-
-async function loadTimelineIndex(dir: string): Promise<void> {
-  const indexFile = path.join(dir, TIMELINE_INDEX_FILENAME);
-  let content: string;
-  try { content = await fsp.readFile(indexFile, "utf8"); } catch { return; }
-  let parsed: unknown;
-  try { parsed = JSON.parse(content); } catch { return; }
-  if (!isRecord(parsed)) return;
-  const entries = isRecord(parsed.entries) ? parsed.entries : parsed;
-  if (!isRecord(entries)) return;
-  for (const [basename, value] of Object.entries(entries)) {
-    if (!isRecord(value)) continue;
-    const mtimeMs = typeof value.mtimeMs === "number" ? value.mtimeMs : null;
-    const size = typeof value.size === "number" ? value.size : null;
-    if (mtimeMs === null || size === null) continue;
-    const createdAt = typeof value.createdAt === "number" ? value.createdAt : null;
-    const lastUserActivity = typeof value.lastUserActivity === "number" ? value.lastUserActivity : null;
-    const sessionFile = path.join(dir, basename);
-    // Only adopt the persisted entry when the in-process cache hasn't already
-    // observed a fresher state for that file.
-    if (sessionTimelineMetadataCache.has(sessionFile)) continue;
-    sessionTimelineMetadataCache.set(sessionFile, {
-      mtimeMs,
-      size,
-      metadata: { createdAt, lastUserActivity },
-    });
-  }
-}
-
-async function flushDirtyTimelineIndexes(): Promise<void> {
-  if (dirtyTimelineIndexDirs.size === 0) return;
-  const dirs = [...dirtyTimelineIndexDirs];
-  dirtyTimelineIndexDirs.clear();
-  await Promise.all(dirs.map(async (dir) => {
-    const entries: Record<string, unknown> = {};
-    for (const [sessionFile, cached] of sessionTimelineMetadataCache) {
-      if (path.dirname(sessionFile) !== dir) continue;
-      entries[path.basename(sessionFile)] = {
-        mtimeMs: cached.mtimeMs,
-        size: cached.size,
-        createdAt: cached.metadata.createdAt,
-        lastUserActivity: cached.metadata.lastUserActivity,
-      };
-    }
-    const indexFile = path.join(dir, TIMELINE_INDEX_FILENAME);
-    const tmpFile = `${indexFile}.tmp`;
-    try {
-      await fsp.writeFile(tmpFile, JSON.stringify({ version: 1, entries }), "utf8");
-      await fsp.rename(tmpFile, indexFile);
-    } catch {
-      // Best-effort; we'll try again on the next /statuses call.
-    }
-  }));
 }
 
 function toSessionListCard(session: SessionListItem, metadata: SessionTimelineMetadata = { createdAt: null, lastUserActivity: null }) {
