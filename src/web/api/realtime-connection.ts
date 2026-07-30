@@ -11,6 +11,8 @@
  * tests/e2e/realtime-client-gateway.test.ts.
  */
 
+import { RealtimeLeaderCoordinator, type RealtimeRole } from "./realtime-leader-coordinator.js";
+
 export interface RealtimeTransport {
   readonly connected: boolean;
   connect(): void;
@@ -61,18 +63,6 @@ export interface RealtimeConnection {
   dispose(): void;
 }
 
-type Role = "candidate" | "leader" | "follower" | "disposed";
-
-interface ChannelMessage {
-  readonly t: "hello" | "claim" | "heartbeat" | "bye" | "want" | "unwant" | "event";
-  readonly tabId?: string;
-  readonly joinedAt?: number;
-  readonly sessionId?: string;
-  readonly fromSeq?: number | null;
-  readonly seq?: number;
-  readonly event?: unknown;
-}
-
 const CONTROL_TYPES = new Set(["session_resync", "stream_reconnected", "stream_unavailable"]);
 
 export function createRealtimeConnection(options: RealtimeConnectionOptions): RealtimeConnection {
@@ -86,10 +76,8 @@ class RealtimeConnectionImpl implements RealtimeConnection {
   private readonly idleCloseMs: number;
   private readonly maxConnectErrors: number;
   private readonly ackTimeoutMs: number;
-  private readonly heartbeatMs: number;
-  private readonly leaderTimeoutMs: number;
+  private readonly leader: RealtimeLeaderCoordinator;
 
-  private role: Role;
   private transport: RealtimeTransport | null = null;
   private everConnected = false;
   private connectErrors = 0;
@@ -108,12 +96,8 @@ class RealtimeConnectionImpl implements RealtimeConnection {
 
   /** Leader-only: which follower tabs want each session. */
   private readonly remoteWants = new Map<string, Set<string>>();
-  private knownLeader: { tabId: string; joinedAt: number } | null = null;
-  private lastLeaderBeatAt = 0;
   private idleSince: number | null = null;
 
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private livenessTimer: ReturnType<typeof setInterval> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly disposeVisibility: (() => void) | null = null;
 
@@ -138,20 +122,28 @@ class RealtimeConnectionImpl implements RealtimeConnection {
     this.idleCloseMs = options.idleCloseMs ?? 15_000;
     this.maxConnectErrors = options.maxConnectErrorsBeforeFallback ?? 3;
     this.ackTimeoutMs = options.ackTimeoutMs ?? 5_000;
-    this.heartbeatMs = options.heartbeatMs ?? 2_000;
-    this.leaderTimeoutMs = options.leaderTimeoutMs ?? 5_000;
-
-    if (options.broadcast) {
-      this.role = "candidate";
-      options.broadcast.onmessage = (e) => this.handleChannel(e.data as ChannelMessage);
-      this.post({ t: "hello", tabId: this.tabId, joinedAt: this.joinedAt });
-      // Race for leadership: candidates open a transport and try to connect.
-      this.openTransport();
-      this.startLiveness();
-    } else {
-      // Single-tab: always leader; open lazily on first subscribe.
-      this.role = "leader";
-    }
+    this.leader = new RealtimeLeaderCoordinator({
+      broadcast: options.broadcast,
+      tabId: this.tabId,
+      joinedAt: this.joinedAt,
+      now: this.now,
+      heartbeatMs: options.heartbeatMs ?? 2_000,
+      leaderTimeoutMs: options.leaderTimeoutMs ?? 5_000,
+      onCandidate: () => this.ensureTransport(),
+      onFollower: () => {
+        this.remoteWants.clear();
+        this.closeTransport();
+        // Channel messages can arrive while this field is still being assigned
+        // during construction; defer the follower's wants until then.
+        queueMicrotask(() => this.flushWants());
+      },
+      onWant: (sessionId, tabId, fromSeq) => this.addRemoteWant(sessionId, tabId, fromSeq),
+      onUnwant: (sessionId, tabId) => this.removeRemoteWant(sessionId, tabId),
+      onForgetTab: (tabId) => this.remoteWantsForgetTab(tabId),
+      onEvent: (sessionId, seq, event) => this.handleIncoming(sessionId, seq, event),
+    });
+    // Candidates race for leadership through their freshly opened transports.
+    if (options.broadcast) this.openTransport();
 
     if (options.visibility) {
       this.disposeVisibility = options.visibility.subscribe(() => this.handleVisibility());
@@ -169,7 +161,11 @@ class RealtimeConnectionImpl implements RealtimeConnection {
   }
 
   get isLeader(): boolean {
-    return this.role === "leader";
+    return this.leader.isLeader;
+  }
+
+  private get role(): RealtimeRole {
+    return this.leader.role;
   }
 
   onFallback(cb: (reason: string) => void): void {
@@ -197,17 +193,13 @@ class RealtimeConnectionImpl implements RealtimeConnection {
 
   dispose(): void {
     if (this.role === "disposed") return;
-    if (this.options.broadcast) this.post({ t: "bye", tabId: this.tabId });
-    this.role = "disposed";
-    this.stopHeartbeat();
-    if (this.livenessTimer) { clearInterval(this.livenessTimer); this.livenessTimer = null; }
+    this.leader.dispose();
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
     for (const timer of this.ackTimers.values()) clearTimeout(timer);
     this.ackTimers.clear();
     this.closeTransport();
     this.listeners.clear();
     this.disposeVisibility?.();
-    if (this.options.broadcast) { this.options.broadcast.onmessage = null; this.options.broadcast.close(); }
   }
 
   // ---- transport lifecycle -------------------------------------------------
@@ -247,8 +239,7 @@ class RealtimeConnectionImpl implements RealtimeConnection {
     const isReconnect = this.everConnected;
     this.everConnected = true;
 
-    if (this.options.broadcast && this.role !== "leader") this.claimLeadership();
-    if (this.role !== "leader" && !this.options.broadcast) this.role = "leader";
+    if (this.options.broadcast && this.role !== "leader") this.leader.claimLeadership();
 
     this.wireActive.clear();
     for (const sessionId of this.wantedSessions()) {
@@ -375,107 +366,24 @@ class RealtimeConnectionImpl implements RealtimeConnection {
     void fromWire;
   }
 
-  // ---- cross-tab leader election -------------------------------------------
+  // ---- cross-tab subscription state ----------------------------------------
 
-  private handleChannel(msg: ChannelMessage): void {
-    if (this.role === "disposed" || !msg) return;
-    switch (msg.t) {
-      case "hello":
-        // A new peer appeared; if we're leader, re-assert so it can defer.
-        if (this.role === "leader") this.post({ t: "claim", tabId: this.tabId, joinedAt: this.joinedAt });
-        break;
-      case "claim":
-      case "heartbeat":
-        this.observeLeader(msg.tabId!, msg.joinedAt ?? 0);
-        break;
-      case "bye":
-        if (this.knownLeader?.tabId === msg.tabId) {
-          this.knownLeader = null;
-          this.becomeCandidate();
-        }
-        this.remoteWantsForgetTab(msg.tabId!);
-        break;
-      case "want":
-        if (this.role === "leader" && msg.sessionId) {
-          const tabs = this.remoteWants.get(msg.sessionId) ?? new Set();
-          tabs.add(msg.tabId!);
-          this.remoteWants.set(msg.sessionId, tabs);
-          if (msg.fromSeq != null && !this.lastSeq.has(msg.sessionId)) this.lastSeq.set(msg.sessionId, msg.fromSeq);
-          this.idleSince = null;
-          this.ensureWire(msg.sessionId);
-        }
-        break;
-      case "unwant":
-        if (this.role === "leader" && msg.sessionId) {
-          this.remoteWants.get(msg.sessionId)?.delete(msg.tabId!);
-          if (!this.isWanted(msg.sessionId)) this.dropWire(msg.sessionId);
-          if (this.wantedSessions().size === 0) { this.idleSince = this.now(); this.scheduleIdleClose(); }
-        }
-        break;
-      case "event":
-        if (msg.sessionId) this.handleIncoming(msg.sessionId, msg.seq, msg.event);
-        break;
+  private addRemoteWant(sessionId: string, tabId: string, fromSeq?: number | null): void {
+    const tabs = this.remoteWants.get(sessionId) ?? new Set();
+    tabs.add(tabId);
+    this.remoteWants.set(sessionId, tabs);
+    if (fromSeq != null && !this.lastSeq.has(sessionId)) this.lastSeq.set(sessionId, fromSeq);
+    this.idleSince = null;
+    this.ensureWire(sessionId);
+  }
+
+  private removeRemoteWant(sessionId: string, tabId: string): void {
+    this.remoteWants.get(sessionId)?.delete(tabId);
+    if (!this.isWanted(sessionId)) this.dropWire(sessionId);
+    if (this.wantedSessions().size === 0) {
+      this.idleSince = this.now();
+      this.scheduleIdleClose();
     }
-  }
-
-  private observeLeader(tabId: string, joinedAt: number): void {
-    if (tabId === this.tabId) return;
-    const candidate = { tabId, joinedAt };
-    const betterThanMe = this.priorityLess(candidate, { tabId: this.tabId, joinedAt: this.joinedAt });
-    if (this.role === "leader") {
-      if (betterThanMe) this.stepDown(candidate); // another tab outranks us
-      return;
-    }
-    // follower/candidate: accept this leader if it outranks our current known.
-    if (!this.knownLeader || this.priorityLess(candidate, this.knownLeader) || candidate.tabId === this.knownLeader.tabId) {
-      const wasUnknown = !this.knownLeader;
-      this.knownLeader = candidate;
-      this.lastLeaderBeatAt = this.now();
-      if (this.role !== "follower" || wasUnknown) this.becomeFollower();
-    }
-  }
-
-  private priorityLess(a: { tabId: string; joinedAt: number }, b: { tabId: string; joinedAt: number }): boolean {
-    if (a.joinedAt !== b.joinedAt) return a.joinedAt < b.joinedAt;
-    return a.tabId < b.tabId;
-  }
-
-  private claimLeadership(): void {
-    // Only claim if no live leader outranks us.
-    if (this.knownLeader && this.priorityLess(this.knownLeader, { tabId: this.tabId, joinedAt: this.joinedAt })) {
-      this.becomeFollower();
-      return;
-    }
-    this.role = "leader";
-    this.knownLeader = { tabId: this.tabId, joinedAt: this.joinedAt };
-    this.post({ t: "claim", tabId: this.tabId, joinedAt: this.joinedAt });
-    this.startHeartbeat();
-  }
-
-  private stepDown(newLeader: { tabId: string; joinedAt: number }): void {
-    this.role = "follower";
-    this.knownLeader = newLeader;
-    this.lastLeaderBeatAt = this.now();
-    this.stopHeartbeat();
-    this.remoteWants.clear();
-    this.closeTransport();
-    this.flushWants();
-  }
-
-  private becomeFollower(): void {
-    this.role = "follower";
-    this.stopHeartbeat();
-    this.closeTransport();
-    this.flushWants();
-  }
-
-  private becomeCandidate(): void {
-    if (this.role === "disposed") return;
-    this.role = "candidate";
-    this.knownLeader = null;
-    // ensureTransport (not openTransport) so a paused/hidden tab does not
-    // grab the socket just because the leader went away.
-    this.ensureTransport();
   }
 
   private flushWants(): void {
@@ -488,29 +396,6 @@ class RealtimeConnectionImpl implements RealtimeConnection {
     for (const [sessionId, tabs] of this.remoteWants) {
       if (tabs.delete(tabId) && !this.isWanted(sessionId)) this.dropWire(sessionId);
     }
-  }
-
-  // ---- timers --------------------------------------------------------------
-
-  private startHeartbeat(): void {
-    if (this.heartbeatTimer || !this.options.broadcast) return;
-    this.heartbeatTimer = setInterval(() => {
-      this.post({ t: "heartbeat", tabId: this.tabId, joinedAt: this.joinedAt });
-    }, this.heartbeatMs);
-  }
-
-  private stopHeartbeat(): void {
-    if (this.heartbeatTimer) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
-  }
-
-  private startLiveness(): void {
-    if (this.livenessTimer || !this.options.broadcast) return;
-    this.livenessTimer = setInterval(() => {
-      if (this.role === "follower" && this.knownLeader && this.now() - this.lastLeaderBeatAt > this.leaderTimeoutMs) {
-        this.knownLeader = null;
-        this.becomeCandidate();
-      }
-    }, Math.max(250, Math.floor(this.heartbeatMs / 2)));
   }
 
   private scheduleIdleClose(): void {
@@ -533,25 +418,20 @@ class RealtimeConnectionImpl implements RealtimeConnection {
       // A backgrounded LEADER must hand off, or it would hold the only socket
       // while hidden and starve every visible follower tab. Relinquish so a
       // visible follower is promoted; a lone tab simply pauses.
-      if (this.role === "leader" && this.options.broadcast) {
-        this.post({ t: "bye", tabId: this.tabId });
-        this.role = "candidate";
-        this.knownLeader = null;
-        this.stopHeartbeat();
-      }
+      this.leader.relinquishForHiddenTab();
       this.paused = true;
       this.closeTransport();
     } else {
       this.paused = false;
       if (!this.options.broadcast) this.ensureTransport();
-      else this.becomeCandidate(); // rejoin election
+      else this.leader.rejoinElection(); // rejoin election
     }
   }
 
   // ---- helpers -------------------------------------------------------------
 
-  private post(message: ChannelMessage): void {
-    this.options.broadcast?.postMessage(message);
+  private post(message: { readonly t: "want" | "unwant" | "event"; readonly tabId?: string; readonly sessionId?: string; readonly fromSeq?: number | null; readonly seq?: number; readonly event?: unknown }): void {
+    this.leader.post(message);
   }
 
   private emitClient(event: RealtimeClientEvent): void {
