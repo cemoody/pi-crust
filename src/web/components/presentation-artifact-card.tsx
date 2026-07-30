@@ -18,8 +18,8 @@ import { coercePresentationDeck, presentationFallbackMarkdown, type Presentation
 import { compileRevealHtml } from "../../presentations/reveal.js";
 import { withAbsolutePresentationAssetUrls } from "../../presentations/absolute-asset-urls.js";
 import { compileStandalonePresentationHtml } from "../../presentations/standalone.js";
-import { applyDeckPatch, type DeckPatchOp } from "../../presentations/patch.js";
 import { TimelineSessionContext } from "./timeline-session-context.js";
+import { usePresentationDeckPersistence } from "./use-presentation-deck-persistence.js";
 
 export function PresentationArtifactCard({ deckInput, title }: { readonly deckInput: unknown; readonly title: string }) {
   const [open, setOpen] = useState(false);
@@ -28,7 +28,6 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
   const modalRef = useRef<HTMLDivElement | null>(null);
   const modalIframeRef = useRef<HTMLIFrameElement | null>(null);
   const [slideState, setSlideState] = useState<{ index: number; total: number }>({ index: 0, total: 0 });
-  const [editError, setEditError] = useState<string | null>(null);
   const sessionId = useContext(TimelineSessionContext);
   const parsed = useMemo((): { deck?: PresentationDeck; error?: string } => {
     try {
@@ -40,76 +39,13 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
   const baseDeck = parsed.deck;
   const deckId = baseDeck?.id;
 
-  // Hydration: GET <deckId>.deck.json on mount. If present, it supersedes
-  // the in-message deck so refresh-after-edit shows the persisted version.
-  const [persisted, setPersisted] = useState<PresentationDeck | null>(null);
-  useEffect(() => {
-    if (!sessionId || !deckId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const apiBase = (import.meta as ImportMeta).env?.VITE_PI_CRUST_API_BASE ?? "";
-        const url = `${apiBase}/api/sessions/${encodeURIComponent(sessionId)}/presentations/${encodeURIComponent(deckId)}/deck.json`;
-        const res = await fetch(url);
-        if (!res.ok) return;
-        const envelope = await res.json();
-        if (!cancelled && envelope?.deck && typeof envelope.deck === "object") {
-          setPersisted(envelope.deck as PresentationDeck);
-        }
-      } catch {
-        // ignore — fall back to deckInput
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [sessionId, deckId]);
-
-  // Optimistic edits applied locally pending PATCH confirmation.
-  const [optimistic, setOptimistic] = useState<PresentationDeck | null>(null);
-  const deck = optimistic ?? persisted ?? baseDeck;
-
-  // Debounced PATCH machinery. We batch ops within a single 500 ms window
-  // and coalesce by path (last write wins per pointer).
-  const pendingOpsRef = useRef<DeckPatchOp[]>([]);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const confirmedDeckRef = useRef<PresentationDeck | null>(null);
-  useEffect(() => {
-    confirmedDeckRef.current = persisted ?? baseDeck ?? null;
-  }, [persisted, baseDeck]);
-
-  const flushNow = useRef<() => Promise<void>>(async () => undefined);
-  flushNow.current = async () => {
-    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
-    const ops = pendingOpsRef.current;
-    if (!ops.length || !sessionId || !deckId) return;
-    pendingOpsRef.current = [];
-    const apiBase = (import.meta as ImportMeta).env?.VITE_PI_CRUST_API_BASE ?? "";
-    const url = `${apiBase}/api/sessions/${encodeURIComponent(sessionId)}/presentations/${encodeURIComponent(deckId)}/deck.json`;
-    const initial = confirmedDeckRef.current ?? baseDeck;
-    try {
-      const res = await fetch(url, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ops, initial }),
-      });
-      if (!res.ok) {
-        let detail = "Could not save edits";
-        try { const body = await res.json(); detail = body?.error ?? detail; } catch { /* ignore */ }
-        setEditError(detail);
-        // Roll back to last server-confirmed deck.
-        setOptimistic(null);
-        return;
-      }
-      const envelope = await res.json();
-      if (envelope?.deck) {
-        setPersisted(envelope.deck as PresentationDeck);
-        setOptimistic(null);
-        setEditError(null);
-      }
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : String(err));
-      setOptimistic(null);
-    }
-  };
+  const { deck, persisted, editError, flushEdits } = usePresentationDeckPersistence({
+    baseDeck,
+    sessionId,
+    deckId,
+    open,
+    editing,
+  });
 
   // Listen for slide-state postMessage from the modal iframe so the outer
   // prev/next buttons can disable at the edges and show a 'n / N' counter.
@@ -131,35 +67,9 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
     win.postMessage({ type: "pi-deck-nav", dir }, "*");
   };
 
-  // Listen for postMessage edits from the modal iframe.
-  useEffect(() => {
-    if (!open || !editing) return;
-    function onMessage(event: MessageEvent) {
-      const data = event.data;
-      if (!data || typeof data !== "object") return;
-      if (data.type !== "pi-deck-edit") return;
-      if (typeof data.path !== "string" || typeof data.value !== "string") return;
-      if (deckId && data.deckId && data.deckId !== deckId) return;
-      const op: DeckPatchOp = { op: "replace", path: data.path, value: data.value };
-      // Coalesce by path: replace any earlier op for the same path.
-      pendingOpsRef.current = pendingOpsRef.current.filter((o) => o.path !== op.path);
-      pendingOpsRef.current.push(op);
-      // Apply optimistically.
-      const base = optimistic ?? persisted ?? baseDeck;
-      if (base) {
-        try { setOptimistic(applyDeckPatch(base, [op])); }
-        catch (err) { setEditError(err instanceof Error ? err.message : String(err)); }
-      }
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => { void flushNow.current(); }, 500);
-    }
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [open, editing, deckId, optimistic, persisted, baseDeck]);
-
   // Flush pending edits when closing the modal.
   const closeModal = () => {
-    void flushNow.current();
+    void flushEdits();
     setOpen(false);
     setEditing(false);
     setPresenting(false);

@@ -169,6 +169,29 @@ describe("PresentationArtifactCard — edit mode", () => {
     expect(patches[0]!.url).toMatch(new RegExp(`/api/sessions/${SESSION_ID}/presentations/${DECK_ID}/deck\\.json$`));
   });
 
+  it("coalesces repeated edits to the same deck path before PATCHing", async () => {
+    renderTimeline();
+    await act(async () => { await flush(); });
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Edit/ }));
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "pi-deck-edit", deckId: DECK_ID, path: "/slides/0/title", value: "Draft" },
+      }));
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "pi-deck-edit", deckId: DECK_ID, path: "/slides/0/title", value: "Final" },
+      }));
+    });
+    await act(async () => { await sleep(700); });
+
+    const patches = calls.filter((call) => call.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    expect((patches[0]!.body as { ops: unknown[] }).ops).toEqual([
+      { op: "replace", path: "/slides/0/title", value: "Final" },
+    ]);
+  });
+
   it("flushes pending edits when the modal closes", async () => {
     renderTimeline();
     await act(async () => { await flush(); });
