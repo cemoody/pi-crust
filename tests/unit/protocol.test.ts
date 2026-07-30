@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION } from "../../src/shared/version.js";
 import { parseClientEnvelope } from "../../src/shared/protocol.js";
 import { SessionEventFanout } from "../../src/server/protocol/session-event-fanout.js";
-import { truncateText } from "../../src/shared/truncation.js";
+import { truncateText, truncateWithEllipsis } from "../../src/shared/truncation.js";
 
 describe("protocol", () => {
   it("parses valid client envelopes", () => {
@@ -50,5 +50,12 @@ describe("protocol", () => {
     expect(result.truncated).toBe(true);
     expect(result.originalLength).toBe(6);
     expect(result.text).toHaveLength(4);
+  });
+
+  it("truncates compact labels with an ellipsis while preserving their maximum length", () => {
+    expect(truncateWithEllipsis("abcdef", 4)).toBe("abc…");
+    expect(truncateWithEllipsis("abc", 4)).toBe("abc");
+    expect(truncateWithEllipsis("abcdef", 0)).toBe("");
+    expect(() => truncateWithEllipsis("abc", -1)).toThrow("maxChars must be >= 0");
   });
 });

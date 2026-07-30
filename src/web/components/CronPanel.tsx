@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CronApi, CronJobInput, CronJobView } from "../api/session-api.js";
+import { truncateWithEllipsis } from "../../shared/truncation.js";
 import { useNotifications } from "./notifications.js";
 import "./cron-panel.css";
 
@@ -237,7 +238,7 @@ export function CronPanel({ api, defaultCwd, onOpenSession }: CronPanelProps) {
                 <div className="cron-card-prompt">
                   <div className="cron-card-prompt-label">Prompt</div>
                   <div className="cron-card-prompt-body" title={job.prompt || "(empty)"}>
-                    {job.prompt ? truncate(job.prompt, 240) : <em className="cron-muted">(empty)</em>}
+                    {job.prompt ? truncateWithEllipsis(job.prompt, 240) : <em className="cron-muted">(empty)</em>}
                   </div>
                 </div>
 
@@ -333,9 +334,4 @@ function formatTime(ts: number | null | undefined): ReactNode {
   if (!ts) return <span className="cron-muted">—</span>;
   const d = new Date(ts);
   return d.toLocaleString();
-}
-
-function truncate(text: string, max: number): string {
-  if (!text) return "";
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
