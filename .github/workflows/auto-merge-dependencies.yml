@@ -30,5 +30,8 @@ jobs:
         run: |
           # Dependabot's Pi updates are grouped in dependabot.yml. Do not
           # auto-merge any other dependency or security update by accident.
-          gh pr view "$PR_URL" --json title --jq '.title' | grep -Eq '^build\(deps\):.*(pi-ai|pi-coding-agent)'
+          # Dependabot's grouped-update title is currently either
+          # "build(deps): …" or "build(deps)(deps): …". The group itself is
+          # constrained in dependabot.yml to Pi packages only.
+          gh pr view "$PR_URL" --json title --jq '.title' | grep -Eq '^build\(deps\)(\(deps\))?: bump the pi group'
           gh pr merge "$PR_URL" --auto --squash --delete-branch
