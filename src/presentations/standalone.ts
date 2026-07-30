@@ -12,13 +12,11 @@
  * trust the remote CDN). Pass `inlineRemoteAssets: true` to fetch and inline
  * them too for guaranteed offline / link-rot-proof output.
  */
+import { presentationAssetDataUri, type PresentationAsset } from "./assets.js";
 import { compileRevealHtmlAsync, type TemplatePackResolver } from "./reveal.js";
 import type { PresentationDeck, PresentationImage, PresentationSlide } from "./schema.js";
 
-export interface FetchedAsset {
-  readonly data: Uint8Array;
-  readonly mimeType: string;
-}
+export type FetchedAsset = PresentationAsset;
 
 export type FetchAsset = (src: string) => Promise<FetchedAsset>;
 
@@ -67,8 +65,7 @@ async function inlineDeckAssets(
     const fetcher = options.fetchAsset;
     const promise = (async () => {
       try {
-        const asset = await fetcher(src);
-        return `data:${asset.mimeType};base64,${toBase64(asset.data)}`;
+        return presentationAssetDataUri(await fetcher(src));
       } catch (error) {
         // Surface both the original message and the offending src so debug
         // output makes the bad asset obvious.
@@ -94,11 +91,4 @@ async function rewriteImage(image: PresentationImage, resolve: (src: string) => 
   const src = await resolve(image.src);
   if (src === image.src) return image;
   return { ...image, src };
-}
-
-function toBase64(data: Uint8Array): string {
-  if (typeof Buffer !== "undefined") return Buffer.from(data).toString("base64");
-  let binary = "";
-  for (const byte of data) binary += String.fromCharCode(byte);
-  return btoa(binary);
 }
