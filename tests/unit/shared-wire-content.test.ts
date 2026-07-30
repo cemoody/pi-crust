@@ -73,6 +73,16 @@ describe("contentTextAndThinking", () => {
     ]);
   });
 
+  it("shares image validation with tool-result extraction", () => {
+    const blocks = [
+      { type: "image", data: "AAAA", mimeType: "image/jpeg" },
+      { type: "image", data: "BBBB" },
+      { type: "image", data: 42 },
+      { type: "text", text: "not an image" },
+    ];
+    expect(contentTextAndThinking(blocks).images).toEqual(toolResultImages({ content: blocks }));
+  });
+
   it("silently skips unknown blocks rather than JSON-stringifying them into text", () => {
     // This is the pirpc-pi-adapter behavior; the prior session-dashboard
     // copy would have stringified the toolCall block into `text`. Pin
