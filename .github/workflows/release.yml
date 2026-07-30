@@ -39,8 +39,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # semantic-release creates a version commit and tag, so it needs the
-          # full tag history plus the job's write-capable GitHub token.
+          # semantic-release creates the release tag; package versions are
+          # intentionally not committed back to protected main.
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
@@ -49,6 +49,9 @@ jobs:
           node-version: 22.22.2
           cache: npm
           registry-url: https://registry.npmjs.org
+          # npm's trusted-publisher exchange is performed directly by
+          # semantic-release; do not inject a registry auth token.
+          always-auth: false
 
       - name: install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
