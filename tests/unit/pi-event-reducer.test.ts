@@ -110,6 +110,23 @@ describe("Pi event reducer", () => {
     expect(state.tools["tool-1"]?.truncated).toBe(true);
   });
 
+  it("uses the same output budget for running tool updates", () => {
+    const state = reducePiEvent(initialWebSessionState, {
+      type: "tool_execution_update",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "echo hi" },
+      partialResult: { content: [{ type: "text", text: "abcdef" }] },
+    }, { maxToolOutputChars: 3 });
+
+    expect(state.tools["tool-1"]).toMatchObject({
+      status: "running",
+      args: { command: "echo hi" },
+      output: "abc",
+      truncated: true,
+    });
+  });
+
   it("updates steering and follow-up queues", () => {
     const state = reducePiEvent(initialWebSessionState, {
       type: "queue_update",

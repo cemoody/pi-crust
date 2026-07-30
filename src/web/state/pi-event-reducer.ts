@@ -64,57 +64,32 @@ export function reducePiEvent(
     case "message_end":
       return replaceLastStreamingMessage(state, { ...toWebMessage(event.message, false), streaming: false });
     case "tool_execution_start":
-      return {
-        ...state,
-        tools: {
-          ...state.tools,
-          [event.toolCallId]: {
-            id: event.toolCallId,
-            name: event.toolName,
-            args: event.args,
-            status: "running",
-            output: "",
-            truncated: false,
-          },
-        },
-      };
-    case "tool_execution_update": {
-      const output = toolResultText(event.partialResult);
-      const truncated = truncateText(output, maxToolOutputChars);
-      return {
-        ...state,
-        tools: {
-          ...state.tools,
-          [event.toolCallId]: {
-            id: event.toolCallId,
-            name: event.toolName,
-            args: event.args,
-            status: "running",
-            output: truncated.text,
-            truncated: truncated.truncated,
-          },
-        },
-      };
-    }
-    case "tool_execution_end": {
-      const output = toolResultText(event.result);
-      const truncated = truncateText(output, maxToolOutputChars);
-      const existing = state.tools[event.toolCallId];
-      return {
-        ...state,
-        tools: {
-          ...state.tools,
-          [event.toolCallId]: {
-            id: event.toolCallId,
-            name: event.toolName,
-            args: existing?.args ?? {},
-            status: event.isError ? "error" : "success",
-            output: truncated.text,
-            truncated: truncated.truncated,
-          },
-        },
-      };
-    }
+      return replaceTool(state, event.toolCallId, {
+        id: event.toolCallId,
+        name: event.toolName,
+        args: event.args,
+        status: "running",
+        output: "",
+        truncated: false,
+      });
+    case "tool_execution_update":
+      return replaceTool(state, event.toolCallId, toToolState({
+        id: event.toolCallId,
+        name: event.toolName,
+        args: event.args,
+        status: "running",
+        output: toolResultText(event.partialResult),
+        maxOutputChars: maxToolOutputChars,
+      }));
+    case "tool_execution_end":
+      return replaceTool(state, event.toolCallId, toToolState({
+        id: event.toolCallId,
+        name: event.toolName,
+        args: state.tools[event.toolCallId]?.args ?? {},
+        status: event.isError ? "error" : "success",
+        output: toolResultText(event.result),
+        maxOutputChars: maxToolOutputChars,
+      }));
     case "queue_update":
       return { ...state, queues: { steering: [...event.steering], followUp: [...event.followUp] } };
     case "compaction_start":
@@ -186,6 +161,23 @@ function reduceMessageUpdate(
     return { ...state, messages: [...state.messages.slice(0, -1), updated] };
   }
   return { ...state, messages: [...state.messages, updated] };
+}
+
+function replaceTool(state: WebSessionState, id: string, tool: WebToolState): WebSessionState {
+  return { ...state, tools: { ...state.tools, [id]: tool } };
+}
+
+function toToolState(input: {
+  readonly id: string;
+  readonly name: string;
+  readonly args: unknown;
+  readonly status: WebToolState["status"];
+  readonly output: string;
+  readonly maxOutputChars: number;
+}): WebToolState {
+  const { maxOutputChars, ...tool } = input;
+  const truncated = truncateText(tool.output, maxOutputChars);
+  return { ...tool, output: truncated.text, truncated: truncated.truncated };
 }
 
 export function reduceExtensionUiRequest(state: WebSessionState, request: ExtensionUiRequest): WebSessionState {
