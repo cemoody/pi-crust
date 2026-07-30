@@ -1,3 +1,10 @@
+/**
+ * Semantic-release plugin for pi-crust-full, the companion meta-package.
+ * It stages the exact core version before npm publishing, so npx pi-crust-full
+ * never installs a stale pi-crust release. It publishes after the core package
+ * through npm OIDC, avoiding long-lived tokens and protected-main write races.
+ * This file is loaded only by the release workflow; it has no runtime impact.
+ */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
