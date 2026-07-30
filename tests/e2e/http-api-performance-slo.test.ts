@@ -46,6 +46,36 @@ describe("HTTP API performance SLOs", () => {
     await expectTimed("warm GET /api/sessions/statuses", 150, () => fetchJson(`${corpus.baseUrl}/api/sessions/statuses?cwd=${encodeURIComponent(corpus.projectRoot)}`));
   });
 
+  it("keeps the flat session corpus visible when the requested cwd differs", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "pi-api-cwd-list-"));
+    tempRoots.push(root);
+    const projectRoot = path.join(root, "project");
+    const siblingRoot = path.join(root, "sibling-worktree");
+    const sessionRoot = path.join(root, "sessions");
+    await Promise.all([projectRoot, siblingRoot, sessionRoot].map((dir) => fsp.mkdir(dir, { recursive: true })));
+    const files = [
+      { id: "project-session", cwd: projectRoot, index: 0 },
+      { id: "sibling-session", cwd: siblingRoot, index: 1 },
+    ];
+    const handles: SloHandle[] = [];
+    for (const item of files) {
+      const sessionFile = path.join(sessionRoot, `${item.id}.jsonl`);
+      await fsp.writeFile(sessionFile, makeJsonl({ ...item, sizeBytes: 1_000 }), "utf8");
+      handles.push(new SloHandle({ id: item.id, cwd: item.cwd, sessionFile, lastActivity: 1_700_000_000_000 + item.index }));
+    }
+    const adapter = new SloAdapter(handles);
+    const registry = new SessionRegistry({
+      adapter,
+      pathPolicy: new PathPolicy({ allowedProjectRoots: [root], allowedSessionRoots: [sessionRoot] }),
+    });
+    const server = createHttpApiServer({ registry, adapterKind: "test", projectRoot: root, sessionRoot, defaultCwd: projectRoot });
+    servers.push(server);
+    const baseUrl = await listen(server);
+
+    const sessions = await fetchJson<Array<{ id: string }>>(`${baseUrl}/api/sessions?cwd=${encodeURIComponent(projectRoot)}`);
+    expect(sessions.map((session) => session.id).sort()).toEqual(["project-session", "sibling-session"]);
+  });
+
   it("dedupes concurrent list/status polling bursts instead of serializing full work", async () => {
     const corpus = await makeCorpus({ count: 64, sizeBytes: 256_000 });
     const urls = [

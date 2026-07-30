@@ -1645,11 +1645,16 @@ async function listSessionCards(
   // timestamps, and visibility flags. A sync reconciles only changed JSONL
   // files; after that, listing never needs a head/tail JSONL scan.
   await context.sessionSearch.sync();
+  // `cwd` selects the default location for creating sessions; it must not
+  // narrow the sidebar. Pi's flat --session-dir contract has always returned
+  // every transcript in that directory, including sessions created from the
+  // home directory and sibling worktrees. Applying an exact cwd predicate here
+  // made a server launched from pi-crust-main show only that repo's cron runs.
+  // Keep search's cwd filter separate: listing is intentionally corpus-wide.
   const indexedSessions = context.sessionSearch.listIndexedMetadata({
-    ...(cwd ? { cwd } : {}),
     ...(options.includeSubagents ? { includeSubagents: true } : {}),
     ...(options.includeHidden ? { includeHidden: true } : {}),
-  });
+  }).filter((session) => context.registry.isSearchableSession(session.cwd, session.sessionFile));
   // Mock sessions are JSON blobs, while the index intentionally tracks only
   // Pi JSONL. If a mock root also contains a JSONL fixture, the index is
   // non-empty but incomplete; always ask the mock adapter for the authoritative
