@@ -1,6 +1,6 @@
 import { type ClipboardEvent as ReactClipboardEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
-import { errorMessage, optional } from "../../shared/util.js";
+import { errorMessage, optional, uniqueValues } from "../../shared/util.js";
 import { downscaleImageIfNeeded } from "../utils/image-downscale.js";
 import "./prompt-composer.css";
 import { Icon } from "./Icon.js";
@@ -200,7 +200,7 @@ export function PromptComposer(props: PromptComposerProps) {
     ? props.fileSuggestions.filter((file) => file.toLowerCase().includes(deferredActiveToken.slice(1).toLowerCase()))
     : [], [deferredActiveToken, props.fileSuggestions]);
   const commandMatches = useMemo(() => deferredDraft.startsWith("/")
-    ? uniqueStrings(props.commandSuggestions).filter((command) => command.toLowerCase().includes(deferredDraft.slice(1).toLowerCase()))
+    ? uniqueValues(props.commandSuggestions).filter((command) => command.toLowerCase().includes(deferredDraft.slice(1).toLowerCase()))
     : [], [deferredDraft, props.commandSuggestions]);
 
   const queueSummary = useMemo(() => [
@@ -644,10 +644,6 @@ function shortModel(value: string, max: number): string {
     return `…${tail.slice(tail.length - max + 1)}`;
   }
   return `…${value.slice(value.length - max + 1)}`;
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)];
 }
 
 function SuggestionList({ label, items, onPick }: { readonly label: string; readonly items: readonly string[]; readonly onPick: (item: string) => void }) {

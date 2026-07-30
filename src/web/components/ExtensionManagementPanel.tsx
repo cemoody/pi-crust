@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { uniqueValues } from "../../shared/util.js";
 import type {
   AppBrandingSettings,
   ExtensionRegistryInfo,
@@ -518,14 +519,14 @@ function ReloadGlyph() {
 }
 
 function extensionIdsForSettings(extensions: ExtensionRegistryInfo, disabled: ReadonlySet<string>): string[] {
-  return [...new Set([
+  return uniqueValues([
     ...extensions.activities.map((activity) => activity.extensionId),
     ...extensions.commands.map((command) => command.extensionId),
     ...extensions.routes.map((route) => route.extensionId),
     ...extensions.diagnostics.map((diagnostic) => diagnostic.extensionId),
     ...(extensions.settings ?? []).map((section) => section.extensionId),
     ...disabled,
-  ])].sort();
+  ]).sort();
 }
 
 function sortContributedSections(

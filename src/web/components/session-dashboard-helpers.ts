@@ -5,7 +5,7 @@
  * None of these helpers depend on React, the dashboard's component state,
  * or its JSX. They are safe to import from anywhere in the web bundle.
  */
-import { isRecord, optional } from "../../shared/util.js";
+import { isRecord, optional, uniqueValues } from "../../shared/util.js";
 import type { ExtensionUiRequest } from "../../shared/protocol.js";
 import type { BranchMessageOption, DashboardArtifact, PromptAttachment, SessionCardData, SessionCardStats } from "../api/session-api.js";
 
@@ -145,7 +145,7 @@ export function formatExtensionCommandResult(result: unknown, title: string): st
 }
 
 export function unique(values: readonly string[]): string[] {
-  return [...new Set(values.filter(Boolean))];
+  return uniqueValues(values.filter(Boolean));
 }
 
 export function formatStats(

@@ -44,6 +44,14 @@ export function optional<T extends Record<string, unknown>>(
 }
 
 /**
+ * Return values in their original order with later duplicates removed.
+ * Values are compared with Set's SameValueZero semantics.
+ */
+export function uniqueValues<T>(values: readonly T[]): T[] {
+  return [...new Set(values)];
+}
+
+/**
  * Server-side timestamp coercer. Accepts a finite number (ms), a Date,
  * or a parseable ISO date string; returns ms-since-epoch or `undefined`.
  *
