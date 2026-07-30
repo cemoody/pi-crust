@@ -23,7 +23,9 @@ describe("release automation configuration", () => {
 
   it("publishes from main with npm trusted publishing permissions", () => {
     const workflow = read(".github/workflows/release.yml");
+    expect(workflow).toContain("workflow_run:");
     expect(workflow).toContain("branches: [main]");
+    expect(workflow).toContain("github.event.workflow_run.conclusion == 'success'");
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("npx semantic-release");
     expect(workflow).toContain("fetch-depth: 0");

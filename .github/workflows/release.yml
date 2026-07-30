@@ -1,7 +1,11 @@
 name: release
 
+# Release only after the CI workflow for a main commit has succeeded. Workflows
+# triggered by the release commit itself are skipped by its [skip ci] message.
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -26,17 +30,19 @@ jobs:
     name: publish npm package and GitHub release
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # A release must only occur after the same required CI checks that protect
-    # main. This prevents a race with the independent CI workflow on a push.
-    needs: []
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     concurrency:
       group: npm-release-main
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
+          # semantic-release creates a version commit and tag, so it needs the
+          # full tag history plus the job's write-capable GitHub token.
           fetch-depth: 0
-          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
