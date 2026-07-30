@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import { coerceMarkdownInput } from "../utils/safe-markdown.js";
 import remarkGfm from "remark-gfm";
 import { PRESENTATION_MIME } from "../../presentations/schema.js";
+import { truncateWithEllipsis } from "../../shared/truncation.js";
 import { copyTextToClipboard } from "../utils/clipboard.js";
 import "./message-timeline.css";
 import { Icon } from "./Icon.js";
@@ -1412,13 +1413,9 @@ function summarizeArgs(args: Record<string, unknown>): string {
   const preferred = ["command", "path", "file", "pattern", "query"];
   for (const key of preferred) {
     const value = args[key];
-    if (typeof value === "string" && value.trim()) return truncate(value, 80);
+    if (typeof value === "string" && value.trim()) return truncateWithEllipsis(value, 80);
   }
   return "";
-}
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
 function messageTitle(message: TimelineMessage): string {
