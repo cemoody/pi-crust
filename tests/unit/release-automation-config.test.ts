@@ -29,11 +29,13 @@ describe("release automation configuration", () => {
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("npx semantic-release");
     expect(workflow).toContain("fetch-depth: 0");
+    expect(workflow).toContain("always-auth: false");
   });
 
   it("turns dependency commits into patch releases", () => {
     const config = JSON.parse(read(".releaserc.json")) as { plugins: unknown[] };
     expect(JSON.stringify(config)).toContain('"scope":"deps","release":"patch"');
     expect(JSON.stringify(config)).toContain('"failComment":false');
+    expect(JSON.stringify(config)).toContain("semantic-release-full.mjs");
   });
 });
