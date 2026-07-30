@@ -1,10 +1,11 @@
 import * as React from "react";
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import type {
   ExtensionRegistryInfo,
   ExtensionSettingsSectionInfo,
   SessionDashboardApi,
 } from "../api/session-api.js";
+import { useExternalWebModule } from "./use-external-web-module.js";
 
 export interface ExternalWebSettingsSectionProps {
   readonly section: ExtensionSettingsSectionInfo;
@@ -23,24 +24,14 @@ export interface ExternalWebSettingsSectionModule {
   readonly renderSettingsSection?: ExternalWebSettingsSectionComponent;
 }
 
+const getSettingsSectionComponent = (module: ExternalWebSettingsSectionModule) => module.renderSettingsSection ?? module.default;
+
 export function ExternalWebSettingsSection(props: ExternalWebSettingsSectionProps) {
-  const [state, setState] = useState<{ component?: ExternalWebSettingsSectionComponent; error?: string }>({});
-  useEffect(() => {
-    let cancelled = false;
-    setState({});
-    if (!props.section.webModuleUrl) return;
-    void import(/* @vite-ignore */ props.section.webModuleUrl)
-      .then((module: ExternalWebSettingsSectionModule) => {
-        if (cancelled) return;
-        const component = module.renderSettingsSection ?? module.default;
-        if (!component) setState({ error: `Web module for ${props.section.id} does not export a renderer.` });
-        else setState({ component });
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setState({ error: error instanceof Error ? error.message : String(error) });
-      });
-    return () => { cancelled = true; };
-  }, [props.section.id, props.section.webModuleUrl]);
+  const state = useExternalWebModule(
+    props.section.webModuleUrl,
+    getSettingsSectionComponent,
+    `Web module for ${props.section.id} does not export a renderer.`,
+  );
 
   if (!props.section.webModuleUrl) {
     return (

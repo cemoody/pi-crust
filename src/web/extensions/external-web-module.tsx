@@ -1,6 +1,7 @@
 import * as React from "react";
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import type { ExtensionActivityInfo, ExtensionRegistryInfo, SessionDashboardApi } from "../api/session-api.js";
+import { useExternalWebModule } from "./use-external-web-module.js";
 
 export interface ExternalWebActivityNavigation {
   openSession(sessionId: string): void | Promise<void>;
@@ -22,24 +23,14 @@ export interface ExternalWebActivityModule {
   readonly renderActivity?: ExternalWebActivityComponent;
 }
 
+const getActivityComponent = (module: ExternalWebActivityModule) => module.renderActivity ?? module.default;
+
 export function ExternalWebActivity(props: ExternalWebActivityProps) {
-  const [state, setState] = useState<{ component?: ExternalWebActivityComponent; error?: string }>({});
-  useEffect(() => {
-    let cancelled = false;
-    setState({});
-    if (!props.activity.webModuleUrl) return;
-    void import(/* @vite-ignore */ props.activity.webModuleUrl)
-      .then((module: ExternalWebActivityModule) => {
-        if (cancelled) return;
-        const component = module.renderActivity ?? module.default;
-        if (!component) setState({ error: `Web module for ${props.activity.id} does not export a renderer.` });
-        else setState({ component });
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setState({ error: error instanceof Error ? error.message : String(error) });
-      });
-    return () => { cancelled = true; };
-  }, [props.activity.id, props.activity.webModuleUrl]);
+  const state = useExternalWebModule(
+    props.activity.webModuleUrl,
+    getActivityComponent,
+    `Web module for ${props.activity.id} does not export a renderer.`,
+  );
 
   if (!props.activity.webModuleUrl) return null;
   if (state.error) return <div role="alert" className="extension-web-error">Extension web module failed: {state.error}</div>;
