@@ -20,6 +20,7 @@ import { resolveGitSha, createLiveGitSha } from "./git-sha.js";
 import { resolvePiVersion } from "./pi-version.js";
 import { SessionRegistry, type RegisteredSession } from "./session/session-registry.js";
 import { SessionSearchService } from "./session/session-search-service.js";
+import { readIndexedJsonlTail } from "./session/session-jsonl-offset-index.js";
 import { attachRealtimeGateway } from "./protocol/realtime-gateway.js";
 import { PtyManager } from "./pty/pty-manager.js";
 import { createNodePtySpawner } from "./pty/node-pty-spawner.js";
@@ -2242,7 +2243,23 @@ function stripDetailsForTransport(
  * as a rope and concatenated only once when their newline is reached. Repeated
  * Buffer.concat() while scanning backwards makes a N-MiB record O(N²) copies.
  */
-async function readSessionMessagesTail(
+export async function readSessionMessagesTail(
+  sessionFile: string,
+  options: { readonly limit: number; readonly before?: number },
+): Promise<readonly SessionMessage[] | undefined> {
+  // The sidecar stores only byte boundaries and source identity; JSONL stays
+  // authoritative. Any stale/corrupt/racing sidecar returns undefined or
+  // rebuilds itself, and the established backwards scanner below remains the
+  // compatibility fallback for old/unreadable/non-JSONL sessions.
+  const indexed = await readIndexedJsonlTail(sessionFile, {
+    ...options,
+    normalize: (raw) => toSessionMessages(raw),
+  });
+  if (indexed !== undefined) return indexed;
+  return readSessionMessagesTailLegacy(sessionFile, options);
+}
+
+export async function readSessionMessagesTailLegacy(
   sessionFile: string,
   options: { readonly limit: number; readonly before?: number },
 ): Promise<readonly SessionMessage[] | undefined> {
