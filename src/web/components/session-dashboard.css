@@ -1047,6 +1047,13 @@ a.sidebar-menu-item:visited {
     box-shadow: var(--shadow-1);
   }
 
+  /* The closed-drawer affordance otherwise sits slightly lower than the
+     compact title-bar controls. Keep this correction exclusive to its
+     collapsed mobile state; the open drawer's header remains unchanged. */
+  .session-dashboard.collapsed .sidebar-toggle--floating {
+    transform: translateY(-7px);
+  }
+
   /* Active session takes the full viewport; the floating button needs room. */
   .active-session > header {
     padding: 8px 12px 8px 56px;
