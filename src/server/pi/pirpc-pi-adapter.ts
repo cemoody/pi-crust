@@ -37,6 +37,7 @@ import { contentTextAndThinking as sharedContentTextAndThinking } from "../../sh
 import { sanitizePiDynamicCommands, type PiDynamicCommandInfo } from "../../shared/slash-command-routing.js";
 import { fastListSessions } from "./session-jsonl-scanner.js";
 import { resolvePiCommand } from "../pi-version.js";
+import { hydrateTranscriptSidecars } from "./transcript-sidecars.js";
 // Re-export so any external import path keeps working without churn.
 export { fastListSessions } from "./session-jsonl-scanner.js";
 
@@ -361,7 +362,7 @@ class PiRpcSessionHandle implements PiSessionHandle {
   async getMessages(): Promise<readonly SessionMessage[]> {
     const data = await this.rpc.request("get_messages");
     const messages = isRecord(data) && Array.isArray(data.messages) ? data.messages : [];
-    return toSessionMessages(messages);
+    return toSessionMessages(await hydrateTranscriptSidecars(this.sessionFile, messages));
   }
 
   async prompt(message: string, attachments: readonly PromptAttachment[] = []): Promise<void> {

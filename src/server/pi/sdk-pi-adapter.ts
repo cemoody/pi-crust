@@ -9,6 +9,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { hydrateTranscriptSidecars } from "./transcript-sidecars.js";
 import type {
   CreateSessionOptions,
   ModelInfo,
@@ -194,7 +195,11 @@ class SdkPiSessionHandle implements PiSessionHandle {
   }
 
   async getMessages(): Promise<readonly SessionMessage[]> {
-    const messages = Array.isArray(this.session.messages) ? this.session.messages : [];
+    const rawMessages = Array.isArray(this.session.messages) ? this.session.messages : [];
+    // A reopened SDK session reads persisted JSONL into session.messages. Undo
+    // pi-crust's transparent sidecar references before applying the legacy
+    // normalizer so SDK and RPC adapters expose the same UI contract.
+    const messages: any[] = await hydrateTranscriptSidecars(this.sessionFile, rawMessages);
     const result: SessionMessage[] = [];
     for (const message of messages) {
       const timestamp = typeof message.timestamp === "number" ? message.timestamp : Date.now();
