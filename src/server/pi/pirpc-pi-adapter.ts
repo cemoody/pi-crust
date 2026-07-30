@@ -38,6 +38,7 @@ import { sanitizePiDynamicCommands, type PiDynamicCommandInfo } from "../../shar
 import { fastListSessions } from "./session-jsonl-scanner.js";
 import { resolvePiCommand } from "../pi-version.js";
 import { hydrateTranscriptSidecars } from "./transcript-sidecars.js";
+import { PAYLOAD_REF_KEY, payloadRefMeta } from "./extensions/payload-budget.js";
 // Re-export so any external import path keeps working without churn.
 export { fastListSessions } from "./session-jsonl-scanner.js";
 
@@ -309,6 +310,8 @@ class PiRpcSessionHandle implements PiSessionHandle {
     const args = ["--mode", "rpc"];
     if (options.sessionDir) args.push("--session-dir", options.sessionDir);
     if (options.sessionFile) args.push("--session", options.sessionFile);
+    const payloadBudgetExtension = await resolvePayloadBudgetExtension();
+    if (payloadBudgetExtension) args.push("--extension", payloadBudgetExtension);
     const extension = await resolveArtifactExtension(options.artifactExtension);
     if (extension) args.push("--extension", extension);
     // Also load @cemoody/pi-artifact (registers the `display` tool for
@@ -982,6 +985,8 @@ async function buildPiRpcArgs(options: {
   const args = ["--mode", "rpc"];
   if (options.sessionDir) args.push("--session-dir", options.sessionDir);
   if (options.sessionFile) args.push("--session", options.sessionFile);
+  const payloadBudgetExtension = await resolvePayloadBudgetExtension();
+  if (payloadBudgetExtension) args.push("--extension", payloadBudgetExtension);
   const extension = await resolveArtifactExtension(options.artifactExtension);
   if (extension) args.push("--extension", extension);
   const cemoodyExtension = await resolveCemoodyArtifactExtension();
@@ -1080,6 +1085,22 @@ function resolveSupervisorScript(): string {
   // Fall back to project-root resolution; the supervisor will fail with a
   // clear error if this is wrong.
   return path.resolve(process.cwd(), "scripts/pirpc-supervisor.mjs");
+}
+
+async function resolvePayloadBudgetExtension(): Promise<string | undefined> {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.join(here, "extensions", "payload-budget-extension.ts"),
+    path.join(here, "extensions", "payload-budget-extension.js"),
+    path.resolve(process.cwd(), "src", "server", "pi", "extensions", "payload-budget-extension.ts"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch { /* try next */ }
+  }
+  return undefined;
 }
 
 async function resolveArtifactExtension(configured: false | string | undefined): Promise<string | undefined> {
@@ -1313,6 +1334,9 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
 
     if (role === "toolResult") {
       const { text: output, images } = contentTextAndImages(message.content);
+      const outputPayloadRef = Array.isArray(message.content)
+        ? message.content.find((block) => isRecord(block) && typeof block.payloadRef === "object" && payloadRefMeta(block.payloadRef))?.payloadRef
+        : undefined;
       const toolCallId = String(message.toolCallId ?? message.id ?? "");
       const artifact = extractToolResultArtifact(message.details);
       const index = toolCallIndexes.get(toolCallId);
@@ -1327,6 +1351,7 @@ export function toSessionMessages(messages: readonly unknown[]): SessionMessage[
               ...previous.tool,
               status: message.isError ? "error" : "success",
               output,
+              ...optional({ outputPayloadRef }),
               completedAt: timestamp,
               ...optional({ artifact }),
               ...(images.length > 0 ? { images } : {}),
@@ -1365,7 +1390,14 @@ function contentTextAndImages(content: unknown): { text: string; images: NonNull
   // (user / system / toolResult) that don't surface a separate thinking
   // field. Assistant messages go through contentTextAndThinking instead.
   const { text, images } = sharedContentTextAndThinking(content);
-  return { text, images: images as NonNullable<SessionMessage["images"]> };
+  const externalized = Array.isArray(content)
+    ? content.flatMap((block) => {
+      if (!isRecord(block) || block.type !== "image") return [];
+      const meta = payloadRefMeta({ [PAYLOAD_REF_KEY]: block[PAYLOAD_REF_KEY] });
+      return meta ? [{ data: "", mimeType: String(block.mimeType ?? "image/png"), payloadRef: { [PAYLOAD_REF_KEY]: meta } }] : [];
+    })
+    : [];
+  return { text, images: [...images, ...externalized] as NonNullable<SessionMessage["images"]> };
 }
 
 /**

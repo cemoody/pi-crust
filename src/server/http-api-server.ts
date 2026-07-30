@@ -51,6 +51,7 @@ import { readSessionMessagesTail as readSessionMessagesTailFromWorkerModule } fr
 import { findSessionMessageBySyntheticId, lookupSessionMessage } from "./http-api-message-lookup.js";
 import { hydrateTranscriptSidecars } from "./pi/transcript-sidecars.js";
 import { SessionTranscriptPageCache } from "./session-transcript-page-cache.js";
+import { payloadRefMeta, readPayloadRef } from "./pi/extensions/payload-budget.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -1383,7 +1384,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const message = await lookupMessage(decodeURIComponent(imageMatch[1]!), decodeURIComponent(imageMatch[2]!));
     const image = messageImageAt(message, Number(imageMatch[3]!));
     if (!image) return sendJson(res, 404, { error: "image not found" });
-    const bytes = Buffer.from(image.data, "base64");
+    const externalized = payloadRefMeta(image.payloadRef);
+    const encoded = externalized
+      ? await readPayloadRef({ cwd: (await getOrOpenSession(context, decodeURIComponent(imageMatch[1]!))).cwd, sessionId: decodeURIComponent(imageMatch[1]!) }, image.payloadRef)
+      : image.data;
+    if (encoded === undefined) return sendJson(res, 404, { error: "externalized image payload not found" });
+    const bytes = Buffer.from(encoded, "base64");
     res.writeHead(200, {
       "Content-Type": image.mimeType || "application/octet-stream",
       "Content-Length": String(bytes.byteLength),
@@ -1400,24 +1406,34 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   if (req.method === "GET" && detailsMatch) {
     const message = await lookupMessage(decodeURIComponent(detailsMatch[1]!), decodeURIComponent(detailsMatch[2]!));
     if (!message?.details) return sendJson(res, 404, { error: "details not found" });
+    const ref = payloadRefMeta(message.details.payloadRef);
+    const externalized = ref
+      ? await readPayloadRef({ cwd: (await getOrOpenSession(context, decodeURIComponent(detailsMatch[1]!))).cwd, sessionId: decodeURIComponent(detailsMatch[1]!) }, message.details.payloadRef)
+      : undefined;
+    if (ref && externalized === undefined) return sendJson(res, 404, { error: "externalized details payload not found" });
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "private, max-age=60",
     });
-    res.end(JSON.stringify(message.details));
+    res.end(externalized ?? JSON.stringify(message.details));
     return;
   }
 
   // Lazy fetch of full tool output that we truncate in /messages payloads.
   const toolOutputMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/tool-output$/);
   if (req.method === "GET" && toolOutputMatch) {
-    const message = await lookupMessage(decodeURIComponent(toolOutputMatch[1]!), decodeURIComponent(toolOutputMatch[2]!));
+    const id = decodeURIComponent(toolOutputMatch[1]!);
+    const message = await lookupMessage(id, decodeURIComponent(toolOutputMatch[2]!));
     if (!message?.tool) return sendJson(res, 404, { error: "tool output not found" });
+    const output = payloadRefMeta(message.tool.outputPayloadRef)
+      ? await readPayloadRef({ cwd: (await getOrOpenSession(context, id)).cwd, sessionId: id }, message.tool.outputPayloadRef)
+      : message.tool.output;
+    if (output === undefined) return sendJson(res, 404, { error: "externalized tool output not found" });
     res.writeHead(200, {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "private, max-age=60",
     });
-    res.end(message.tool.output ?? "");
+    res.end(output);
     return;
   }
 
@@ -1427,13 +1443,21 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   // can render the card inline after the initial page becomes interactive.
   const toolArtifactMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages\/([^/]+)\/artifact$/);
   if (req.method === "GET" && toolArtifactMatch) {
-    const message = await lookupMessage(decodeURIComponent(toolArtifactMatch[1]!), decodeURIComponent(toolArtifactMatch[2]!));
+    const id = decodeURIComponent(toolArtifactMatch[1]!);
+    const message = await lookupMessage(id, decodeURIComponent(toolArtifactMatch[2]!));
     if (!message?.tool?.artifact) return sendJson(res, 404, { error: "tool artifact not found" });
+    let artifact: unknown = message.tool.artifact;
+    const ref = artifact && typeof artifact === "object" ? payloadRefMeta((artifact as Record<string, unknown>).payloadRef) : undefined;
+    if (ref) {
+      const raw = await readPayloadRef({ cwd: (await getOrOpenSession(context, id)).cwd, sessionId: id }, (artifact as Record<string, unknown>).payloadRef);
+      if (raw === undefined) return sendJson(res, 404, { error: "externalized tool artifact not found" });
+      try { artifact = (JSON.parse(raw) as Record<string, unknown>).piRemoteControlArtifact; } catch { return sendJson(res, 500, { error: "externalized tool artifact was corrupt" }); }
+    }
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "private, max-age=60",
     });
-    res.end(JSON.stringify(message.tool.artifact));
+    res.end(JSON.stringify(artifact));
     return;
   }
 
@@ -2113,7 +2137,7 @@ function stripImagesForTransport(images: readonly { readonly data: string; reado
   }));
 }
 
-function messageImages(message: SessionMessage | undefined): readonly { readonly data: string; readonly mimeType: string }[] {
+function messageImages(message: SessionMessage | undefined): readonly { readonly data: string; readonly mimeType: string; readonly payloadRef?: unknown }[] {
   if (!message) return [];
   const normalized = typeof message.content === "string" ? { images: [] as readonly { readonly data: string; readonly mimeType: string }[] } : contentTextAndThinking(message.content);
   const base = normalized.images.length > 0 ? normalized.images : (message.images ?? []);
@@ -2139,7 +2163,11 @@ function stripToolForTransport(
   const artifact = stripToolArtifactForTransport(tool.artifact, sessionId, messageId);
   const toolWithArtifact = artifact === tool.artifact ? tool : { ...tool, artifact };
   let result: Record<string, unknown> = { ...toolWithArtifact };
-  if (sessionId && Buffer.byteLength(output, "utf8") > MAX_INLINE_TOOL_OUTPUT_BYTES) {
+  const durableOutput = payloadRefMeta(tool.outputPayloadRef);
+  if (sessionId && durableOutput) {
+    const outputUrl = `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/tool-output`;
+    result = { ...result, outputTruncated: true, outputUrl, outputFullBytes: durableOutput.bytes };
+  } else if (sessionId && Buffer.byteLength(output, "utf8") > MAX_INLINE_TOOL_OUTPUT_BYTES) {
     // Keep the first/last few KB inline so the UI still shows context without
     // a second round-trip. The exact midpoint is replaced with a marker that
     // includes the byte count and a URL to the full payload.
@@ -2169,12 +2197,24 @@ function stripToolForTransport(
 
 function stripToolArtifactForTransport(artifact: unknown, sessionId: string | undefined, messageId: string): unknown {
   if (!artifact || typeof artifact !== "object") return artifact;
+  const source = artifact as Record<string, unknown>;
+  // Ingest-time guard externalized a tool artifact before it entered JSONL.
+  // Preserve the existing lazy artifact UX even though the transport copy is
+  // already small.
+  if (payloadRefMeta(source.payloadRef)) {
+    return {
+      artifactTruncated: true,
+      artifactFullBytes: payloadRefMeta(source.payloadRef)!.bytes,
+      ...(typeof source.kind === "string" ? { kind: source.kind } : {}),
+      ...(typeof source.title === "string" ? { title: source.title } : {}),
+      ...(sessionId ? { artifactUrl: `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/artifact` } : {}),
+    };
+  }
   let serialised: string;
   try { serialised = JSON.stringify(artifact); } catch { return artifact; }
   const fullBytes = Buffer.byteLength(serialised, "utf8");
   if (fullBytes <= MAX_INLINE_TOOL_ARTIFACT_BYTES) return artifact;
 
-  const source = artifact as Record<string, unknown>;
   const preview: Record<string, unknown> = {
     artifactTruncated: true,
     artifactFullBytes: fullBytes,
@@ -2215,6 +2255,15 @@ function stripDetailsForTransport(
   messageId: string,
 ): { details: Record<string, unknown>; detailsUrl?: string; detailsTruncated?: boolean; detailsFullBytes?: number } {
   if (!sessionId) return { details };
+  const externalized = payloadRefMeta(details.payloadRef);
+  if (externalized) {
+    return {
+      details: { detailsExternalized: true },
+      detailsUrl: `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/details`,
+      detailsTruncated: true,
+      detailsFullBytes: externalized.bytes,
+    };
+  }
   let serialised: string;
   try { serialised = JSON.stringify(details); } catch { return { details }; }
   const fullBytes = Buffer.byteLength(serialised, "utf8");

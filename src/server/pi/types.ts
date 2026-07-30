@@ -81,8 +81,11 @@ export interface SessionMessage {
 }
 
 export interface SessionMessageImage {
+  /** Base64 data when in-memory; externalized records use payloadRef instead. */
   readonly data: string;
   readonly mimeType: string;
+  /** Opaque durable payload reference issued by the ingest-time budget guard. */
+  readonly payloadRef?: unknown;
 }
 
 export interface PromptAttachment {
@@ -112,6 +115,8 @@ export interface SessionToolDetails {
   readonly args: Record<string, unknown>;
   readonly status: "running" | "success" | "error";
   readonly output: string;
+  /** Opaque ref to output externalized before JSONL persistence. */
+  readonly outputPayloadRef?: unknown;
   /** Epoch-ms when the toolCall was emitted (assistant turn timestamp). */
   readonly startedAt?: number;
   /** Epoch-ms when the toolResult arrived. Undefined while still running. */

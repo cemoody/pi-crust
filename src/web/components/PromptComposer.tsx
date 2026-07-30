@@ -62,6 +62,10 @@ export function PromptComposer(props: PromptComposerProps) {
   const lastTextareaHeightRef = useRef<string | undefined>(undefined);
   const [history, setHistory] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  // Paste/file decoding is asynchronous. Keep the submission snapshot in a
+  // ref as well as render state so a Send event never closes over the render
+  // that preceded a just-committed attachment preview.
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
   // Paste warnings are surfaced through the global toast system when
   // available, falling back to inline state if the composer is rendered
   // outside a NotificationsProvider (e.g. unit tests).
@@ -93,6 +97,7 @@ export function PromptComposer(props: PromptComposerProps) {
 
   function clearAttachments() {
     attachmentGenRef.current += 1;
+    attachmentsRef.current = [];
     setAttachments([]);
   }
 
@@ -224,7 +229,9 @@ export function PromptComposer(props: PromptComposerProps) {
     }
     // Capture the attachments snapshot before clearing them locally so
     // an in-flight onPrompt's await doesn't see them mutate underneath.
-    const snapshot = attachments;
+    // Use the event-time ref: native clipboard ingestion may have committed
+    // after this render's click handler was created.
+    const snapshot = attachmentsRef.current;
     clearAttachments();
     if (kind === "steer") await props.onSteer(text);
     else if (kind === "follow-up") await props.onFollowUp(text);
@@ -308,6 +315,10 @@ export function PromptComposer(props: PromptComposerProps) {
     const gen = sourceGen ?? attachmentGenRef.current;
     const shrunk = await Promise.all(next.map(maybeShrinkAttachment));
     if (gen !== attachmentGenRef.current) return;
+    // Update the event-time snapshot before enqueueing React state. Native
+    // clipboard events can be followed immediately by a keyboard Send; React
+    // may not have committed the queued state update when that handler runs.
+    attachmentsRef.current = [...attachmentsRef.current, ...shrunk];
     setAttachments((current) => [...current, ...shrunk]);
     setPasteWarning(null);
   }
