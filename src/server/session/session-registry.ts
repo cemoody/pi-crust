@@ -4,6 +4,7 @@ import { sanitizePiDynamicCommands } from "../../shared/slash-command-routing.js
 import type { PathPolicy } from "../security/path-policy.js";
 import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ListSessionsOptions, ModelInfo, PiAdapter, PiEvent, PiEventListener, PiSessionHandle, PromptAttachment, SeqEventListener, SessionListItem, SessionState, Unsubscribe } from "../pi/types.js";
 import { WorkerRegistry } from "./worker-registry.js";
+import { persistOversizedTranscriptBodies, transcriptSidecarDirectory } from "../pi/transcript-sidecars.js";
 
 export interface SessionRegistryOptions {
   readonly adapter: PiAdapter;
@@ -427,6 +428,7 @@ export class SessionRegistry {
     this.sessions.delete(sessionId);
     this.pendingSessionMetadata.delete(sessionId);
     await fs.rm(internal.registered.sessionFile, { force: true });
+    await fs.rm(transcriptSidecarDirectory(internal.registered.sessionFile), { recursive: true, force: true });
     await this.workerRegistry.removeSession(sessionId);
   }
 
@@ -474,6 +476,13 @@ export class SessionRegistry {
       lastSeq: 0,
     };
     const onEvent = (event: PiEvent, seq: number) => {
+      // Pi owns JSONL persistence. Once it reports the end of a turn, compact
+      // newly-written giant tool/artifact bodies into private sidecars. This is
+      // deliberately asynchronous: durable sidecar work must never delay SSE
+      // delivery or poison the agent event stream.
+      if (event.type === "agent_end") {
+        void persistOversizedTranscriptBodies(registered.sessionFile).catch(() => undefined);
+      }
       internal.lastSeq = seq;
       internal.ring.push({ seq, event });
       if (internal.ring.length > this.ringSize) internal.ring.shift();

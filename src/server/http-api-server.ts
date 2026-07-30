@@ -46,6 +46,7 @@ import { createPrcExtensionRuntime, type PrcExtensionRuntime } from "../extensio
 import { defaultArtifactFileRoots, resolveArtifactFile, resolveArtifactFileForWrite, streamArtifactFile, writeArtifactFileContent } from "./artifact-file.js";
 import { coerceTimestamp, isRecord } from "../shared/util.js";
 import { findSessionMessageBySyntheticId, lookupSessionMessage } from "./http-api-message-lookup.js";
+import { hydrateTranscriptSidecars } from "./pi/transcript-sidecars.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -2067,7 +2068,12 @@ export function toDashboardMessages(messages: readonly SessionMessage[], options
             : message.role === "summary"
               ? "summary"
               : "custom",
-      text: normalized.text,
+      // Tool rows use tool.output for their visible body. Do not duplicate a
+      // multi-megabyte output through the generic message text field after
+      // stripToolForTransport has made the tool payload lazy.
+      text: message.role === "tool" && message.tool && sessionId
+        ? stripToolTextForTransport(normalized.text)
+        : normalized.text,
       provider: message.role === "assistant" ? "pi" : undefined,
       tool: message.tool ? stripToolForTransport(message.tool, sessionId, id, (images ?? []).length) : undefined,
       images: sessionId && images ? stripImagesForTransport(images, sessionId, id) : images,
@@ -2080,6 +2086,12 @@ export function toDashboardMessages(messages: readonly SessionMessage[], options
       ...(message.summaryKind ? { summaryKind: message.summaryKind } : {}),
     };
   });
+}
+
+function stripToolTextForTransport(text: string): string {
+  if (Buffer.byteLength(text, "utf8") <= MAX_INLINE_TOOL_OUTPUT_BYTES) return text;
+  const halfWindow = Math.floor(MAX_INLINE_TOOL_OUTPUT_BYTES / 2);
+  return `${text.slice(0, halfWindow)}\n\n…[tool output shown in the tool card; full text is lazy-loaded]…\n\n${text.slice(-halfWindow)}`;
 }
 
 function stripImagesForTransport(images: readonly { readonly data: string; readonly mimeType: string }[], sessionId: string, messageId: string) {
@@ -2375,7 +2387,7 @@ async function readSessionMessagesTail(
     // field) applies uniformly. THEN apply the limit, since the fan-out
     // can change the message count (one assistant turn with N toolCall
     // blocks expands to 1 assistant + N tool rows).
-    const normalized = toSessionMessages(collected);
+    const normalized = toSessionMessages(await hydrateTranscriptSidecars(sessionFile, collected));
     return normalized.slice(-options.limit);
   } finally {
     await fd.close();
