@@ -16,7 +16,7 @@
  * callers using `?? null` / `?? 0` keep working unchanged).
  */
 import { describe, expect, it } from "vitest";
-import { coerceTimestamp, isRecord, numberOrNull, sumNumbers, uniqueValues } from "../../src/shared/util.js";
+import { coerceTimestamp, errorMessage, isRecord, numberOrNull, sumNumbers, uniqueValues } from "../../src/shared/util.js";
 
 describe("isRecord", () => {
   it("accepts objects but excludes null, arrays, and primitives", () => {
@@ -42,6 +42,26 @@ describe("uniqueValues", () => {
     const values = ["one", "one", "two"];
     expect(uniqueValues(values)).toEqual(["one", "two"]);
     expect(values).toEqual(["one", "one", "two"]);
+  });
+});
+
+describe("errorMessage", () => {
+  it("prefers an Error message", () => {
+    expect(errorMessage(new Error("request failed"))).toBe("request failed");
+  });
+
+  it("uses a plain object's message for cross-realm error shapes", () => {
+    expect(errorMessage({ message: "worker failed", code: "EWORKER" })).toBe("worker failed");
+  });
+
+  it("serializes message-less objects instead of returning [object Object]", () => {
+    expect(errorMessage({ code: "EWORKER", retryable: false })).toBe('{"code":"EWORKER","retryable":false}');
+  });
+
+  it("handles circular thrown objects without throwing", () => {
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    expect(errorMessage(circular)).toBe("[unserializable error]");
   });
 });
 

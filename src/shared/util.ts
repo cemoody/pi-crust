@@ -97,13 +97,22 @@ export function sumNumbers(record: Record<string, unknown> | undefined, keys: re
 /**
  * Best-effort, user-facing error string. Handles `Error`, `DOMException`
  * (where `name` is sometimes more informative than the empty `message`),
- * and arbitrary thrown values without ever returning the literal
- * `"[object Object]"`.
+ * plain-object throws (including cross-realm errors) without ever returning
+ * the literal `"[object Object]"`.
  */
 export function errorMessage(error: unknown): string {
   if (typeof DOMException !== "undefined" && error instanceof DOMException) {
     return error.message || error.name;
   }
   if (error instanceof Error) return error.message;
+  if (error !== null && typeof error === "object") {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+    try {
+      return JSON.stringify(error) ?? "Unknown error";
+    } catch {
+      return "[unserializable error]";
+    }
+  }
   return String(error ?? "");
 }
