@@ -138,12 +138,99 @@ const SCROLL_PIN_THRESHOLD_PX = 80;
 // gesture reliably triggers a fetch before the user runs out of content.
 const SCROLL_LOAD_OLDER_THRESHOLD_PX = 200;
 
+// A timeline can contain thousands of history rows after the user pages back
+// through a long session. Rows are intentionally not fixed-height: markdown,
+// tool output, images, and artifact cards all grow independently. Keep a
+// generously overscanned, measured window of *turns* in the DOM and represent
+// the rest with inert spacers. Turns (rather than individual records) are the
+// unit so a reply, its tool cards, and its footer never get separated.
+const VIRTUALIZE_AFTER_TURNS = 40;
+const VIRTUAL_OVERSCAN_PX = 1_200;
+const ESTIMATED_TURN_HEIGHT_PX = 156;
+const TURN_GAP_PX = 12;
+
+interface VirtualViewport {
+  readonly scrollTop: number;
+  readonly height: number;
+}
+
+interface VirtualTurnProps {
+  readonly turn: TurnGroup;
+  readonly turnIndex: number;
+  readonly totalTurns: number;
+  readonly hideThinking: boolean;
+  readonly enabledArtifactMimes: readonly string[] | undefined;
+  readonly showFooter: boolean;
+  readonly onHeight: (key: string, height: number) => void;
+}
+
+/** A measured turn wrapper. ResizeObserver handles late image/artifact loads
+ * and expanding tool cards; the estimate is only used until this reports. */
+function VirtualTurn({ turn, turnIndex, totalTurns, hideThinking, enabledArtifactMimes, showFooter, onHeight }: VirtualTurnProps) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const key = turn.messages[0]?.id ?? `turn-${turnIndex}`;
+
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const report = () => {
+      const contentHeight = node.getBoundingClientRect().height;
+      // Hidden/detached nodes and jsdom report zero; retain the estimate until
+      // a real layout measurement is available rather than collapsing a turn.
+      if (contentHeight > 0) onHeight(key, contentHeight + (turnIndex === totalTurns - 1 ? 0 : TURN_GAP_PX));
+    };
+    report();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(report);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [key, onHeight, totalTurns, turnIndex]);
+
+  return (
+    <div
+      ref={ref}
+      className="timeline-turn timeline-turn-virtual"
+      role="group"
+      aria-label={`Messages ${turnIndex + 1} of ${totalTurns}`}
+    >
+      {turn.messages.map((message) => renderMessage(message, hideThinking, enabledArtifactMimes))}
+      {showFooter && turn.messages.length > 0 ? <TurnFooter turn={turn} /> : null}
+    </div>
+  );
+}
+
 export function MessageTimeline({ messages, hideThinking = false, autoScroll = true, streaming = false, enabledArtifactMimes, sessionId, hasMoreOlder = false, loadingOlder = false, onLoadOlder }: MessageTimelineProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
   const innerRef = useRef<HTMLDivElement | null>(null);
   const [pinned, setPinned] = useState(true);
   const pinnedRef = useRef(true);
+  const [viewport, setViewport] = useState<VirtualViewport>({ scrollTop: 0, height: 0 });
+  // Heights are keyed by a stable first-message id, so a prepend does not
+  // invalidate measurements for the already-loaded tail.
+  const turnHeightsRef = useRef(new Map<string, number>());
+  const [heightRevision, setHeightRevision] = useState(0);
+
+  function updateViewport(el = containerRef.current) {
+    if (!el) return;
+    const next = { scrollTop: el.scrollTop, height: el.clientHeight };
+    setViewport((previous) => previous.scrollTop === next.scrollTop && previous.height === next.height ? previous : next);
+  }
+
+  function recordTurnHeight(key: string, height: number) {
+    if (height <= 0) return;
+    const previous = turnHeightsRef.current.get(key);
+    // ResizeObserver can report fractional noise while a markdown/image card
+    // settles. Avoid rerendering the window for imperceptible changes.
+    if (previous != null && Math.abs(previous - height) < 1) return;
+    turnHeightsRef.current.set(key, height);
+    setHeightRevision((revision) => revision + 1);
+  }
+
+  // Seed the first window with the actual viewport even if auto-scroll is
+  // disabled (for example when reading a restored session).
+  useLayoutEffect(() => { updateViewport(); }, []);
+
   // When we ask the parent to load older messages we snapshot
   // `scrollHeight - scrollTop` so that, after the new (taller) DOM lands,
   // we can restore the same visual offset from the bottom. Without this,
@@ -156,9 +243,12 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
   const onLoadOlderRef = useRef(onLoadOlder);
   const hasMoreOlderRef = useRef(hasMoreOlder);
   const loadingOlderRef = useRef(loadingOlder);
-  useEffect(() => { onLoadOlderRef.current = onLoadOlder; }, [onLoadOlder]);
-  useEffect(() => { hasMoreOlderRef.current = hasMoreOlder; }, [hasMoreOlder]);
-  useEffect(() => { loadingOlderRef.current = loadingOlder; }, [loadingOlder]);
+  // Assign during render rather than in an effect: a user can scroll before
+  // passive effects flush after a pagination rerender, and that must still use
+  // the current callback/cursors.
+  onLoadOlderRef.current = onLoadOlder;
+  hasMoreOlderRef.current = hasMoreOlder;
+  loadingOlderRef.current = loadingOlder;
 
   useEffect(() => { pinnedRef.current = pinned; }, [pinned]);
 
@@ -169,6 +259,7 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
       return;
     }
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    updateViewport(el);
     // Also call scrollIntoView as a belt-and-braces fallback for environments
     // where the container itself isn't the actual scroll port.
     endRef.current?.scrollIntoView?.({ block: "end" });
@@ -203,6 +294,7 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
     const el = containerRef.current;
     if (!el) return;
     const onScroll = () => {
+      updateViewport(el);
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       const nextPinned = distance <= SCROLL_PIN_THRESHOLD_PX;
       if (nextPinned !== pinnedRef.current) setPinned(nextPinned);
@@ -236,10 +328,30 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
     if (!el || saved == null) return;
     if (loadingOlder) return; // wait until the fetch completes
     el.scrollTop = el.scrollHeight - saved;
+    updateViewport(el);
     restoreDistanceFromBottomRef.current = null;
   }, [messages, loadingOlder]);
 
   const turns = groupTurns(messages);
+  const virtualized = turns.length > VIRTUALIZE_AFTER_TURNS;
+  const virtualWindow = useMemo(() => {
+    if (!virtualized) return { start: 0, end: turns.length, top: 0, bottom: 0 };
+    const heights = turns.map((turn, index) => turnHeightsRef.current.get(turn.messages[0]?.id ?? `turn-${index}`) ?? ESTIMATED_TURN_HEIGHT_PX);
+    const total = heights.reduce((sum, height) => sum + height, 0);
+    const startAt = Math.max(0, viewport.scrollTop - VIRTUAL_OVERSCAN_PX);
+    const endAt = viewport.scrollTop + Math.max(viewport.height, 1) + VIRTUAL_OVERSCAN_PX;
+    let start = 0;
+    let offset = 0;
+    while (start < heights.length && offset + heights[start]! < startAt) offset += heights[start++]!;
+    let end = start;
+    let renderedHeight = offset;
+    while (end < heights.length && renderedHeight < endAt) renderedHeight += heights[end++]!;
+    // Always leave a non-empty window, including in layout-less test DOMs.
+    end = Math.max(end, Math.min(turns.length, start + 1));
+    return { start, end, top: offset, bottom: Math.max(0, total - renderedHeight) };
+  // Height revisions deliberately cause the variable-height prefix sums to be
+  // recomputed; the map itself stays in a ref to avoid copying thousands of rows.
+  }, [turns, virtualized, viewport, heightRevision]);
 
   return (
     <TimelineSessionContext.Provider value={sessionId}>
@@ -252,7 +364,7 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
       // under it to mask — see prompt-composer.css.
       data-pinned={pinned ? "true" : "false"}
     >
-      <div className="message-timeline-inner" ref={innerRef}>
+      <div className={`message-timeline-inner${virtualized ? " is-virtualized" : ""}`} ref={innerRef}>
         {hasMoreOlder || loadingOlder ? (
           <div
             className="message-timeline-older-loader"
@@ -263,9 +375,23 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
             {loadingOlder ? "Loading earlier messages…" : "Scroll up to load earlier messages"}
           </div>
         ) : null}
-        {turns.map((turn, turnIndex) => {
+        {virtualWindow.top > 0 ? <div className="timeline-virtual-spacer" aria-hidden="true" style={{ height: virtualWindow.top }} /> : null}
+        {turns.slice(virtualWindow.start, virtualWindow.end).map((turn, localIndex) => {
+          const turnIndex = virtualWindow.start + localIndex;
           const isLatest = turnIndex === turns.length - 1;
           const showFooter = !isLatest || !streaming;
+          if (virtualized) {
+            return <VirtualTurn
+              key={`turn-${turn.messages[0]?.id ?? turnIndex}`}
+              turn={turn}
+              turnIndex={turnIndex}
+              totalTurns={turns.length}
+              hideThinking={hideThinking}
+              enabledArtifactMimes={enabledArtifactMimes}
+              showFooter={showFooter}
+              onHeight={recordTurnHeight}
+            />;
+          }
           return (
             <div key={`turn-${turn.messages[0]?.id ?? turnIndex}`} className="timeline-turn">
               {turn.messages.map((message) => renderMessage(message, hideThinking, enabledArtifactMimes))}
@@ -273,6 +399,7 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
             </div>
           );
         })}
+        {virtualWindow.bottom > 0 ? <div className="timeline-virtual-spacer" aria-hidden="true" style={{ height: virtualWindow.bottom }} /> : null}
         {streaming ? <TypingDots /> : null}
         <div ref={endRef} data-testid="timeline-end" />
       </div>
