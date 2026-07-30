@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MockPiAdapter } from "../../src/server/pi/mock-pi-adapter.js";
 import { PathPolicy } from "../../src/server/security/path-policy.js";
 import { SessionRegistry } from "../../src/server/session/session-registry.js";
@@ -28,6 +28,10 @@ async function setup() {
   const scheduler = new CronScheduler({ store, registry, logger: () => undefined });
   return { root, projectA, registry, store, scheduler };
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("CronScheduler.runJobNow", () => {
   it("spawns a session and records lastRun + lastSessionId", async () => {
@@ -112,6 +116,25 @@ describe("CronScheduler.runJobNow", () => {
 
     // Finally, release the prompt so the worker can finish (cleanup).
     releasePrompt!();
+  });
+});
+
+describe("CronScheduler.tick", () => {
+  it("uses cron expression day-of-month/day-of-week matching semantics", async () => {
+    const { projectA, store, scheduler } = await setup();
+    // June 3, 2024 was a Monday, but not the first of the month. Standard
+    // cron semantics run when either restricted day field matches.
+    vi.useFakeTimers();
+    const scheduledAt = new Date(2024, 5, 3, 10, 15);
+    vi.setSystemTime(scheduledAt);
+    const job = await store.create({ name: "weekday", schedule: "15 10 1 * 1", prompt: "", cwd: projectA });
+
+    await (scheduler as unknown as { tick(): Promise<void> }).tick();
+
+    await vi.waitFor(async () => {
+      const lastRun = (await store.get(job.id))?.lastRun;
+      expect(Math.floor(lastRun! / 60_000)).toBe(Math.floor(scheduledAt.getTime() / 60_000));
+    });
   });
 });
 
