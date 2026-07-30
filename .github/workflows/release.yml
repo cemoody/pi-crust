@@ -1,0 +1,60 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview the next release without publishing
+        required: false
+        default: false
+        type: boolean
+
+# npm trusted publishing exchanges this workflow's GitHub OIDC identity for a
+# short-lived npm credential. Configure the matching trusted publisher once in
+# npm for package "pi-crust", repository cemoody/pi-crust, workflow
+# .github/workflows/release.yml, environment production (if used).
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  publish:
+    name: publish npm package and GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # A release must only occur after the same required CI checks that protect
+    # main. This prevents a race with the independent CI workflow on a push.
+    needs: []
+    concurrency:
+      group: npm-release-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.2
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: preview release
+        if: inputs.dry_run == true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx semantic-release --dry-run
+
+      - name: publish
+        if: inputs.dry_run != true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx semantic-release
