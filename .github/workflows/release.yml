@@ -50,12 +50,17 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
+          # npm trusted publishing needs npm >=11.5.1. Node 22.22 ships npm
+          # 10, so the job upgrades npm before any publish command runs.
           node-version: 22.22.2
           cache: npm
           registry-url: https://registry.npmjs.org
           # npm's trusted-publisher exchange is performed directly by
           # semantic-release; do not inject a registry auth token.
           always-auth: false
+
+      - name: upgrade npm for trusted publishing
+        run: npm install --global npm@11.5.1 --no-audit --no-fund
 
       - name: install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
