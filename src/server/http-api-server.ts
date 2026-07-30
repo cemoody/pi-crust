@@ -2225,7 +2225,10 @@ function stripDetailsForTransport(
  * jsonl-formatted session file without loading the whole file. Returns
  * undefined when the file can't be opened (caller should fall back to the
  * adapter). Multi-byte UTF-8 safe: we never decode a chunk until we have a
- * complete line boundary (newline).
+ * complete line boundary (newline). Large JSONL entries are common (artifact
+ * payloads and tool output can be many MiB), so partial-line chunks are kept
+ * as a rope and concatenated only once when their newline is reached. Repeated
+ * Buffer.concat() while scanning backwards makes a N-MiB record O(N²) copies.
  */
 async function readSessionMessagesTail(
   sessionFile: string,
@@ -2244,7 +2247,11 @@ async function readSessionMessagesTail(
   const fd = await fsp.open(sessionFile, "r");
   try {
     let position = stat.size;
-    let leftover = Buffer.alloc(0);
+    // Chunks belonging to the beginning of a line that started before the
+    // bytes read so far. They are deliberately NOT concatenated on every
+    // backwards read: a 6 MiB JSONL line otherwise performs roughly 6 MiB +
+    // 5.94 MiB + … of copying before it can even be parsed.
+    let partialLineChunks: Buffer[] = [];
     const collected: SessionMessage[] = [];
     // Track whether we saw ANY parseable jsonl record (message OR session
     // header). If a non-empty file produces zero such records the file
@@ -2268,27 +2275,30 @@ async function readSessionMessagesTail(
     while (position > 0) {
       const readSize = Math.min(TAIL_CHUNK_SIZE, position);
       position -= readSize;
-      const chunk = Buffer.alloc(readSize);
+      const chunk = Buffer.allocUnsafe(readSize);
       await fd.read(chunk, 0, readSize, position);
-      const buf = leftover.length === 0 ? chunk : Buffer.concat([chunk, leftover]);
 
-      let parseStart = 0;
-      if (position > 0) {
-        // Bytes before the first newline could be the tail of an earlier
-        // (still-unread) line. Save them for the next iteration and parse
-        // everything after the first newline.
-        const firstNewline = buf.indexOf(0x0a);
-        if (firstNewline === -1) {
-          leftover = buf;
-          continue;
-        }
-        leftover = buf.subarray(0, firstNewline);
-        parseStart = firstNewline + 1;
-      } else {
-        leftover = Buffer.alloc(0);
+      // The current chunk precedes all accumulated partial chunks. Find its
+      // first newline before concatenating anything. If no newline exists the
+      // chunk is just another fragment of one giant JSONL entry, so adding a
+      // Buffer view to the rope is O(1).
+      const firstNewline = position > 0 ? chunk.indexOf(0x0a) : -1;
+      if (position > 0 && firstNewline === -1) {
+        partialLineChunks.unshift(chunk);
+        continue;
       }
 
-      const text = buf.subarray(parseStart).toString("utf8");
+      // Everything after the first newline is complete JSONL data (including
+      // the partial suffix that came from later reads). Join it once now that
+      // we know a line boundary exists. At EOF position=0 the whole remainder
+      // is complete data and follows the same path.
+      const completePrefix = position > 0 ? chunk.subarray(firstNewline + 1) : chunk;
+      const complete = partialLineChunks.length === 0
+        ? completePrefix
+        : Buffer.concat([completePrefix, ...partialLineChunks]);
+      partialLineChunks = position > 0 ? [chunk.subarray(0, firstNewline)] : [];
+
+      const text = complete.toString("utf8");
       const lines = text.split("\n");
       // We collect the *raw* JSONL message bodies in this pass and run
       // them through toSessionMessages() at the end so the on-disk
@@ -2348,10 +2358,13 @@ async function readSessionMessagesTail(
       // unshift in collected-but-still-raw form; we flatten once at the
       // end so toSessionMessages's toolCall/toolResult index works
       // across the whole window, not per-chunk.
+      if (fresh.length === 0) continue;
       collected.unshift(...(fresh as SessionMessage[]));
       // Count the way the client (and the final return below) does: after
-      // the fan-out. Once we have a full normalized page we can stop
-      // reading older chunks.
+      // the fan-out. Do this only when a chunk yielded new records. A giant
+      // line can span hundreds of 64 KiB reads; normalizing the exact same
+      // `collected` array after every empty fragment used to add needless
+      // CPU work on top of the repeated buffer copying above.
       if (toSessionMessages(collected).length >= options.limit) break;
     }
     if (!sawSessionShapedRecord) return undefined;
