@@ -47,7 +47,8 @@
     "check": "npm run typecheck && npm test && npm run e2e",
     "promo": "playwright test --config=playwright.promo.config.ts",
     "promo:gif": "node scripts/record-d3-gif.mjs",
-    "promo:tour": "node scripts/record-showcase-gif.mjs"
+    "promo:tour": "node scripts/record-showcase-gif.mjs",
+    "bench:long-session": "tsx benchmarks/long-session-tail-read.mts"
   },
   "engines": {
     "node": ">=22"
