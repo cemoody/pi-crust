@@ -5,7 +5,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { defaultArtifactFileRoots, encodeArtifactFilePath, resolveArtifactFile } from "../../artifact-file.js";
 
-import { isRecord, optional } from "../../../shared/util.js";
+import { isRecord, optional, slugify } from "../../../shared/util.js";
 import { validatePresentationDeck } from "../../../presentations/schema.js";
 import { prepareLocalPresentationAssets } from "../../../presentations/local-assets.js";
 import type { PresentationDeck } from "../../../presentations/schema.js";
@@ -414,8 +414,7 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
 }
 
 function slugifyDeckTitle(value: string): string {
-  const slug = String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return slug || "deck";
+  return slugify(value, "deck");
 }
 
 function summarizeSubagentResult(promptResult: SpawnPromptResponse): SubagentResultSummary {

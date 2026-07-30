@@ -12,6 +12,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { slugify } from "../../shared/util.js";
 import { coerceMarkdownInput } from "../utils/safe-markdown.js";
 import { coercePresentationDeck, presentationFallbackMarkdown, type PresentationDeck } from "../../presentations/schema.js";
 import { compileRevealHtml } from "../../presentations/reveal.js";
@@ -311,7 +312,7 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
         <div className="presentation-actions">
           <button type="button" onClick={() => setOpen(true)}>Full screen</button>
           {downloadUrl ? (
-            <a href={downloadUrl} download={`${slugify(deck.title || title)}.html`}>Download HTML</a>
+            <a href={downloadUrl} download={`${slugify(deck.title || title, "presentation")}.html`}>Download HTML</a>
           ) : (
             <span
               className="presentation-download-pending"
@@ -465,10 +466,6 @@ export function PresentationArtifactCard({ deckInput, title }: { readonly deckIn
       ) : null}
     </section>
   );
-}
-
-function slugify(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "presentation";
 }
 
 /**
