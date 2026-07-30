@@ -30,6 +30,12 @@ export class TranscriptTailWorkerPool {
   private readonly workers = new Set<Worker>();
   private readonly onMainThreadParseStart: (() => void) | undefined;
   private readonly onWorkerStarted: (() => void) | undefined;
+  /**
+   * Slots claimed before the asynchronous file-size check / worker bootstrap
+   * completes. Counting only `workers` lets concurrent callers all observe an
+   * empty pool, then each create a worker after their stat resolves.
+   */
+  private pendingWorkerSlots = 0;
   private closed = false;
 
   constructor(options: TranscriptTailWorkerPoolOptions = {}) {
@@ -42,11 +48,16 @@ export class TranscriptTailWorkerPool {
   get activeWorkers(): number { return this.workers.size; }
 
   async read(sessionFile: string, options: TranscriptTailOptions): Promise<readonly SessionMessage[] | undefined> {
-    if (!this.closed && await this.shouldUseWorker(sessionFile)) {
-      const result = await this.readInWorker(sessionFile, options).catch(() => undefined);
-      // A worker failure must never change route semantics. Re-read locally;
-      // undefined remains the caller's signal to use the adapter fallback.
-      if (result !== undefined) return result;
+    if (!this.closed && this.reserveWorkerSlot()) {
+      const shouldUseWorker = await this.isLargeTranscript(sessionFile);
+      if (shouldUseWorker) {
+        const result = await this.readInWorker(sessionFile, options).catch(() => undefined);
+        // A worker failure must never change route semantics. Re-read locally;
+        // undefined remains the caller's signal to use the adapter fallback.
+        if (result !== undefined) return result;
+      } else {
+        this.releaseWorkerSlot();
+      }
     }
     return readSessionMessagesTail(sessionFile, options, this.onMainThreadParseStart);
   }
@@ -58,8 +69,17 @@ export class TranscriptTailWorkerPool {
     await Promise.all(workers.map((worker) => worker.terminate().catch(() => undefined)));
   }
 
-  private async shouldUseWorker(sessionFile: string): Promise<boolean> {
-    if (this.workers.size >= this.maxWorkers) return false;
+  private reserveWorkerSlot(): boolean {
+    if (this.workers.size + this.pendingWorkerSlots >= this.maxWorkers) return false;
+    this.pendingWorkerSlots++;
+    return true;
+  }
+
+  private releaseWorkerSlot(): void {
+    this.pendingWorkerSlots--;
+  }
+
+  private async isLargeTranscript(sessionFile: string): Promise<boolean> {
     try {
       const stat = await fsp.stat(sessionFile);
       return stat.isFile() && stat.size >= this.minBytes;
@@ -80,8 +100,10 @@ export class TranscriptTailWorkerPool {
         { eval: true, workerData: { sessionFile, options } },
       );
     } catch (error) {
+      this.releaseWorkerSlot();
       return Promise.reject(error);
     }
+    this.releaseWorkerSlot();
     this.workers.add(worker);
     return new Promise((resolve, reject) => {
       let settled = false;
