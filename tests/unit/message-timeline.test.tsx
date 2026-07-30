@@ -951,6 +951,25 @@ describe("MessageTimeline", () => {
     expect(link).toHaveAttribute("download", "chart.png");
   });
 
+  it("uses the shared artifact fallback when an inline title has no slug characters", () => {
+    (globalThis as any).URL.createObjectURL = vi.fn(() => "blob:mock-fallback");
+    (globalThis as any).URL.revokeObjectURL = vi.fn();
+    render(<MessageTimeline messages={[{
+      id: "html-inline-fallback-dl",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_inline_fallback_dl",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed html artifact.",
+        artifact: { kind: "html", title: "---", html: "<p>hi</p>" },
+      },
+    }]} />);
+    expect(screen.getByRole("link", { name: "Download artifact" })).toHaveAttribute("download", "artifact.html");
+  });
+
   it("offers a JSON blob download for json artifacts", () => {
     (globalThis as any).URL.createObjectURL = vi.fn(() => "blob:mock-json");
     (globalThis as any).URL.revokeObjectURL = vi.fn();
