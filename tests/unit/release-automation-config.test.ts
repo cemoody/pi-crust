@@ -30,6 +30,7 @@ describe("release automation configuration", () => {
     expect(workflow).toContain("npx semantic-release");
     expect(workflow).toContain("fetch-depth: 0");
     expect(workflow).toContain("always-auth: false");
+    expect(workflow).toContain("npm@11.5.1");
     expect(workflow).toContain("recover_full_version");
     expect(workflow).toContain("publish-pi-crust-full.mjs");
   });
