@@ -226,6 +226,11 @@ export function MessageTimeline({ messages, hideThinking = false, autoScroll = t
     turnHeightsRef.current.set(key, height);
     setHeightRevision((revision) => revision + 1);
   }
+
+  // Seed the first window with the actual viewport even if auto-scroll is
+  // disabled (for example when reading a restored session).
+  useLayoutEffect(() => { updateViewport(); }, []);
+
   // When we ask the parent to load older messages we snapshot
   // `scrollHeight - scrollTop` so that, after the new (taller) DOM lands,
   // we can restore the same visual offset from the bottom. Without this,
