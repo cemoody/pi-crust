@@ -16,7 +16,7 @@
  * callers using `?? null` / `?? 0` keep working unchanged).
  */
 import { describe, expect, it } from "vitest";
-import { coerceTimestamp, isRecord, numberOrNull, sumNumbers } from "../../src/shared/util.js";
+import { coerceTimestamp, isRecord, numberOrNull, sumNumbers, uniqueValues } from "../../src/shared/util.js";
 
 describe("isRecord", () => {
   it("accepts objects but excludes null, arrays, and primitives", () => {
@@ -26,6 +26,22 @@ describe("isRecord", () => {
     expect(isRecord([])).toBe(false);
     expect(isRecord("text")).toBe(false);
     expect(isRecord(42)).toBe(false);
+  });
+});
+
+describe("uniqueValues", () => {
+  it("keeps the first occurrence of each value in insertion order", () => {
+    expect(uniqueValues(["alpha", "beta", "alpha", "gamma", "beta"])).toEqual(["alpha", "beta", "gamma"]);
+  });
+
+  it("uses Set equality for primitive edge cases", () => {
+    expect(uniqueValues([Number.NaN, Number.NaN, 0, -0])).toEqual([Number.NaN, 0]);
+  });
+
+  it("does not mutate the input array", () => {
+    const values = ["one", "one", "two"];
+    expect(uniqueValues(values)).toEqual(["one", "two"]);
+    expect(values).toEqual(["one", "one", "two"]);
   });
 });
 

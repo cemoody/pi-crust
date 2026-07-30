@@ -4,6 +4,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { uniqueValues } from "../shared/util.js";
 import { packageInstallTarget, type PrcPackageSetting, type PrcSettings } from "./packages.js";
 import {
   checkAllSources,
@@ -51,8 +52,7 @@ export async function buildSourceCheckEntries(settings: PrcSettings, configDir: 
     ...(settings.packages ?? []),
     ...(settings.projectPackages ?? []),
   ].map(packageSettingSource);
-  const unique = [...new Set(sources)];
-  return Promise.all(unique.map(async (source) => {
+  return Promise.all(uniqueValues(sources).map(async (source) => {
     const identity = await readInstalledIdentity(source, configDir);
     return {
       source,
