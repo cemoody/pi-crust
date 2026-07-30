@@ -48,6 +48,13 @@
   min-width: 0;
 }
 
+/* Virtualized timelines use spacer blocks for offscreen turns. The normal
+ * flex gap would add invisible-but-real pixels around each spacer, so move the
+ * rhythm onto rendered turns while the virtual window is active. */
+.message-timeline-inner.is-virtualized { gap: 0; }
+.message-timeline-inner.is-virtualized .timeline-turn-virtual { margin-bottom: 12px; }
+.message-timeline-inner.is-virtualized .timeline-virtual-spacer { flex: 0 0 auto; }
+
 .message-card { min-width: 0; }
 
 .turn-footer {
