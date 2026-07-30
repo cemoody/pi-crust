@@ -18,7 +18,7 @@ describe("release automation configuration", () => {
     expect(workflow).toContain("pull_request_target");
     expect(workflow).toContain("dependabot[bot]");
     expect(workflow).toContain("gh pr merge");
-    expect(workflow).toMatch(/pi-ai\|pi-coding-agent/);
+    expect(workflow).toContain("bump the pi group");
   });
 
   it("publishes from main with npm trusted publishing permissions", () => {
@@ -34,5 +34,6 @@ describe("release automation configuration", () => {
   it("turns dependency commits into patch releases", () => {
     const config = JSON.parse(read(".releaserc.json")) as { plugins: unknown[] };
     expect(JSON.stringify(config)).toContain('"scope":"deps","release":"patch"');
+    expect(JSON.stringify(config)).toContain('"failComment":false');
   });
 });
