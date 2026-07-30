@@ -1,25 +1,12 @@
-import { type ClipboardEvent as ReactClipboardEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { MAX_PROMPT_CHARS } from "../../shared/limits.js";
-import { errorMessage, optional, uniqueValues } from "../../shared/util.js";
-import { downscaleImageIfNeeded } from "../utils/image-downscale.js";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { uniqueValues } from "../../shared/util.js";
 import "./prompt-composer.css";
 import { Icon } from "./Icon.js";
 import { useOptionalNotifications } from "./notifications.js";
-import {
-  attachmentId,
-  clipboardFiles,
-  clipboardImageMimeType,
-  fileToBase64WithReader,
-  hasClipboardImageType,
-  imageAttachmentFromRawBase64,
-  imageAttachmentFromText,
-  imageAttachmentsFromHtml,
-  isBase64Blob,
-  isEditablePasteTarget,
-  looksLikeImageData,
-} from "./prompt-composer-clipboard.js";
-export type { ComposerAttachment } from "./prompt-composer-clipboard.js";
-import type { ComposerAttachment } from "./prompt-composer-clipboard.js";
+import { isEditablePasteTarget } from "./prompt-composer-clipboard.js";
+import { useComposerAttachments } from "./prompt-composer-attachments.js";
+export type { ComposerAttachment } from "./prompt-composer-attachments.js";
+import type { ComposerAttachment } from "./prompt-composer-attachments.js";
 
 export interface PromptComposerProps {
   readonly sessionId: string;
@@ -62,11 +49,6 @@ export function PromptComposer(props: PromptComposerProps) {
   const lastDraftLengthRef = useRef(draft.length);
   const lastTextareaHeightRef = useRef<string | undefined>(undefined);
   const [history, setHistory] = useState<string[]>([]);
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
-  // Paste/file decoding is asynchronous. Keep the submission snapshot in a
-  // ref as well as render state so a Send event never closes over the render
-  // that preceded a just-committed attachment preview.
-  const attachmentsRef = useRef<ComposerAttachment[]>([]);
   // Paste warnings are surfaced through the global toast system when
   // available, falling back to inline state if the composer is rendered
   // outside a NotificationsProvider (e.g. unit tests).
@@ -88,20 +70,6 @@ export function PromptComposer(props: PromptComposerProps) {
   };
   const pasteWarning = notifications ? null : pasteWarningLocal;
 
-  // Monotonic generation counter for attachment state. Bumped every time
-  // the local attachments list is cleared (on submit or session change).
-  // In-flight async paths (image downscale, paste, etc.) capture the gen
-  // at start and drop their result if it no longer matches — prevents a
-  // late-resolving paste from "popping back" into the composer after the
-  // user already submitted.
-  const attachmentGenRef = useRef(0);
-
-  function clearAttachments() {
-    attachmentGenRef.current += 1;
-    attachmentsRef.current = [];
-    setAttachments([]);
-  }
-
   useEffect(() => {
     // Auto-dismiss only matters for the fallback inline render — the toast
     // system has its own auto-dismiss for warning notifications.
@@ -112,6 +80,12 @@ export function PromptComposer(props: PromptComposerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLElement | null>(null);
+  const { attachments, attachmentsRef, clearAttachments, removeAttachment, addFiles, handleClipboardPaste } = useComposerAttachments({
+    draftLength: draft.length,
+    textareaRef,
+    updateDraft,
+    setPasteWarning,
+  });
 
   function flushDraftPersistence() {
     const pending = draftPersistenceRef.current;
@@ -261,163 +235,6 @@ export function PromptComposer(props: PromptComposerProps) {
     }
   }
 
-  async function addFiles(files: FileList | readonly File[] | null) {
-    if (!files) return;
-    // Snapshot the attachment generation at the start of the user-visible
-    // operation. If a submit/clear bumps it before file processing finishes,
-    // we drop the results so a slow-resolving paste can't pop back into the
-    // composer after the user has already sent.
-    const gen = attachmentGenRef.current;
-    const results = await Promise.allSettled(Array.from(files).map(fileToAttachment));
-    if (gen !== attachmentGenRef.current) return;
-    const next = results
-      .filter((result): result is PromiseFulfilledResult<ComposerAttachment> => result.status === "fulfilled")
-      .map((result) => result.value);
-    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
-
-    if (next.length > 0) {
-      void addAttachments(next, gen);
-      if (failures.length > 0) {
-        setPasteWarning(`Attached ${next.length} item${next.length === 1 ? "" : "s"}, but could not read ${failures.length} other pasted item${failures.length === 1 ? "" : "s"}.`);
-      } else {
-        setPasteWarning(null);
-      }
-      return;
-    }
-
-    const firstFailure = failures[0];
-    if (firstFailure) {
-      const detail = errorMessage(firstFailure.reason);
-      console.warn("Unable to read pasted file", firstFailure.reason);
-      setPasteWarning(`Could not read that pasted file${detail ? ` (${detail})` : ""}. Try the paperclip button, or open Pi Remote Control through localhost/HTTPS if your browser is blocking clipboard image data.`);
-    }
-  }
-
-  async function fileToAttachment(file: File): Promise<ComposerAttachment> {
-    const isImage = file.type.startsWith("image/");
-    let data = await fileToBase64(file);
-    let mimeType = file.type || (isImage ? "image/png" : undefined);
-    if (isImage && data && mimeType) {
-      const shrunk = await downscaleImageIfNeeded({ data, mimeType });
-      data = shrunk.data;
-      mimeType = shrunk.mimeType;
-    }
-    return {
-      id: attachmentId(),
-      name: file.name || (isImage ? "pasted image" : "attachment"),
-      type: isImage ? "image" : "file",
-      ...(mimeType ? { mimeType } : {}),
-      ...optional({ data }),
-      ...(isImage && data !== undefined ? { previewUrl: `data:${mimeType};base64,${data}` } : {}),
-    };
-  }
-
-  async function addAttachments(next: readonly ComposerAttachment[], sourceGen?: number) {
-    if (next.length === 0) return;
-    // The optional sourceGen lets callers (addFiles, handleClipboardPaste)
-    // pin the gen they captured at the start of the user gesture. If they
-    // don't pass one we snapshot here.
-    const gen = sourceGen ?? attachmentGenRef.current;
-    const shrunk = await Promise.all(next.map(maybeShrinkAttachment));
-    if (gen !== attachmentGenRef.current) return;
-    // Update the event-time snapshot before enqueueing React state. Native
-    // clipboard events can be followed immediately by a keyboard Send; React
-    // may not have committed the queued state update when that handler runs.
-    attachmentsRef.current = [...attachmentsRef.current, ...shrunk];
-    setAttachments((current) => [...current, ...shrunk]);
-    setPasteWarning(null);
-  }
-
-  async function maybeShrinkAttachment(attachment: ComposerAttachment): Promise<ComposerAttachment> {
-    if (attachment.type !== "image" || !attachment.data || !attachment.mimeType) return attachment;
-    const result = await downscaleImageIfNeeded({ data: attachment.data, mimeType: attachment.mimeType });
-    if (!result.downscaled) return attachment;
-    return {
-      ...attachment,
-      data: result.data,
-      mimeType: result.mimeType,
-      previewUrl: `data:${result.mimeType};base64,${result.data}`,
-    };
-  }
-
-  async function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
-    await handleClipboardPaste(event.clipboardData, () => event.preventDefault(), false);
-  }
-
-  async function handleClipboardPaste(data: DataTransfer, preventDefault: () => void, insertTextWhenNotFocused: boolean) {
-    const gen = attachmentGenRef.current;
-    const files = clipboardFiles(data);
-    if (files.length > 0) {
-      preventDefault();
-      await addFiles(files);
-      return;
-    }
-
-    const htmlAttachments = imageAttachmentsFromHtml(data.getData("text/html"));
-    if (htmlAttachments.length > 0) {
-      preventDefault();
-      void addAttachments(htmlAttachments, gen);
-      return;
-    }
-
-    const text = data.getData("text") || data.getData("text/plain");
-    const textAttachment = imageAttachmentFromText(text);
-    if (textAttachment) {
-      preventDefault();
-      void addAttachments([textAttachment], gen);
-      return;
-    }
-
-    // iOS Safari path: the clipboard advertises an image MIME (via
-    // data.types or items[].type) but does not expose Files and gives us
-    // the bytes only as a text/plain base64 blob whose prefix is NOT one
-    // of the four magic strings imageAttachmentFromText keys off of (PNG /
-    // JPEG / GIF / WebP). Without this branch the handler falls through,
-    // never calls preventDefault, and the default paste action pumps the
-    // base64 straight into the textarea — see the bug report screenshot
-    // where the user message body is a wall of "AACZ…" base64.
-    const advertisedImageMime = clipboardImageMimeType(data);
-    if (advertisedImageMime && isBase64Blob(text)) {
-      preventDefault();
-      const compact = text.replace(/\s/g, "");
-      void addAttachments(
-        [{
-          id: attachmentId(),
-          name: "pasted image",
-          type: "image",
-          mimeType: advertisedImageMime,
-          data: compact,
-          previewUrl: `data:${advertisedImageMime};base64,${compact}`,
-        }],
-        gen,
-      );
-      return;
-    }
-
-    if (looksLikeImageData(text) || (hasClipboardImageType(data) && isBase64Blob(text))) {
-      preventDefault();
-      setPasteWarning(`Clipboard looks like raw image data (${text.length.toLocaleString()} chars), but this browser did not expose it as an image file. Try copying the screenshot again, use the paperclip button, or open Pi Remote Control over HTTPS.`);
-      return;
-    }
-
-    if (text.length > MAX_PROMPT_CHARS - draft.length) {
-      preventDefault();
-      setPasteWarning(`Paste blocked: ${text.length.toLocaleString()} chars would exceed the ${MAX_PROMPT_CHARS.toLocaleString()}-char limit.`);
-      return;
-    }
-
-    if (text && insertTextWhenNotFocused) {
-      preventDefault();
-      updateDraft((current) => current ? `${current}${text}` : text);
-      textareaRef.current?.focus({ preventScroll: true });
-      return;
-    }
-
-    if (!text && hasClipboardImageType(data)) {
-      setPasteWarning("The clipboard says it contains an image, but this browser did not expose the image bytes to the page. Try the paperclip button or serve Pi Remote Control over HTTPS.");
-    }
-  }
-
   function shouldHandleDocumentPaste(target: EventTarget | null): boolean {
     const active = document.activeElement;
     if (active === textareaRef.current || target === textareaRef.current) return false;
@@ -503,7 +320,7 @@ export function PromptComposer(props: PromptComposerProps) {
               updateDraft(history[0]);
             }
           }}
-          onPaste={(event) => void handlePaste(event)}
+          onPaste={(event) => void handleClipboardPaste(event.clipboardData, () => event.preventDefault(), false)}
           onDrop={(event) => {
             event.preventDefault();
             void addFiles(event.dataTransfer.files);
@@ -553,7 +370,7 @@ export function PromptComposer(props: PromptComposerProps) {
             <li key={attachment.id}>
               {attachment.previewUrl ? <img src={attachment.previewUrl} alt={attachment.name} /> : null}
               <span>{attachment.name}</span>
-              <button type="button" onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}>Remove</button>
+              <button type="button" onClick={() => removeAttachment(attachment.id)}>Remove</button>
             </li>
           ))}
         </ul>
@@ -616,21 +433,6 @@ export function PromptComposer(props: PromptComposerProps) {
       ) : null}
     </section>
   );
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  if (typeof file.arrayBuffer === "function") {
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      let binary = "";
-      for (const byte of bytes) binary += String.fromCharCode(byte);
-      return btoa(binary);
-    } catch {
-      // Some browser/clipboard combinations expose a File object but reject arrayBuffer().
-      // Try FileReader before surfacing a paste failure to the user.
-    }
-  }
-  return fileToBase64WithReader(file);
 }
 
 function shortPath(value: string, max?: number): string {
