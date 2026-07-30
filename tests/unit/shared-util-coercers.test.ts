@@ -16,7 +16,7 @@
  * callers using `?? null` / `?? 0` keep working unchanged).
  */
 import { describe, expect, it } from "vitest";
-import { coerceTimestamp, errorMessage, isRecord, numberOrNull, sumNumbers, uniqueBy, uniqueValues } from "../../src/shared/util.js";
+import { coerceTimestamp, errorMessage, isRecord, numberOrNull, slugify, sumNumbers, uniqueBy, uniqueValues } from "../../src/shared/util.js";
 
 describe("isRecord", () => {
   it("accepts objects but excludes null, arrays, and primitives", () => {
@@ -63,6 +63,16 @@ describe("uniqueBy", () => {
     const values = [{ id: "one" }, { id: "one" }, { id: "two" }];
     expect(uniqueBy(values, (value) => value.id)).toEqual([{ id: "one" }, { id: "two" }]);
     expect(values).toEqual([{ id: "one" }, { id: "one" }, { id: "two" }]);
+  });
+});
+
+describe("slugify", () => {
+  it("normalizes separators and lowercase letters", () => {
+    expect(slugify("Q4 Strategy: What's Next?", "deck")).toBe("q4-strategy-what-s-next");
+  });
+
+  it("uses the caller-provided fallback for empty slugs", () => {
+    expect(slugify(" --- ", "presentation")).toBe("presentation");
   });
 });
 

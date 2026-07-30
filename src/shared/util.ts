@@ -68,6 +68,15 @@ export function uniqueValues<T>(values: readonly T[]): T[] {
 }
 
 /**
+ * Convert a label into a lowercase, hyphen-separated ASCII slug. Returns the
+ * supplied fallback when the label contains no letters or digits.
+ */
+export function slugify(value: string, fallback: string): string {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || fallback;
+}
+
+/**
  * Server-side timestamp coercer. Accepts a finite number (ms), a Date,
  * or a parseable ISO date string; returns ms-since-epoch or `undefined`.
  *
