@@ -17,6 +17,11 @@ describe("security boundary matrix", () => {
     expect(isPathWithinRoot(resolvedCandidate, resolvedRoot)).toBe(allowed);
   });
 
+  it("applies the same containment check to relative paths", () => {
+    expect(isPathWithinRoot("reports/chart.png", "/tmp/project")).toBe(false);
+    expect(isPathWithinRoot("/tmp/project/reports/chart.png", "/tmp/project")).toBe(true);
+  });
+
   it("keeps cwd and session-file allow-lists separate", () => {
     const policy = new PathPolicy({
       allowedProjectRoots: ["/tmp/pi/project"],

@@ -3,6 +3,7 @@ import fsp from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { isPathWithinRoot } from "./security/path-policy.js";
 
 /**
  * Filesystem path → MIME, for files served via /api/artifact-file. We allow
@@ -156,12 +157,7 @@ async function resolveRealRoots(roots: readonly string[]): Promise<string[]> {
 }
 
 function isWithinAnyRoot(candidate: string, roots: readonly string[]): boolean {
-  for (const root of roots) {
-    if (candidate === root) return true;
-    const prefix = root.endsWith(path.sep) ? root : root + path.sep;
-    if (candidate.startsWith(prefix)) return true;
-  }
-  return false;
+  return roots.some((root) => isPathWithinRoot(candidate, root));
 }
 
 /**
