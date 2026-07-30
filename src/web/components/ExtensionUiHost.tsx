@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionUiRequest } from "../../shared/protocol.js";
+import { ExtensionUiDialogs } from "./ExtensionUiDialogs.js";
 import "./extension-ui-host.css";
 
 export interface ExtensionUiHostProps {
@@ -18,8 +19,6 @@ export interface ExtensionUiHostProps {
 }
 
 export function ExtensionUiHost(props: ExtensionUiHostProps) {
-  const [inputValues, setInputValues] = useState<Record<string, string>>({});
-
   const widgets = props.requests.filter(isWidgetRequest).filter((request) => request.widgetLines);
   const widgetKeys = new Set(widgets.map((widget) => widget.widgetKey));
   const statuses = props.requests
@@ -71,46 +70,13 @@ export function ExtensionUiHost(props: ExtensionUiHostProps) {
       ) : null}
 
       {dialogs.length ? (
-        <aside aria-label="Approval inbox">
-          {dialogs.map((dialog) => <p key={dialog.id}>{dialog.title}</p>)}
-        </aside>
+        <ExtensionUiDialogs
+          dialogs={dialogs}
+          onValueResponse={props.onValueResponse}
+          onConfirmResponse={props.onConfirmResponse}
+          onCancelResponse={props.onCancelResponse}
+        />
       ) : null}
-
-      {dialogs.map((dialog) => {
-        if (dialog.method === "confirm") {
-          return (
-            <div key={dialog.id} role="dialog" aria-label={dialog.title}>
-              {dialog.message ? <p>{dialog.message}</p> : null}
-              <button type="button" onClick={() => void props.onConfirmResponse(dialog.id, true)}>Confirm</button>
-              <button type="button" onClick={() => void props.onConfirmResponse(dialog.id, false)}>Deny</button>
-              <button type="button" onClick={() => void props.onCancelResponse(dialog.id)}>Cancel</button>
-            </div>
-          );
-        }
-        if (dialog.method === "select") {
-          return (
-            <div key={dialog.id} role="dialog" aria-label={dialog.title}>
-              {dialog.options.map((option) => <button key={option} type="button" onClick={() => void props.onValueResponse(dialog.id, option)}>{option}</button>)}
-              <button type="button" onClick={() => void props.onCancelResponse(dialog.id)}>Cancel</button>
-            </div>
-          );
-        }
-        if (dialog.method === "input" || dialog.method === "editor") {
-          const value = inputValues[dialog.id] ?? (dialog.method === "editor" ? dialog.prefill ?? "" : "");
-          return (
-            <div key={dialog.id} role="dialog" aria-label={dialog.title}>
-              {dialog.method === "editor" ? (
-                <textarea aria-label={`${dialog.title} value`} value={value} onChange={(event) => setInputValues((current) => ({ ...current, [dialog.id]: event.target.value }))} />
-              ) : (
-                <input aria-label={`${dialog.title} value`} placeholder={dialog.placeholder} value={value} onChange={(event) => setInputValues((current) => ({ ...current, [dialog.id]: event.target.value }))} />
-              )}
-              <button type="button" onClick={() => void props.onValueResponse(dialog.id, value)}>Submit</button>
-              <button type="button" onClick={() => void props.onCancelResponse(dialog.id)}>Cancel</button>
-            </div>
-          );
-        }
-        return null;
-      })}
 
       {widgets.filter((widget) => widget.widgetPlacement === "belowEditor").map((widget) => (
         <Widget key={widget.id} widget={widget} />
