@@ -53,6 +53,24 @@ afterEach(async () => {
 });
 
 describe("GET /api/sessions/:id/messages payload budget", () => {
+  it("returns only messages after a valid reconnect cursor and rejects a missing cursor", async () => {
+    const { baseUrl, sessionId } = await startWithMessages([
+      { role: "user", content: "before", timestamp: 100 },
+      { role: "assistant", content: "already rendered", timestamp: 200 },
+      { role: "assistant", content: "missed while mobile was suspended", timestamp: 300 },
+    ]);
+
+    const suffix = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages?after=200`);
+    expect(suffix.status).toBe(200);
+    await expect(suffix.json()).resolves.toEqual([
+      expect.objectContaining({ text: "missed while mobile was suspended", timestamp: 300 }),
+    ]);
+
+    const invalid = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages?after=999`);
+    expect(invalid.status).toBe(409);
+    await expect(invalid.json()).resolves.toEqual(expect.objectContaining({ error: "message cursor is no longer available" }));
+  });
+
   it("does not inline raw base64 image bytes in the message list", async () => {
     const oneMegabyteOfPng = "A".repeat(1_000_000);
     const { baseUrl, sessionId } = await startWithMessages([

@@ -167,6 +167,11 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     setLastUserActivityById((current) => ({ ...current, [sessionId]: when }));
   }, []);
   const [messagesBySession, setMessagesBySession] = useState<Record<string, TimelineMessage[]>>({});
+  // The reconnect listener is intentionally installed only when the selected
+  // session changes. Keep a current snapshot for its catch-up cursor rather
+  // than capturing the initial (usually empty) transcript in that listener.
+  const messagesBySessionRef = useRef<Record<string, TimelineMessage[]>>({});
+  messagesBySessionRef.current = messagesBySession;
   // Pagination state for the on-demand "load older messages" flow. The
   // initial transcript fetch is capped to INITIAL_MESSAGES_LIMIT, so for
   // any session longer than that we set hasMoreOlder=true and let the
@@ -431,6 +436,7 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
     if (!activeSessionId) return;
     let cancelled = false;
     let pendingRefresh: ReturnType<typeof setTimeout> | undefined;
+    let catchupInFlight = false;
 
     const applyRefreshedSession = (refreshed: import("../api/session-api.js").SessionCardData, options: { readonly preserveLastActivity?: boolean }) => {
       setSessions((current) => current.map((session) => {
@@ -483,21 +489,70 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       }
     };
 
+    // Fetch only the suffix that landed while a mobile EventSource was
+    // suspended. The timestamp is a deliberately conservative resume cursor:
+    // the server rejects an unknown/truncated cursor (409), at which point we
+    // retain the old bounded-tail refresh as a correctness fallback.
+    const catchUpMessages = async () => {
+      if (catchupInFlight || cancelled) return;
+      const current = messagesBySessionRef.current[activeSessionId] ?? [];
+      let newestTimestamp: number | undefined;
+      for (const message of current) {
+        if (typeof message.timestamp === "number" && (newestTimestamp === undefined || message.timestamp > newestTimestamp)) {
+          newestTimestamp = message.timestamp;
+        }
+      }
+      if (newestTimestamp === undefined) {
+        // No reliable cursor (legacy/partial event-only timeline): use the
+        // existing bounded tail hydration rather than risk a malformed merge.
+        await refreshAll({ preserveLastActivity: true });
+        return;
+      }
+
+      catchupInFlight = true;
+      try {
+        const missed = await api.getMessages(activeSessionId, { after: newestTimestamp });
+        if (cancelled) return;
+        const timeline = missed.map(toTimelineMessage);
+        // A conforming server returns strictly after `after`. Treat a stale or
+        // malformed response as a gap: replacing from the bounded tail is
+        // safer than silently duplicating/reordering transcript rows.
+        if (timeline.some((message) => typeof message.timestamp !== "number" || message.timestamp <= newestTimestamp!)) {
+          await refreshAll({ preserveLastActivity: true });
+          return;
+        }
+        setMessagesBySession((all) => {
+          const existing = all[activeSessionId] ?? [];
+          const known = new Set(existing.map((message) => message.id));
+          const fresh = timeline.filter((message) => !known.has(message.id));
+          if (fresh.length === 0) return all;
+          return { ...all, [activeSessionId]: [...existing, ...fresh] };
+        });
+        void refreshSessionMeta();
+      } catch {
+        // Invalid/expired cursor, transcript rewrite, and older API servers
+        // all land here. The fallback remains bounded by the initial limit.
+        if (!cancelled) await refreshAll({ preserveLastActivity: true });
+      } finally {
+        catchupInFlight = false;
+      }
+    };
+
     // Lightweight metadata-only refresh: updates the session card (status,
     // token usage, lastActivity) but does NOT re-fetch the message timeline.
     // The historical implementation always called api.getMessages here as a
     // belt-and-braces resync, which ballooned to ~57 s / 29 MB on long
     // image-heavy transcripts. Live message updates come from SSE.
-    const refreshSessionMeta = async () => {
+    async function refreshSessionMeta() {
       if (!api.getSession) return;
       try {
-        const refreshed = await api.getSession(activeSessionId);
+        const refreshed = await api.getSession(activeSessionId!);
         if (cancelled || !refreshed) return;
         applyRefreshedSession(refreshed, {});
       } catch (caught) {
         if (!cancelled) setError(errorMessage(caught));
       }
-    };
+    }
 
     const scheduleRefresh = () => {
       if (cancelled) return;
@@ -537,11 +592,10 @@ function SessionDashboardInner({ api }: SessionDashboardProps) {
       }
       if (event.type === "stream_reconnected") {
         // The SSE was re-established after a mobile-tab background suspend.
-        // Server-side events that fired while we were disconnected are gone
-        // — do a full refetch so the transcript catches up. Without this
-        // the UI shows whatever frame was last received before suspend
-        // (e.g. a stale "idle" header) even though new messages exist.
-        void refreshAll({ preserveLastActivity: true });
+        // Resume from our newest persisted timestamp instead of downloading
+        // the entire tail window again; catchUpMessages preserves the bounded
+        // tail refresh if that cursor is no longer trustworthy.
+        void catchUpMessages();
         return;
       }
     };

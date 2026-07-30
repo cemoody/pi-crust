@@ -1296,10 +1296,33 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
     const session = await getOrOpenSession(context, sessionId);
     const limitRaw = url.searchParams.get("limit");
     const beforeRaw = url.searchParams.get("before");
+    const afterRaw = url.searchParams.get("after");
     const limit = limitRaw && /^\d+$/.test(limitRaw) ? Math.min(Number(limitRaw), MAX_MESSAGES_LIMIT) : undefined;
     const before = beforeRaw && /^-?\d+$/.test(beforeRaw) ? Number(beforeRaw) : undefined;
+    const after = afterRaw && /^-?\d+$/.test(afterRaw) ? Number(afterRaw) : undefined;
+    if (afterRaw !== null && after === undefined) return sendJson(res, 400, { error: "after must be a numeric message timestamp" });
+    if (before !== undefined && after !== undefined) return sendJson(res, 400, { error: "before and after cannot be combined" });
     let messages: readonly SessionMessage[];
-    if (limit !== undefined) {
+    if (after !== undefined) {
+      // Reconnect catch-up is deliberately cursor based: the dashboard sends
+      // the timestamp of its newest persisted row and receives only records
+      // appended after it. Do not turn this into another tail-window fetch —
+      // on a long mobile transcript that would repeatedly re-download the
+      // same 80-message window after every background resume.
+      //
+      // Validate the boundary rather than silently treating an unknown cursor
+      // as the beginning/end. A rewritten/truncated transcript must make the
+      // client take its bounded tail-refresh fallback; otherwise it could
+      // append an unrelated suffix to stale history.
+      const all = await session.handle.getMessages();
+      const cursorIndexes = all.flatMap((message, index) => message.timestamp === after ? [index] : []);
+      // Timestamp is intentionally the portable, back-compatible cursor. It
+      // cannot safely distinguish siblings created in the same millisecond;
+      // reject that ambiguous boundary rather than skip a sibling and let the
+      // dashboard take its bounded full-tail fallback.
+      if (cursorIndexes.length !== 1) return sendJson(res, 409, { error: "message cursor is no longer available" });
+      messages = all.slice(cursorIndexes[0]! + 1);
+    } else if (limit !== undefined) {
       // Tail-window query: read only the trailing chunk of the session file
       // directly so a huge transcript doesn't have to be slurped + parsed in
       // full. Falls back to the adapter if a tail-read isn't possible (e.g.
