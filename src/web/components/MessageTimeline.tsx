@@ -1165,12 +1165,7 @@ function MarkdownArtifact({ artifact, title }: { readonly artifact: TimelineArti
 /** Best-effort filename for a markdown download: the backing file's basename
  *  when present, else a slugified title with a `.md` extension. */
 function markdownDownloadName(filePath: string | undefined, title: string): string {
-  if (typeof filePath === "string" && filePath.length > 0) {
-    const base = filePath.split(/[\\/]/).pop();
-    if (base) return base;
-  }
-  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "document";
-  return `${slug}.md`;
+  return artifactBasename(filePath) ?? `${slugify(title, "document")}.md`;
 }
 
 const artifactPreviewCache = new Map<string, Promise<TimelineArtifact>>();

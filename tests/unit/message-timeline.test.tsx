@@ -882,6 +882,25 @@ describe("MessageTimeline", () => {
     expect(screen.getByRole("link", { name: "Download markdown" })).toBeInTheDocument();
   });
 
+  it("uses the shared slug fallback for untitled inline markdown downloads", () => {
+    (globalThis as any).URL.createObjectURL = vi.fn(() => "blob:mock-markdown");
+    (globalThis as any).URL.revokeObjectURL = vi.fn();
+    render(<MessageTimeline messages={[{
+      id: "inline-md-fallback",
+      role: "tool",
+      text: "",
+      tool: {
+        id: "call_inline_fallback",
+        name: "show_artifact",
+        args: {},
+        status: "success",
+        output: "Displayed markdown artifact.",
+        artifact: { kind: "markdown", title: "---", markdown: "## Inline only" },
+      },
+    }]} />);
+    expect(screen.getByRole("link", { name: "Download markdown" })).toHaveAttribute("download", "document.md");
+  });
+
   it("offers a blob download for inline html artifacts named after the title", () => {
     (globalThis as any).URL.createObjectURL = vi.fn(() => "blob:mock-html");
     (globalThis as any).URL.revokeObjectURL = vi.fn();
