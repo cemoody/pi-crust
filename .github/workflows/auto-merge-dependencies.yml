@@ -1,0 +1,34 @@
+name: auto-merge dependency updates
+
+# pull_request_target deliberately runs no PR code. It lets the repository token
+# enable auto-merge on Dependabot PRs, whose normal pull_request token is
+# read-only. The bot identity and title are checked before the API call.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+# This only enables GitHub's native auto-merge. Branch protection remains the
+# authority: GitHub will merge only after the required checks are green and the
+# PR is current with main.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    name: enable auto-merge for safe Pi updates
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.base.ref == 'main'
+    steps:
+      - name: enable squash auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          # Dependabot's Pi updates are grouped in dependabot.yml. Do not
+          # auto-merge any other dependency or security update by accident.
+          gh pr view "$PR_URL" --json title --jq '.title' | grep -Eq '^build\(deps\):.*(pi-ai|pi-coding-agent)'
+          gh pr merge "$PR_URL" --auto --squash --delete-branch

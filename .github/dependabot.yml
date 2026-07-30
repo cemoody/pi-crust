@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Pi is used through both its coding-agent API and pi-ai. Keep them in one
+  # atomic upgrade so the versions tested and released by pi-crust stay aligned.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 1
+    allow:
+      - dependency-type: direct
+    groups:
+      pi:
+        patterns:
+          - "@earendil-works/pi-*"
+    labels:
+      - dependencies
+      - automated
+    commit-message:
+      prefix: "build(deps)"
+      include: scope
