@@ -5,7 +5,7 @@ import type { PathPolicy } from "../security/path-policy.js";
 import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ListSessionsOptions, ModelInfo, PiAdapter, PiEvent, PiEventListener, PiSessionHandle, PromptAttachment, SeqEventListener, SessionListItem, SessionState } from "../pi/types.js";
 import { SessionLifecycle, type RegisteredSession } from "./lifecycle/session-lifecycle.js";
 import { WorkerRegistry } from "./worker-registry.js";
-import { persistOversizedTranscriptBodies, transcriptSidecarDirectory } from "../pi/transcript-sidecars.js";
+import { persistOversizedTranscriptBodies, transcriptSidecarDirectory } from "../pi/transcripts/index.js";
 
 export interface SessionRegistryOptions {
   readonly adapter: PiAdapter;

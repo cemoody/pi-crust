@@ -9,7 +9,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { hydrateTranscriptSidecars } from "./transcript-sidecars.js";
+import { loadNormalizedTranscriptMessages } from "./transcripts/index.js";
 import type {
   CreateSessionOptions,
   ModelInfo,
@@ -196,81 +196,10 @@ class SdkPiSessionHandle implements PiSessionHandle {
 
   async getMessages(): Promise<readonly SessionMessage[]> {
     const rawMessages = Array.isArray(this.session.messages) ? this.session.messages : [];
-    // A reopened SDK session reads persisted JSONL into session.messages. Undo
-    // pi-crust's transparent sidecar references before applying the legacy
-    // normalizer so SDK and RPC adapters expose the same UI contract.
-    const messages: any[] = await hydrateTranscriptSidecars(this.sessionFile, rawMessages);
-    const result: SessionMessage[] = [];
-    for (const message of messages) {
-      const timestamp = typeof message.timestamp === "number" ? message.timestamp : Date.now();
-      if (message.role === "compactionSummary") {
-        const content = typeof message.summary === "string" ? message.summary : stringifyContent(message.content);
-        if (content.trim()) result.push({ role: "summary", content, timestamp, summaryKind: "compaction" });
-      } else if (message.role === "branchSummary") {
-        const content = typeof message.summary === "string" ? message.summary : stringifyContent(message.content);
-        if (content.trim()) result.push({ role: "summary", content, timestamp, summaryKind: "branch" });
-      } else if (message.role === "assistant") {
-        const blocks: any[] = Array.isArray(message.content) ? message.content : [];
-        const text = blocks
-          .filter((block) => block?.type === "text")
-          .map((block) => String(block.text ?? ""))
-          .join("\n")
-          .trim();
-        if (text) result.push({ role: "assistant", content: text, timestamp });
-        for (const block of blocks) {
-          if (block?.type === "toolCall") {
-            result.push({
-              role: "tool",
-              content: "",
-              timestamp,
-              tool: {
-                id: String(block.id ?? ""),
-                name: String(block.name ?? ""),
-                args: (block.arguments ?? {}) as Record<string, unknown>,
-                status: "running",
-                output: "",
-              },
-            });
-          }
-        }
-      } else if (message.role === "toolResult") {
-        const output = stringifyContent(message.content);
-        const toolCallId = String(message.toolCallId ?? "");
-        for (let i = result.length - 1; i >= 0; i--) {
-          const previous = result[i];
-          if (previous && previous.role === "tool" && previous.tool && previous.tool.id === toolCallId) {
-            result[i] = {
-              ...previous,
-              tool: {
-                ...previous.tool,
-                status: message.isError ? "error" : "success",
-                output,
-              },
-            };
-            break;
-          }
-        }
-      } else if (message.role === "user" || message.role === "system") {
-        const blocks: any[] = Array.isArray(message.content) ? message.content : [];
-        const text = typeof message.content === "string"
-          ? message.content
-          : blocks.filter((block) => block?.type === "text").map((block) => String(block.text ?? "")).join("\n");
-        const images = blocks
-          .filter((block) => block?.type === "image")
-          .map((block) => ({
-            data: String(block.data ?? ""),
-            mimeType: String(block.mimeType ?? "image/png"),
-          }))
-          .filter((image) => image.data.length > 0);
-        result.push({
-          role: message.role,
-          content: text,
-          timestamp,
-          ...(images.length > 0 ? { images } : {}),
-        });
-      }
-    }
-    return result;
+    // SDK reopens expose persisted Pi records while RPC exposes records over
+    // the supervisor. Both cross the same transcript boundary so sidecars,
+    // tool-result fan-out, custom entries, thinking, and images stay aligned.
+    return loadNormalizedTranscriptMessages(this.sessionFile, rawMessages);
   }
 
   async prompt(message: string, attachments: readonly PromptAttachment[] = []): Promise<void> {
@@ -362,24 +291,4 @@ async function sessionFileMtime(sessionFile: string): Promise<number | undefined
   } catch {
     return undefined;
   }
-}
-
-
-function stringifyContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => {
-        if (!block || typeof block !== "object") return "";
-        const b = block as Record<string, unknown>;
-        if (typeof b.text === "string") return b.text;
-        if (typeof b.thinking === "string") return b.thinking;
-        if (b.type === "image") return ""; // image blocks surface via the images field, not text
-        if (b.type === "toolCall") return "";
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  return content === undefined ? "" : "";
 }
