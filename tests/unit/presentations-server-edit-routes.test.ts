@@ -4,6 +4,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootstrapPrcExtensions } from "../../src/extensions/bootstrap.js";
+import { parsePersistedPresentationDeck } from "../../src/presentations/persistence.js";
 
 const roots: string[] = [];
 
@@ -81,6 +82,10 @@ describe("core.presentations — deck persistence routes", () => {
       urlFor(sessionId, "exec-brief"),
     );
     expect(putResponse?.status).toBe(200);
+    // This is the concrete extension route consumed by the browser hook.
+    // Keep the route envelope and the shared client contract in lockstep.
+    const responseEnvelope = parsePersistedPresentationDeck(parseJsonBody(putResponse?.body));
+    expect(responseEnvelope).toMatchObject({ version: 1, deckId: "exec-brief", deck: { title: SEED_DECK.title } });
 
     const onDisk = path.join(root, ".pi", "presentations", sessionId, "exec-brief.deck.json");
     const raw = await fs.readFile(onDisk, "utf8");
@@ -242,7 +247,11 @@ describe("core.presentations — deck persistence routes", () => {
 });
 
 function parseBody(body: unknown): { deck: { title: string } } {
-  if (body && typeof body === "object" && "deck" in body) return body as { deck: { title: string } };
+  return parseJsonBody(body) as { deck: { title: string } };
+}
+
+function parseJsonBody(body: unknown): unknown {
+  if (body && typeof body === "object") return body;
   if (typeof body === "string") return JSON.parse(body);
   if (body instanceof Uint8Array) return JSON.parse(Buffer.from(body).toString("utf8"));
   throw new Error("unexpected body shape: " + typeof body);

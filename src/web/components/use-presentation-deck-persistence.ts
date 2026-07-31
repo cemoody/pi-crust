@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { applyDeckPatch, type DeckPatchOp } from "../../presentations/patch.js";
+import {
+  parsePersistedPresentationDeck,
+  type PersistedPresentationDeck,
+  type PresentationDeckPatchRequest,
+} from "../../presentations/persistence.js";
 import type { PresentationDeck } from "../../presentations/schema.js";
 
 interface UsePresentationDeckPersistenceOptions {
@@ -107,8 +112,7 @@ async function fetchPersistedDeck(sessionId: string, deckId: string): Promise<Pr
   try {
     const response = await fetch(deckUrl(sessionId, deckId));
     if (!response.ok) return null;
-    const envelope = await response.json();
-    return envelope?.deck && typeof envelope.deck === "object" ? envelope.deck as PresentationDeck : null;
+    return parsePersistedPresentationDeck(await response.json())?.deck ?? null;
   } catch {
     return null;
   }
@@ -119,13 +123,18 @@ async function patchDeck(
   deckId: string,
   ops: DeckPatchOp[],
   initial: PresentationDeck | undefined,
-): Promise<{ deck?: PresentationDeck } | null> {
+): Promise<PersistedPresentationDeck | null> {
+  const body: PresentationDeckPatchRequest = initial ? { ops, initial } : { ops };
   const response = await fetch(deckUrl(sessionId, deckId), {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ops, initial }),
+    body: JSON.stringify(body),
   });
-  if (response.ok) return response.json() as Promise<{ deck?: PresentationDeck }>;
+  if (response.ok) {
+    const envelope = parsePersistedPresentationDeck(await response.json());
+    if (!envelope) throw new Error("Could not save edits: invalid persistence response");
+    return envelope;
+  }
   let detail = "Could not save edits";
   try {
     const body = await response.json();
