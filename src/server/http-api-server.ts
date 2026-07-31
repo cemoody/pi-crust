@@ -52,6 +52,8 @@ import { findSessionMessageBySyntheticId, lookupSessionMessage } from "./http-ap
 import { hydrateTranscriptSidecars } from "./pi/transcript-sidecars.js";
 import { SessionTranscriptPageCache } from "./session-transcript-page-cache.js";
 import { payloadRefMeta, readPayloadRef } from "./pi/extensions/payload-budget.js";
+import { createClientEventLog } from "./http/system-routes/client-event-log.js";
+import { handleSystemRoute, type ClientEventLog } from "./http/system-routes.js";
 
 export interface HttpApiServerOptions {
   readonly registry: SessionRegistry;
@@ -154,53 +156,12 @@ interface HttpApiServerContext extends HttpApiServerOptions {
   readonly timelineMetadata: SessionTimelineMetadataStore;
 }
 
-const CLIENT_EVENT_MAX_BYTES = 16 * 1024;
+export { CLIENT_EVENT_MAX_BYTES } from "./http/system-routes.js";
+export { CLIENT_EVENT_RING_CAPACITY, summarizeClientEventRing } from "./http/system-routes/client-event-log.js";
 export const JSON_BODY_MAX_BYTES = 16 * 1024 * 1024;
 
-/**
- * Append-only JSON-lines logger used for client telemetry. Lazy-creates the
- * file. Also maintains an in-memory rolling ring of the most recent events
- * so /api/client-event/stats can answer "what's been happening in the last
- * 5 minutes?" without re-reading the (potentially huge) jsonl from disk.
- *
- * The ring is purely additive observability — it never replaces or alters
- * the on-disk log, and a full ring drops the OLDEST events (so the most
- * recent N are always available for the stats query the dashboard polls).
- */
-interface ClientEventLog {
-  append(payload: Record<string, unknown>): Promise<void>;
-  stats(windowMs: number): ClientEventStats;
-}
+export type { ClientEventStats } from "./http/system-routes.js";
 
-export interface ClientEventStats {
-  /** The window the stats were computed over, in ms. */
-  windowMs: number;
-  /** Total events in window. */
-  total: number;
-  /** Number of events the in-memory ring has dropped due to capacity. */
-  bufferDropped: number;
-  /** Histogram of event 'kind' values. */
-  byKind: Record<string, number>;
-  /** Histogram of status codes for 'api-error' events (PR-B). */
-  byApiErrorStatus: Record<string, number>;
-  /** Top 5 sessionIds by event count (a single very-broken session is a leading indicator). */
-  topSessions: Array<{ sessionId: string; count: number }>;
-  /** Top 5 api-error paths by count. */
-  topApiErrorPaths: Array<{ path: string; count: number }>;
-}
-
-// Max events kept in memory for /stats. ~5 KB per event * 4096 = ~20 MB max.
-// More than enough for a 5-minute window on a busy box; older events fall off
-// into the on-disk jsonl which remains the source of truth for deep dives.
-export const CLIENT_EVENT_RING_CAPACITY = 4096;
-
-function resolveContextGitSha(value: string | (() => string) | undefined): string {
-  if (typeof value === "function") {
-    try { return value(); } catch { return "unknown"; }
-  }
-  if (typeof value === "string" && value.trim()) return value;
-  return "unknown";
-}
 
 function resolveEnvAppBranding(env: NodeJS.ProcessEnv): { readonly appName: string; readonly appIcon?: string } {
   const appName = env.PI_CRUST_APP_NAME?.trim() || "π crust";
@@ -526,80 +487,6 @@ export function createExtensionSessionApi(
   };
 }
 
-function createClientEventLog(filePath: string): ClientEventLog {
-  let queue: Promise<void> = Promise.resolve();
-  // In-memory ring of (serverTs, payload) pairs. Used by stats() only;
-  // does not affect the on-disk log. Pre-allocated array + head index so
-  // additions are O(1) and don't generate GC churn under load.
-  const ring: Array<{ ts: number; payload: Record<string, unknown> } | undefined> = new Array(CLIENT_EVENT_RING_CAPACITY);
-  let ringHead = 0; // next slot to write
-  let totalAppended = 0;
-  return {
-    append(payload) {
-      const ts = typeof payload.serverTs === "number" ? payload.serverTs : Date.now();
-      ring[ringHead] = { ts, payload };
-      ringHead = (ringHead + 1) % CLIENT_EVENT_RING_CAPACITY;
-      totalAppended += 1;
-      queue = queue.then(async () => {
-        try {
-          await fsp.mkdir(path.dirname(filePath), { recursive: true });
-          await fsp.appendFile(filePath, `${JSON.stringify(payload)}\n`, "utf8");
-        } catch (error) {
-          console.warn(`client-event log append failed: ${error instanceof Error ? error.message : error}`);
-        }
-      });
-      return queue;
-    },
-    stats(windowMs: number): ClientEventStats {
-      return summarizeClientEventRing(ring, windowMs, totalAppended);
-    },
-  };
-}
-
-/**
- * Pure-function aggregation over the ring. Exported (via the in-test
- * factory below) so tests can pin the histogram shape without spinning up
- * a real HTTP server.
- */
-export function summarizeClientEventRing(
-  ring: ReadonlyArray<{ ts: number; payload: Record<string, unknown> } | undefined>,
-  windowMs: number,
-  totalAppended: number,
-): ClientEventStats {
-  const cutoff = Date.now() - windowMs;
-  const byKind: Record<string, number> = {};
-  const byApiErrorStatus: Record<string, number> = {};
-  const sessionCounts = new Map<string, number>();
-  const pathCounts = new Map<string, number>();
-  let total = 0;
-  for (const slot of ring) {
-    if (!slot) continue;
-    if (slot.ts < cutoff) continue;
-    total += 1;
-    const kind = typeof slot.payload.kind === "string" ? slot.payload.kind : "<unknown>";
-    byKind[kind] = (byKind[kind] ?? 0) + 1;
-    const sid = typeof slot.payload.sessionId === "string" ? slot.payload.sessionId : null;
-    if (sid) sessionCounts.set(sid, (sessionCounts.get(sid) ?? 0) + 1);
-    if (kind === "api-error") {
-      const status = String(slot.payload.status ?? "unknown");
-      byApiErrorStatus[status] = (byApiErrorStatus[status] ?? 0) + 1;
-      const p = typeof slot.payload.path === "string" ? slot.payload.path : null;
-      if (p) pathCounts.set(p, (pathCounts.get(p) ?? 0) + 1);
-    }
-  }
-  const topSessions = [...sessionCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([sessionId, count]) => ({ sessionId, count }));
-  const topApiErrorPaths = [...pathCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([p, count]) => ({ path: p, count }));
-  // bufferDropped tells operators if their window covers the buffer (i.e. is
-  // their stats query missing data because the ring overwrote it?).
-  const bufferDropped = Math.max(0, totalAppended - CLIENT_EVENT_RING_CAPACITY);
-  return { windowMs, total, bufferDropped, byKind, byApiErrorStatus, topSessions, topApiErrorPaths };
-}
 
 export function createHttpApiServer(options: HttpApiServerOptions): http.Server {
   const context: HttpApiServerContext = {
@@ -861,74 +748,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   if (req.method === "OPTIONS") return sendJson(res, 204, undefined);
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
-  if (req.method === "GET" && url.pathname === "/api/models") {
-    return sendJson(res, 200, await context.registry.listModels());
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/realtime/stats") {
-    return sendJson(res, 200, context.realtimeGateway?.stats() ?? { connections: 0 });
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/health") {
-    // Session-handle health snapshot. Surfaces silently-broken handles
-    // (the 2026-05-24 outage signature) before users hit them. A non-zero
-    // `sessions.broken` is the leading indicator that the API needs a
-    // bounce or (post-PR-D) a reconnect.
-    const sessions = context.registry.getSessionHealthSnapshot();
-    return sendJson(res, 200, {
-      ok: true,
-      adapter: context.adapterKind,
-      projectRoot: context.projectRoot,
-      sessionRoot: context.sessionRoot,
-      defaultCwd: context.defaultCwd ?? process.cwd(),
-      // The user's home directory (server-side). The pi-crust uses this as the
-      // default 'Working directory' in the New Session dialog, which is
-      // friendlier than seeding it with whatever the API was invoked from.
-      homeCwd: os.homedir(),
-      // Capability flag the web app reads to decide whether to show the
-      // Terminal sidebar item. True only when a PTY manager is wired in
-      // (pi-crust-full / PI_CRUST_ENABLE_TERMINAL=1).
-      terminalEnabled: Boolean(context.ptyManager),
-      ...(await resolveAppBranding(context)),
-      gitSha: resolveContextGitSha(context.gitSha),
-      // Version of the pi binary actually running sessions, plus the
-      // version/SHA of every loaded extension. The help dialog shows these
-      // next to the frontend/backend build SHAs.
-      piVersion: context.piVersion ?? "unknown",
-      extensionPackages: context.extensionPackages ?? [],
-      sessions: {
-        total: sessions.total,
-        healthy: sessions.healthy,
-        broken: sessions.broken,
-        ...(sessions.broken > 0 ? { brokenSessionIds: sessions.brokenSessionIds } : {}),
-      },
-    });
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/client-event") {
-    return handleClientEvent(req, res, context);
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/client-event/stats") {
-    // Aggregated histogram over the most recent client telemetry events,
-    // computed from an in-memory ring buffer. Lets an operator (or the
-    // dashboard) see "how many api-errors / sse-silences in last 5 minutes?"
-    // without grepping /home/coder/.../client-events.jsonl. The defaults
-    // target the dashboard's polling cadence; max is capped to avoid CPU
-    // pegging on a pathological query.
-    const requestedMs = Number(url.searchParams.get("windowMs") ?? 5 * 60_000);
-    const windowMs = Math.max(1_000, Math.min(60 * 60_000, Number.isFinite(requestedMs) ? requestedMs : 5 * 60_000));
-    const stats = context.clientEventLog?.stats(windowMs) ?? {
-      windowMs,
-      total: 0,
-      bufferDropped: 0,
-      byKind: {},
-      byApiErrorStatus: {},
-      topSessions: [],
-      topApiErrorPaths: [],
-    };
-    return sendJson(res, 200, stats);
-  }
+  if (await handleSystemRoute(req, res, url, context, {
+    sendJson,
+    resolveAppBranding,
+  })) return;
 
   if (req.method === "GET" && url.pathname === "/api/extensions") {
     return sendJson(res, 200, serializeExtensions(getExtensionHost(context)));
@@ -1565,43 +1388,6 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, conte
   return sendJson(res, 405, { error: "method not allowed" });
 }
 
-async function handleClientEvent(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  context: HttpApiServerContext,
-): Promise<void> {
-  // Collect the body up to CLIENT_EVENT_MAX_BYTES. Anything beyond gets 413.
-  const chunks: Buffer[] = [];
-  let received = 0;
-  for await (const chunk of req) {
-    const buf = Buffer.from(chunk);
-    received += buf.length;
-    if (received > CLIENT_EVENT_MAX_BYTES) {
-      return sendJson(res, 413, { error: "client-event payload too large" });
-    }
-    chunks.push(buf);
-  }
-  const text = Buffer.concat(chunks).toString("utf8");
-  let parsed: unknown;
-  try {
-    parsed = text ? JSON.parse(text) : {};
-  } catch {
-    return sendJson(res, 400, { error: "client-event payload was not JSON" });
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return sendJson(res, 400, { error: "client-event payload must be a JSON object" });
-  }
-
-  // Stamp every entry with server-side context the client can't fake.
-  const enriched = {
-    serverTs: Date.now(),
-    remoteAddress: req.socket.remoteAddress ?? null,
-    ua: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
-    ...(parsed as Record<string, unknown>),
-  };
-  await context.clientEventLog?.append(enriched);
-  return sendJson(res, 204, undefined);
-}
 
 async function getOrOpenSession(context: HttpApiServerContext, sessionId: string) {
   const resolvedId = resolveSessionAlias(context, sessionId);
