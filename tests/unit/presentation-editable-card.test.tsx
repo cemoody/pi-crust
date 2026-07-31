@@ -71,7 +71,16 @@ function installFetch() {
             status: nextPatchResponse.status,
           });
         }
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        // Match the extension contract: a successful PATCH returns the
+        // persisted envelope, not merely a transport-level `{ ok: true }`.
+        // The UI must not accept an incomplete 2xx response as confirmed state.
+        const request = body as { initial?: unknown };
+        const deck = request.initial ?? persistedDeck;
+        const responseBody = nextPatchResponse.body ?? { version: 1, deckId: DECK_ID, updatedAt: 1, deck };
+        return new Response(JSON.stringify(responseBody), {
+          status: nextPatchResponse.status,
+          headers: { "content-type": "application/json" },
+        });
       }
     }
     // Asset fetch path returns a tiny blob so the Download HTML flow doesn't
@@ -210,6 +219,25 @@ describe("PresentationArtifactCard — edit mode", () => {
     expect(patches.length).toBeGreaterThanOrEqual(1);
     const lastOps = (patches[patches.length - 1]!.body as { ops: { value: string }[] }).ops;
     expect(lastOps.some((op) => op.value === "Flushed")).toBe(true);
+  });
+
+  it("rolls back optimistic state and surfaces an inline error when PATCH returns a malformed 2xx envelope", async () => {
+    nextPatchResponse = { ok: true, status: 200, body: { ok: true } };
+    renderTimeline();
+    await act(async () => { await flush(); });
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Edit/ }));
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "pi-deck-edit", deckId: DECK_ID, path: "/slides/0/title", value: "Unconfirmed" },
+      }));
+    });
+    await act(async () => { await sleep(700); });
+
+    expect(await screen.findByText(/invalid persistence response/i)).toBeInTheDocument();
+    const modal = screen.getByTestId("artifact-presentation-modal") as HTMLIFrameElement;
+    expect(modal.getAttribute("srcdoc") ?? "").not.toContain(">Unconfirmed<");
   });
 
   it("rolls back optimistic state and surfaces an inline error on PATCH 4xx", async () => {
