@@ -3,7 +3,7 @@ import type { ExtensionUiResponse } from "../../shared/protocol.js";
 import { sanitizePiDynamicCommands } from "../../shared/slash-command-routing.js";
 import type { PathPolicy } from "../security/path-policy.js";
 import type { CloneSessionResult, CreateSessionOptions, ForkMessage, ForkSessionResult, ListSessionsOptions, ModelInfo, PiAdapter, PiEvent, PiEventListener, PiSessionHandle, PromptAttachment, SeqEventListener, SessionListItem, SessionState } from "../pi/types.js";
-import { SessionEventStream } from "./session-event-stream.js";
+import { SessionLifecycle, type RegisteredSession } from "./lifecycle/session-lifecycle.js";
 import { WorkerRegistry } from "./worker-registry.js";
 import { persistOversizedTranscriptBodies, transcriptSidecarDirectory } from "../pi/transcript-sidecars.js";
 
@@ -14,24 +14,12 @@ export interface SessionRegistryOptions {
   readonly eventRingSize?: number;
 }
 
-export interface RegisteredSession {
-  readonly id: string;
-  readonly cwd: string;
-  readonly sessionFile: string;
-  readonly handle: PiSessionHandle;
-  readonly subagent?: boolean;
-  readonly hiddenFromList?: boolean;
-}
+export type { RegisteredSession } from "./lifecycle/session-lifecycle.js";
 
 interface PendingSessionMetadata {
   readonly sessionName?: string;
   readonly subagent: boolean;
   readonly hiddenFromList: boolean;
-}
-
-interface SessionInternal {
-  readonly registered: RegisteredSession;
-  readonly eventStream: SessionEventStream;
 }
 
 const DEFAULT_RING_SIZE = 500;
@@ -55,26 +43,25 @@ export class SessionRegistry {
   private readonly adapter: PiAdapter;
   private readonly pathPolicy: PathPolicy;
   private readonly workerRegistry: WorkerRegistry;
-  private readonly ringSize: number;
-  private readonly sessions = new Map<string, SessionInternal>();
+  private readonly lifecycle: SessionLifecycle;
   /**
    * Pi creates a new JSONL lazily on its first prompt. Metadata therefore
    * must not be appended from createSession(): creating the file ourselves
    * causes Pi's first persistence attempt to fail with EEXIST.
    */
   private readonly pendingSessionMetadata = new Map<string, PendingSessionMetadata>();
-  /** Process-wide observers for services such as the durable session index. */
-  private readonly eventObservers = new Set<(session: RegisteredSession, event: PiEvent) => void>();
-
   constructor(options: SessionRegistryOptions) {
     this.adapter = options.adapter;
     this.pathPolicy = options.pathPolicy;
     this.workerRegistry = options.workerRegistry ?? new WorkerRegistry();
-    this.ringSize = options.eventRingSize ?? DEFAULT_RING_SIZE;
+    this.lifecycle = new SessionLifecycle({
+      eventRingSize: options.eventRingSize ?? DEFAULT_RING_SIZE,
+      onEvent: (session, event) => this.observeSessionEvent(session, event),
+    });
   }
 
   get hotSessionCount(): number {
-    return this.sessions.size;
+    return this.lifecycle.count;
   }
 
   /**
@@ -97,16 +84,7 @@ export class SessionRegistry {
     broken: number;
     brokenSessionIds: string[];
   } {
-    let healthy = 0;
-    let broken = 0;
-    const brokenSessionIds: string[] = [];
-    for (const [sessionId, internal] of this.sessions) {
-      const handle = internal.registered.handle;
-      const isHealthy = typeof handle.isHealthy === "function" ? handle.isHealthy() : true;
-      if (isHealthy) healthy += 1;
-      else { broken += 1; brokenSessionIds.push(sessionId); }
-    }
-    return { total: this.sessions.size, healthy, broken, brokenSessionIds };
+    return this.lifecycle.healthSnapshot();
   }
 
   async createSession(options: CreateSessionOptions): Promise<RegisteredSession> {
@@ -143,7 +121,7 @@ export class SessionRegistry {
     const alive = await this.workerRegistry.listAlive();
     const reattached: string[] = [];
     for (const status of alive) {
-      if (this.sessions.has(status.sessionId)) continue;
+      if (this.lifecycle.has(status.sessionId)) continue;
       try {
         // Only reattach when path policy still considers the cwd/sessionFile allowed.
         this.pathPolicy.assertAllowedCwd(status.cwd);
@@ -190,7 +168,7 @@ export class SessionRegistry {
   }
 
   hasSession(sessionId: string): boolean {
-    return this.sessions.has(sessionId);
+    return this.lifecycle.has(sessionId);
   }
 
   /**
@@ -198,13 +176,12 @@ export class SessionRegistry {
    * on durable indexes that intentionally defer active transcript writes.
    */
   listRegisteredSessions(options: ListSessionsOptions = {}): readonly RegisteredSession[] {
-    return [...this.sessions.values()]
-      .map((session) => session.registered)
+    return this.lifecycle.list()
       .filter((session) => (options.includeHidden || !session.hiddenFromList) && (options.includeSubagents || !session.subagent));
   }
 
   getSession(sessionId: string): RegisteredSession {
-    return this.getInternal(sessionId).registered;
+    return this.lifecycle.get(sessionId);
   }
 
   /**
@@ -218,10 +195,7 @@ export class SessionRegistry {
    * until the API is bounced.
    */
   isSessionHealthy(sessionId: string): boolean {
-    const internal = this.sessions.get(sessionId);
-    if (!internal) return false;
-    const handle = internal.registered.handle;
-    return typeof handle.isHealthy === "function" ? handle.isHealthy() : true;
+    return this.lifecycle.isHealthy(sessionId);
   }
 
   /**
@@ -232,15 +206,13 @@ export class SessionRegistry {
    * Safe to call on an unknown id. Returns true if a session was evicted.
    */
   async evictDeadSession(sessionId: string): Promise<boolean> {
-    const internal = this.sessions.get(sessionId);
-    if (!internal) return false;
-    internal.eventStream.clear();
-    try { internal.eventStream.unsubscribe(); } catch { /* ignore */ }
-    const handle = internal.registered.handle;
+    if (!this.lifecycle.has(sessionId)) return false;
+    const registered = this.lifecycle.closeEvents(sessionId);
+    const handle = registered.handle;
     if (typeof handle.detach === "function") {
       await handle.detach().catch(() => undefined);
     }
-    this.sessions.delete(sessionId);
+    this.lifecycle.forget(sessionId);
     this.pendingSessionMetadata.delete(sessionId);
     await this.workerRegistry.removeSession(sessionId).catch(() => undefined);
     return true;
@@ -292,9 +264,9 @@ export class SessionRegistry {
 
   async listModels(): Promise<readonly ModelInfo[]> {
     const byKey = new Map<string, ModelInfo>();
-    for (const internal of this.sessions.values()) {
-      const liveModels = internal.registered.handle.getAvailableModels
-        ? await internal.registered.handle.getAvailableModels().catch(() => [])
+    for (const session of this.lifecycle.list()) {
+      const liveModels = session.handle.getAvailableModels
+        ? await session.handle.getAvailableModels().catch(() => [])
         : [];
       for (const model of liveModels) byKey.set(`${model.provider}/${model.id}`, model);
     }
@@ -340,20 +312,18 @@ export class SessionRegistry {
   }
 
   subscribe(sessionId: string, listener: PiEventListener): () => void {
-    const wrapped: SeqEventListener = (event) => listener(event);
-    return this.subscribeWithSeq(sessionId, wrapped);
+    return this.lifecycle.subscribe(sessionId, listener);
   }
 
   /** Observe events from every registered session without consuming a client
    * subscription slot. Observers are best-effort and must never break Pi's
    * realtime event fanout. */
   subscribeAll(listener: (session: RegisteredSession, event: PiEvent) => void): () => void {
-    this.eventObservers.add(listener);
-    return () => { this.eventObservers.delete(listener); };
+    return this.lifecycle.subscribeAll(listener);
   }
 
   subscribeWithSeq(sessionId: string, listener: SeqEventListener): () => void {
-    return this.getInternal(sessionId).eventStream.subscribe(listener);
+    return this.lifecycle.subscribeWithSeq(sessionId, listener);
   }
 
   /**
@@ -363,58 +333,54 @@ export class SessionRegistry {
    * has missed history and should refetch state.
    */
   subscribeFromSeq(sessionId: string, fromSeq: number | null, listener: SeqEventListener): () => void {
-    return this.getInternal(sessionId).eventStream.subscribeFromSeq(fromSeq, listener);
+    return this.lifecycle.subscribeFromSeq(sessionId, fromSeq, listener);
   }
 
   /** Greatest seq delivered for a session (0 if nothing emitted yet). */
   lastSeq(sessionId: string): number {
-    return this.getInternal(sessionId).eventStream.lastSeq;
+    return this.lifecycle.lastSeq(sessionId);
   }
 
   /** Number of live realtime subscribers for a session. Used by the realtime
    *  gateway's leak tests and operator health snapshots. */
   subscriberCount(sessionId: string): number {
-    return this.sessions.get(sessionId)?.eventStream.subscriberCount ?? 0;
+    return this.lifecycle.subscriberCount(sessionId);
   }
 
   /** Explicit session delete: RPC-shutdown the worker and forget. */
   async disposeSession(sessionId: string): Promise<void> {
-    const internal = this.getInternal(sessionId);
-    internal.eventStream.close();
-    await internal.registered.handle.dispose();
-    this.sessions.delete(sessionId);
+    const registered = this.lifecycle.closeEvents(sessionId);
+    await registered.handle.dispose();
+    this.lifecycle.forget(sessionId);
     this.pendingSessionMetadata.delete(sessionId);
   }
 
   /** API shutdown: close the socket but keep the worker (supervisor) alive. */
   async detachSession(sessionId: string): Promise<void> {
-    const internal = this.getInternal(sessionId);
-    internal.eventStream.close();
-    const handle = internal.registered.handle;
-    if (handle.detach) await handle.detach();
-    else await handle.dispose();
-    this.sessions.delete(sessionId);
+    const registered = this.lifecycle.closeEvents(sessionId);
+    if (registered.handle.detach) await registered.handle.detach();
+    else await registered.handle.dispose();
+    this.lifecycle.forget(sessionId);
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    const internal = this.getInternal(sessionId);
-    internal.eventStream.close();
-    await internal.registered.handle.dispose();
-    this.sessions.delete(sessionId);
+    const registered = this.lifecycle.closeEvents(sessionId);
+    await registered.handle.dispose();
+    this.lifecycle.forget(sessionId);
     this.pendingSessionMetadata.delete(sessionId);
-    await fs.rm(internal.registered.sessionFile, { force: true });
-    await fs.rm(transcriptSidecarDirectory(internal.registered.sessionFile), { recursive: true, force: true });
+    await fs.rm(registered.sessionFile, { force: true });
+    await fs.rm(transcriptSidecarDirectory(registered.sessionFile), { recursive: true, force: true });
     await this.workerRegistry.removeSession(sessionId);
   }
 
   async disposeAll(): Promise<void> {
-    const ids = [...this.sessions.keys()];
+    const ids = this.lifecycle.list().map((session) => session.id);
     await Promise.all(ids.map((id) => this.disposeSession(id)));
   }
 
   /** Called on API SIGTERM/SIGINT. Closes sockets without killing workers. */
   async detachAll(): Promise<void> {
-    const ids = [...this.sessions.keys()];
+    const ids = this.lifecycle.list().map((session) => session.id);
     await Promise.all(ids.map((id) => this.detachSession(id).catch(() => undefined)));
   }
 
@@ -427,30 +393,8 @@ export class SessionRegistry {
     this.pendingSessionMetadata.delete(registered.id);
   }
 
-  private getInternal(sessionId: string): SessionInternal {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Unknown session: ${sessionId}`);
-    return session;
-  }
-
   private register(handle: PiSessionHandle, metadata: Pick<CreateSessionOptions, "subagent" | "hiddenFromList"> = {}): RegisteredSession {
-    const registered: RegisteredSession = {
-      id: handle.id,
-      cwd: handle.cwd,
-      sessionFile: handle.sessionFile,
-      handle,
-      ...(metadata.subagent ? { subagent: true } : {}),
-      ...(metadata.hiddenFromList || metadata.subagent ? { hiddenFromList: true } : {}),
-    };
-    const eventStream = new SessionEventStream({
-      handle,
-      ringSize: this.ringSize,
-      onEvent: (event) => this.observeSessionEvent(registered, event),
-    });
-    const internal: SessionInternal = { registered, eventStream };
-
-    this.sessions.set(handle.id, internal);
-    return registered;
+    return this.lifecycle.attach(handle, metadata);
   }
 
   private observeSessionEvent(registered: RegisteredSession, event: PiEvent): void {
@@ -458,21 +402,12 @@ export class SessionRegistry {
     if (event.type === "agent_end") {
       void persistOversizedTranscriptBodies(registered.sessionFile).catch(() => undefined);
     }
-    for (const observer of this.eventObservers) {
-      try { observer(registered, event); } catch { /* observers must not break the bus */ }
-    }
+    // SessionLifecycle invokes process-wide observers after this hook returns.
   }
 
   private replaceSessionId(oldSessionId: string, handle: PiSessionHandle): RegisteredSession {
-    const old = this.sessions.get(oldSessionId);
-    this.sessions.delete(oldSessionId);
-    if (old) old.eventStream.unsubscribe();
-    const registered = this.register(handle);
-    if (old) {
-      // Transfer any remaining subscribers to the new session id, so SSE
-      // clients survive fork/clone identity changes.
-      old.eventStream.transferSubscribersTo(this.sessions.get(handle.id)!.eventStream);
-    }
-    return registered;
+    // Transfer any remaining subscribers to the replacement stream so SSE
+    // clients survive clone/reload identity changes.
+    return this.lifecycle.replace(oldSessionId, handle);
   }
 }
