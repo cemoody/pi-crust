@@ -1,5 +1,6 @@
 import path from "node:path";
-import type { BootstrapPrcExtensionsOptions, ResolvedPrcExtensionContribution } from "./bootstrap.js";
+import type { BootstrapPrcExtensionsOptions } from "./bootstrap.js";
+import type { ResolvedPrcExtensionContribution } from "./lifecycle/extension-contribution-plan.js";
 import { bootstrapPrcExtensions } from "./bootstrap.js";
 import type { PrcExtensionHost } from "./registry.js";
 

@@ -16,7 +16,7 @@ import type {
   PrcSessionsApi,
   PrcSettingsSectionContribution,
 } from "./api.js";
-import type { ResolvedPrcExtensionContribution } from "./bootstrap.js";
+import type { ResolvedPrcExtensionContribution } from "./lifecycle/extension-contribution-plan.js";
 
 import { optional } from "../shared/util.js";
 export interface ExtensionDiagnostic {
