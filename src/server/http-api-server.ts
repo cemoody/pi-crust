@@ -10,7 +10,8 @@ import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { OAuthLoginError, OAuthLoginManager } from "./auth/oauth-login-manager.js";
 import { MockPiAdapter } from "./pi/mock-pi-adapter.js";
 import { SdkPiAdapter } from "./pi/sdk-pi-adapter.js";
-import { contentTextAndThinking, PiRpcAdapter } from "./pi/pirpc-pi-adapter.js";
+import { PiRpcAdapter } from "./pi/pirpc-pi-adapter.js";
+import { contentTextAndThinking, hydrateTranscriptSidecars } from "./pi/transcripts/index.js";
 import { MAX_PROMPT_CHARS } from "../shared/limits.js";
 import type { ExtensionUiResponse } from "../shared/protocol.js";
 import { parseSlashCommand } from "../shared/slash-command-parser.js";
@@ -49,7 +50,6 @@ import { SessionTimelineMetadataStore, type SessionTimelineMetadata } from "./se
 import { TranscriptTailWorkerPool } from "./session/transcript-tail-worker-pool.js";
 import { readSessionMessagesTail as readSessionMessagesTailFromWorkerModule } from "./session/transcript-tail-reader.js";
 import { findSessionMessageBySyntheticId, lookupSessionMessage } from "./http-api-message-lookup.js";
-import { hydrateTranscriptSidecars } from "./pi/transcript-sidecars.js";
 import { SessionTranscriptPageCache } from "./session-transcript-page-cache.js";
 import { payloadRefMeta, readPayloadRef } from "./pi/extensions/payload-budget.js";
 import { createClientEventLog } from "./http/system-routes/client-event-log.js";
