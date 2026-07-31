@@ -15,7 +15,7 @@ import remarkGfm from "remark-gfm";
 import { slugify } from "../../shared/util.js";
 import { coerceMarkdownInput } from "../utils/safe-markdown.js";
 import { coercePresentationDeck, presentationFallbackMarkdown, type PresentationDeck } from "../../presentations/schema.js";
-import { compileRevealHtml } from "../../presentations/reveal.js";
+import { compileRevealHtml } from "../../presentations/compiler/index.js";
 import { withAbsolutePresentationAssetUrls } from "../../presentations/absolute-asset-urls.js";
 import { compileStandalonePresentationHtml } from "../../presentations/standalone.js";
 import { TimelineSessionContext } from "./timeline-session-context.js";
