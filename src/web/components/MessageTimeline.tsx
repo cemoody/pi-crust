@@ -932,6 +932,17 @@ function MarkdownLite({ text }: { readonly text: unknown }) {
             const { href, children } = props as { href?: string; children?: React.ReactNode };
             return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
           },
+          table(props) {
+            // Keep a Markdown table's columns legible on narrow screens.
+            // The local, keyboard-focusable viewport lets the user pan the
+            // table instead of shrinking its first column character by
+            // character (and avoids creating page-level horizontal overflow).
+            return (
+              <div className="markdown-table-scroll" role="region" aria-label="Scrollable markdown table" tabIndex={0}>
+                <table>{props.children}</table>
+              </div>
+            );
+          },
         }}
       >
         {safeText}

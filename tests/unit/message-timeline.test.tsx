@@ -2,7 +2,13 @@
 import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { MessageTimeline } from "../../src/web/components/MessageTimeline.js";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const messageTimelineCss = fs.readFileSync(path.resolve(here, "../../src/web/components/message-timeline.css"), "utf8");
 
 // jsdom has no layout engine, so we stub element size so the auto-scroll
 // math (`scrollHeight - scrollTop - clientHeight`) can be exercised.
@@ -63,6 +69,26 @@ describe("MessageTimeline", () => {
     expect(screen.getByRole("heading", { name: "Plan" })).toBeInTheDocument();
     expect(screen.getByText("const x = 1;")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
+  });
+
+  it("puts wide markdown tables in an accessible horizontal-scroll viewport", () => {
+    const { container } = render(<MessageTimeline messages={[{
+      id: "a1",
+      role: "assistant",
+      text: "| Approach | When it is attractive |\n| --- | --- |\n| Conformal | A deliberately long description that should keep its column width |",
+    }]} />);
+
+    const viewport = screen.getByRole("region", { name: "Scrollable markdown table" });
+    expect(viewport).toHaveAttribute("tabindex", "0");
+    expect(viewport.querySelector("table")).toBeInTheDocument();
+    expect(container.querySelector(".markdown-table-scroll")).toBe(viewport);
+
+    // jsdom cannot calculate overflow, so pin the CSS contract which keeps
+    // tables wide and makes only their local viewport horizontally scroll.
+    const tableScrollRule = messageTimelineCss.match(/\.markdown-table-scroll\s*\{([^}]*)\}/s)?.[1] ?? "";
+    expect(tableScrollRule).toMatch(/overflow-x\s*:\s*auto/);
+    expect(tableScrollRule).toMatch(/max-width\s*:\s*100%/);
+    expect(messageTimelineCss).toMatch(/\.markdown-lite\s+th,[\s\S]*?\.markdown-lite\s+td\s*\{[^}]*white-space\s*:\s*nowrap/s);
   });
 
   it("hides thinking blocks when requested", () => {
