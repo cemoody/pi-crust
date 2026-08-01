@@ -288,9 +288,22 @@
   margin: 12px 0;
 }
 
-.markdown-lite table {
-  border-collapse: collapse;
+.markdown-table-scroll {
+  max-width: 100%;
   margin: 8px 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.markdown-table-scroll:focus-visible {
+  outline: 2px solid var(--blue-600);
+  outline-offset: 2px;
+}
+.markdown-lite table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  margin: 0;
   font-size: 12.5px;
 }
 .markdown-lite th,
@@ -298,6 +311,7 @@
   border: 1px solid var(--hairline);
   padding: 4px 8px;
   text-align: left;
+  white-space: nowrap;
 }
 .markdown-lite th { background: var(--gray-060); font-weight: 500; }
 
