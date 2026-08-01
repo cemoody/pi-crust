@@ -13,7 +13,7 @@
  * them too for guaranteed offline / link-rot-proof output.
  */
 import { presentationAssetDataUri, type PresentationAsset } from "./assets.js";
-import { compileRevealHtmlAsync, type TemplatePackResolver } from "./reveal.js";
+import { compileRevealHtmlAsync, type TemplatePackResolver } from "./compiler/index.js";
 import type { PresentationDeck, PresentationImage, PresentationSlide } from "./schema.js";
 
 export type FetchedAsset = PresentationAsset;
