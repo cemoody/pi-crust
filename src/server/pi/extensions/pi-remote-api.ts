@@ -15,11 +15,16 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
-export async function postJson<T = unknown>(url: string, body: unknown): Promise<T> {
+export async function postJson<T = unknown>(
+  url: string,
+  body: unknown,
+  options: { readonly signal?: AbortSignal | undefined } = {},
+): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   const text = await response.text();
   const data = text ? JSON.parse(text) : undefined;

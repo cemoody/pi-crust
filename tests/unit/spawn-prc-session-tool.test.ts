@@ -7,7 +7,7 @@ type RegisteredTool = {
   promptSnippet?: string;
   promptGuidelines?: readonly string[];
   parameters?: unknown;
-  execute(toolCallId: string, params: Record<string, unknown>): Promise<{
+  execute(toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<{
     content: Array<{ text: string }>;
     details: Record<string, unknown>;
   }>;
@@ -25,11 +25,14 @@ type FetchCall = { readonly url: string; readonly body?: unknown };
 
 function installFetchMock(options: {
   readonly created?: { readonly id: string; readonly sessionFile?: string };
+  readonly createdIds?: readonly string[];
   readonly promptResponse?: unknown;
   readonly delayPromptUntil?: Promise<void>;
+  readonly rejectPromptOnAbort?: boolean;
 }) {
   const calls: FetchCall[] = [];
   const created = options.created ?? { id: "child-1", sessionFile: "/tmp/child-1.jsonl" };
+  let createdCount = 0;
   const promptResponse = options.promptResponse ?? [
     { role: "user", text: "do the task" },
     { role: "assistant", text: "done from child" },
@@ -39,9 +42,16 @@ function installFetchMock(options: {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url: String(url), body });
     if (String(url).endsWith("/api/sessions")) {
-      return jsonResponse(created);
+      const id = options.createdIds?.[createdCount++] ?? created.id;
+      return jsonResponse({ ...created, id });
     }
-    if (String(url).endsWith(`/api/sessions/${encodeURIComponent(created.id)}/prompt`)) {
+    if (/\/api\/sessions\/[^/]+\/prompt$/.test(String(url))) {
+      if (options.rejectPromptOnAbort && init?.signal) {
+        if (init.signal.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        await new Promise<void>((_resolve, reject) => {
+          init.signal!.addEventListener("abort", () => reject(new DOMException("The operation was aborted", "AbortError")), { once: true });
+        });
+      }
       if (options.delayPromptUntil) await options.delayPromptUntil;
       return jsonResponse(promptResponse);
     }
@@ -125,6 +135,55 @@ describe("spawn_prc_session tool", () => {
 
     gate.resolve();
     await vi.waitFor(() => expect(calls).toHaveLength(2));
+  });
+
+  it("aborting a subagent tool call cancels the outstanding prompt and its child session", async () => {
+    const { calls } = installFetchMock({ rejectPromptOnAbort: true });
+    const tool = loadTool("spawn_prc_session");
+    const controller = new AbortController();
+
+    const running = tool.execute("call-cancel", {
+      prompt: "do lengthy work",
+      cwd: "/repo",
+      subagent: true,
+    }, controller.signal);
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+
+    controller.abort();
+
+    await expect(running).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(calls).toContainEqual({
+      url: "http://api.test/api/sessions/child-1/abort",
+      body: {},
+    }));
+  });
+
+  it("cancels every concurrent outstanding subagent delivery", async () => {
+    const { calls } = installFetchMock({
+      rejectPromptOnAbort: true,
+      createdIds: ["child-one", "child-two", "child-three"],
+    });
+    const tool = loadTool("spawn_prc_session");
+    const controller = new AbortController();
+    const running = ["one", "two", "three"].map((prompt) => tool.execute("call-cancel-all", {
+      prompt,
+      cwd: "/repo",
+      subagent: true,
+    }, controller.signal));
+    await vi.waitFor(() => expect(calls.filter((call) => call.url.endsWith("/prompt"))).toHaveLength(3));
+
+    controller.abort();
+
+    await expect(Promise.allSettled(running)).resolves.toEqual([
+      expect.objectContaining({ status: "rejected", reason: expect.objectContaining({ name: "AbortError" }) }),
+      expect.objectContaining({ status: "rejected", reason: expect.objectContaining({ name: "AbortError" }) }),
+      expect.objectContaining({ status: "rejected", reason: expect.objectContaining({ name: "AbortError" }) }),
+    ]);
+    await vi.waitFor(() => expect(calls.filter((call) => call.url.endsWith("/abort")).map((call) => call.url)).toEqual([
+      "http://api.test/api/sessions/child-one/abort",
+      "http://api.test/api/sessions/child-two/abort",
+      "http://api.test/api/sessions/child-three/abort",
+    ]));
   });
 
   it("when subagent=true waits for the child prompt and returns the child session result", async () => {
