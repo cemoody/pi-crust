@@ -177,7 +177,7 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
       sessionName: Type.Optional(Type.String({ description: "Display name for the new session in the pi-crust sidebar." })),
       subagent: Type.Optional(Type.Boolean({ description: "When true, wait for the spawned session prompt to finish and return the child agent's result to the caller. Defaults to false/background wholesale session." })),
     }),
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal?: AbortSignal) {
       const apiBase = resolvePiRemoteApiBase();
       const cwd = params.cwd?.trim() || process.cwd();
       const subagent = params.subagent === true;
@@ -185,51 +185,73 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
         cwd,
         ...(params.sessionName?.trim() ? { sessionName: params.sessionName.trim() } : {}),
         ...(subagent ? { subagent: true, hiddenFromList: true } : {}),
-      });
+      }, { signal });
 
-      if (!created.id) {
+      const childSessionId = created.id;
+      if (!childSessionId) {
         throw new Error("Pi Remote Control did not return a session id");
       }
 
-      const promptUrl = `${apiBase}/api/sessions/${encodeURIComponent(created.id)}/prompt`;
+      const promptUrl = `${apiBase}/api/sessions/${encodeURIComponent(childSessionId)}/prompt`;
       const promptBody = { text: params.prompt };
       const uiBase = resolvePiRemoteUiBase(apiBase);
-      const sessionUrl = `${uiBase}/?session=${encodeURIComponent(created.id)}`;
+      const sessionUrl = `${uiBase}/?session=${encodeURIComponent(childSessionId)}`;
+      // A Pi abort only asks tools to stop through this signal; it cannot
+      // forcibly settle an arbitrary promise. Propagate it to the child
+      // delivery request *and* abort the child agent, otherwise a parent
+      // session remains stuck waiting for a subagent tool call and the child
+      // keeps running after the user presses Stop.
+      const stopChild = () => {
+        void postJson(`${apiBase}/api/sessions/${encodeURIComponent(childSessionId)}/abort`, {})
+          .catch(() => undefined);
+      };
+      if (signal?.aborted) stopChild();
+      else signal?.addEventListener("abort", stopChild, { once: true });
 
       if (subagent) {
-        const promptResult = await postJson<SpawnPromptResponse>(promptUrl, promptBody);
-        const subagentResult = summarizeSubagentResult(promptResult);
-        const lastAssistant = subagentResult.lastAssistantMessage;
-        return {
-          content: [{
-            type: "text",
-            text: `Subagent session ${created.id}${params.sessionName ? ` (${params.sessionName})` : ""} completed. URL: ${sessionUrl}${lastAssistant ? `\n\n${lastAssistant}` : ""}`,
-          }],
-          details: {
-            spawnedPiRemoteControlSession: {
-              version: 1,
-              sessionId: created.id,
-              ...optional({ sessionFile: created.sessionFile }),
-              cwd,
-              ...optional({ sessionName: params.sessionName }),
-              url: sessionUrl,
-              subagent: true,
-              promptDelivery: "completed",
-              subagentResult,
+        try {
+          const promptResult = await postJson<SpawnPromptResponse>(promptUrl, promptBody, { signal });
+          const subagentResult = summarizeSubagentResult(promptResult);
+          const lastAssistant = subagentResult.lastAssistantMessage;
+          return {
+            content: [{
+              type: "text",
+              text: `Subagent session ${created.id}${params.sessionName ? ` (${params.sessionName})` : ""} completed. URL: ${sessionUrl}${lastAssistant ? `\n\n${lastAssistant}` : ""}`,
+            }],
+            details: {
+              spawnedPiRemoteControlSession: {
+                version: 1,
+                sessionId: created.id,
+                ...optional({ sessionFile: created.sessionFile }),
+                cwd,
+                ...optional({ sessionName: params.sessionName }),
+                url: sessionUrl,
+                subagent: true,
+                promptDelivery: "completed",
+                subagentResult,
+              },
             },
-          },
-        };
+          };
+        } finally {
+          signal?.removeEventListener("abort", stopChild);
+        }
       }
 
       // Fire-and-forget: /prompt intentionally waits for the spawned agent turn
       // to finish. For wholesale sessions this tool should return as soon as
       // the new session is visible, so the parent session can keep working
       // while the child works independently.
-      void postJson(promptUrl, promptBody).catch((error) => {
-        console.error(
-          `[spawn_prc_session] failed to send prompt to ${created.id}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
+      void postJson(promptUrl, promptBody, { signal })
+        .catch((error) => {
+          // Cancellation is intentional: stopChild() above has already
+          // requested that the child session abort. Do not turn it into a
+          // misleading server-side error log.
+          if (signal?.aborted) return;
+          console.error(
+            `[spawn_prc_session] failed to send prompt to ${created.id}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        })
+        .finally(() => signal?.removeEventListener("abort", stopChild));
 
       return {
         content: [{
