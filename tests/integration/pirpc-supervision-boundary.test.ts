@@ -7,13 +7,20 @@ import { PathPolicy } from "../../src/server/security/path-policy.js";
 import { SessionRegistry } from "../../src/server/session/session-registry.js";
 import { WorkerRegistry } from "../../src/server/session/worker-registry.js";
 import { makeFakePi, type FakePi } from "../helpers/fake-pi.js";
+import { waitForNoLiveWorkers } from "./pirpc-supervision-cleanup.js";
 
 const roots: string[] = [];
 const fakePis: FakePi[] = [];
 const registries: SessionRegistry[] = [];
+const workerRegistries: WorkerRegistry[] = [];
 
 afterEach(async () => {
   await Promise.all(registries.splice(0).map((registry) => registry.disposeAll().catch(() => undefined)));
+  // dispose() asks the detached supervisor to exit, but its status-file
+  // cleanup races the test sandbox removal unless we wait for the supervisor
+  // to acknowledge shutdown. This is lifecycle synchronization, not a retry
+  // of the behavior under test.
+  await Promise.all(workerRegistries.splice(0).map(waitForNoLiveWorkers));
   await Promise.all(fakePis.splice(0).map((fake) => fake.cleanup()));
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
@@ -30,6 +37,7 @@ describe("Pi RPC supervision boundary", () => {
     const fakePi = await makeFakePi({ sessionId: "supervision-contract" });
     fakePis.push(fakePi);
     const workers = new WorkerRegistry({ runtimeDir });
+    workerRegistries.push(workers);
     const policy = new PathPolicy({
       allowedProjectRoots: [projectRoot],
       allowedSessionRoots: [sessionRoot],
