@@ -76,6 +76,69 @@ function deferred() {
   return { promise, resolve };
 }
 
+describe("prompt_prc_session tool", () => {
+  const originalApiBase = process.env.PI_CRUST_API_BASE;
+  const originalUiBase = process.env.PI_CRUST_UI_BASE;
+
+  beforeEach(() => {
+    process.env.PI_CRUST_API_BASE = "http://api.test";
+    process.env.PI_CRUST_UI_BASE = "http://ui.test";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    if (originalApiBase === undefined) delete process.env.PI_CRUST_API_BASE;
+    else process.env.PI_CRUST_API_BASE = originalApiBase;
+    if (originalUiBase === undefined) delete process.env.PI_CRUST_UI_BASE;
+    else process.env.PI_CRUST_UI_BASE = originalUiBase;
+  });
+
+  it("delivers a new prompt to the named existing session and returns its completed result", async () => {
+    const { calls } = installFetchMock({
+      promptResponse: [
+        { role: "user", text: "continue the investigation" },
+        { role: "assistant", text: "Investigation complete: issue reproduced." },
+      ],
+    });
+    const tool = loadTool("prompt_prc_session");
+
+    const result = await tool.execute("call-existing", {
+      sessionId: "existing-42",
+      prompt: "continue the investigation",
+    });
+
+    expect(calls).toEqual([
+      { url: "http://api.test/api/sessions/existing-42/prompt", body: { text: "continue the investigation" } },
+    ]);
+    expect(result.content[0]?.text).toContain("Prompted Pi Remote Control session existing-42");
+    expect(result.content[0]?.text).toContain("Investigation complete: issue reproduced.");
+    expect(result.details.promptedPiRemoteControlSession).toEqual({
+      version: 1,
+      sessionId: "existing-42",
+      url: "http://ui.test/?session=existing-42",
+      promptDelivery: "completed",
+      result: {
+        messages: [
+          { role: "user", text: "continue the investigation" },
+          { role: "assistant", text: "Investigation complete: issue reproduced." },
+        ],
+        messageCount: 2,
+        lastAssistantMessage: "Investigation complete: issue reproduced.",
+      },
+    });
+  });
+
+  it("rejects an empty sessionId before issuing a request", async () => {
+    const { calls } = installFetchMock({});
+    const tool = loadTool("prompt_prc_session");
+
+    await expect(tool.execute("call-empty", { sessionId: "  ", prompt: "hello" }))
+      .rejects.toThrow("non-empty sessionId");
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("spawn_prc_session tool", () => {
   const originalApiBase = process.env.PI_CRUST_API_BASE;
   const originalUiBase = process.env.PI_CRUST_UI_BASE;

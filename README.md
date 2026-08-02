@@ -44,7 +44,7 @@ Three things make it different from running `pi` in a terminal:
 
 - 📱 **Mobile-first, desktop-friendly.** One layout, no "mobile site" vs "desktop site" — runs the same on a phone over Tailscale and on a 32" monitor.
 - 🔁 **Self-modifying.** Edit pi-crust's own source while it's running; changes propagate to the server and every connected browser in ~1 s without killing your chat session.
-- 🧩 **Five bundled extensions.** Inline rich artifacts (`show_artifact`), slide decks (`show_presentation`), PR Story review tours (`show_pr_story`), session fork/clone, cron-scheduled prompts — plus `spawn_prc_session` for parallel agent runs.
+- 🧩 **Five bundled extensions.** Inline rich artifacts (`show_artifact`), slide decks (`show_presentation`), PR Story review tours (`show_pr_story`), session fork/clone, cron-scheduled prompts — plus `spawn_prc_session` for parallel agent runs and `prompt_prc_session` to continue an existing one.
 
 ## 🚀 Quick start
 
@@ -108,7 +108,7 @@ The five official extensions are independent npm packages auto-discovered from `
 | [`@cemoody/pi-crust-ext-branching`](https://github.com/cemoody/pi-crust-ext-branching) | `/fork`, `/clone` slash commands | Fork a session from any previous user message, or clone the whole conversation. |
 | [`@cemoody/pi-crust-ext-schedule`](https://github.com/cemoody/pi-crust-ext-schedule) | Cron UI + `/api/cron` endpoints | Schedule recurring prompts. **Run now** spawns and jumps into the live session. |
 | `@cemoody/pi-artifact` *(optional, auto-loaded)* | `display()` | Multi-MIME inline artifacts — point at a PNG / HTML / Plotly figure / Vega-Lite spec and it renders. |
-| Built-in | `spawn_prc_session` | Create another pi-crust session with its own `cwd`, name, and starting prompt. |
+| Built-in | `spawn_prc_session`, `prompt_prc_session` | Create an independent pi-crust session, or send a new prompt to an existing session by ID. |
 
 ```ts
 await tools.show_artifact({
@@ -121,6 +121,11 @@ await tools.spawn_prc_session({
   sessionName: "dependabot sweep",
   cwd: "/home/coder/myrepo",
   prompt: "Review every open dependabot PR and merge the safe ones.",
+});
+
+await tools.prompt_prc_session({
+  sessionId: "existing-session-id",
+  prompt: "Give me the final review summary and any blockers.",
 });
 ```
 
