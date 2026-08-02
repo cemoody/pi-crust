@@ -160,6 +160,50 @@ export default function piRemoteArtifacts(pi: ExtensionAPI, options: PiRemoteArt
   registerPresentationTools(pi, getSessionContext);
 
   pi.registerTool({
+    name: "prompt_prc_session",
+    label: "Prompt pi-crust Session",
+    description: "Send a new prompt to an existing Pi Remote Control session and wait for that agent turn to finish. Use this to continue, redirect, or request a result from a session that already exists; use spawn_prc_session only when a new independent session is required.",
+    promptSnippet: "prompt_prc_session sends a new prompt to an existing Pi Remote Control session by session ID and returns that session's completed turn.",
+    promptGuidelines: [
+      "Use prompt_prc_session to continue or redirect an existing Pi Remote Control session instead of spawning a duplicate session.",
+      "Pass the exact sessionId returned by spawn_prc_session or shown in the session URL.",
+      "This tool waits for the prompted session's turn to finish. Use spawn_prc_session for a new independent background session.",
+    ],
+    parameters: Type.Object({
+      sessionId: Type.String({ description: "ID of the existing Pi Remote Control session to prompt. This is the session ID returned by spawn_prc_session or shown in its URL." }),
+      prompt: Type.String({ description: "The new prompt to deliver to the existing session." }),
+    }),
+    async execute(_toolCallId, params, signal?: AbortSignal) {
+      const sessionId = params.sessionId.trim();
+      if (!sessionId) throw new Error("prompt_prc_session requires a non-empty sessionId");
+      const apiBase = resolvePiRemoteApiBase();
+      const promptResult = await postJson<SpawnPromptResponse>(
+        `${apiBase}/api/sessions/${encodeURIComponent(sessionId)}/prompt`,
+        { text: params.prompt },
+        { signal },
+      );
+      const result = summarizeSubagentResult(promptResult);
+      const lastAssistant = result.lastAssistantMessage;
+      const sessionUrl = `${resolvePiRemoteUiBase(apiBase)}/?session=${encodeURIComponent(sessionId)}`;
+      return {
+        content: [{
+          type: "text",
+          text: `Prompted Pi Remote Control session ${sessionId}. URL: ${sessionUrl}${lastAssistant ? `\n\n${lastAssistant}` : ""}`,
+        }],
+        details: {
+          promptedPiRemoteControlSession: {
+            version: 1,
+            sessionId,
+            url: sessionUrl,
+            promptDelivery: "completed",
+            result,
+          },
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "spawn_prc_session",
     label: "Spawn pi-crust Session",
     description: "Spawn a new Pi Remote Control session and kick it off with a prompt. Use this to delegate independent work to another visible pi-crust session, or set subagent=true to wait for a child agent and return its results to the caller session.",
