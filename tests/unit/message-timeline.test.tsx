@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MessageTimeline } from "../../src/web/components/MessageTimeline.js";
+import { MessageTimeline, tailToolOutput } from "../../src/web/components/MessageTimeline.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const messageTimelineCss = fs.readFileSync(path.resolve(here, "../../src/web/components/message-timeline.css"), "utf8");
@@ -203,6 +203,61 @@ describe("MessageTimeline", () => {
     toolDetails.open = true;
     expect(thinkingDetails.open).toBe(true);
     expect(toolDetails.open).toBe(true);
+  });
+
+  it("shows a four-line, accessible live tail for a running tool and preserves a manual collapse", () => {
+    const { container, rerender } = render(<MessageTimeline messages={[{
+      id: "t1", role: "tool", text: "",
+      tool: {
+        id: "bash-live", name: "bash", args: { command: "npm install" }, status: "running",
+        output: "one\ntwo\nthree\nfour\nfive\nsix",
+      },
+    }]} />);
+
+    const details = container.querySelector("details.tool-card") as HTMLDetailsElement;
+    expect(details.open).toBe(true);
+    expect(details.querySelector(".tool-icon")?.textContent).not.toContain("✓");
+    expect(screen.getByText("running…")).toBeInTheDocument();
+
+    const liveTail = screen.getByRole("status", { name: "Live output (last 4 lines)" });
+    expect(liveTail).toHaveAttribute("aria-live", "polite");
+    expect(liveTail).toHaveAttribute("aria-atomic", "true");
+    expect(liveTail.textContent).toContain("three\nfour\nfive\nsix");
+    expect(liveTail.textContent).not.toContain("one");
+
+    // A reader may collapse a noisy command. A later SSE update must not
+    // reopen it merely because the card is still running.
+    details.open = false;
+    fireEvent(details, new Event("toggle"));
+    rerender(<MessageTimeline messages={[{
+      id: "t1", role: "tool", text: "",
+      tool: {
+        id: "bash-live", name: "bash", args: { command: "npm install" }, status: "running",
+        output: "three\nfour\nfive\nsix\nseven",
+      },
+    }]} />);
+    expect(details.open).toBe(false);
+  });
+
+  it("keeps blank and trailing terminal lines when selecting the live tail", () => {
+    expect(tailToolOutput("one\ntwo\n\nthree\nfour\nfive")).toBe("\nthree\nfour\nfive");
+    expect(tailToolOutput("one\ntwo\nthree\nfour\nfive\n")).toBe("three\nfour\nfive\n");
+  });
+
+  it("keeps the live-tail viewport bounded on a narrow timeline", () => {
+    const rule = messageTimelineCss.match(/\.tool-live-output\s*\.tool-output\s*\{([^}]*)\}/s)?.[1] ?? "";
+    expect(rule).toMatch(/max-width\s*:\s*100%/);
+    expect(rule).toMatch(/overflow-x\s*:\s*auto/);
+  });
+
+  it("labels a running tool with no output instead of rendering an empty terminal", () => {
+    render(<MessageTimeline messages={[{
+      id: "t1", role: "tool", text: "",
+      tool: { id: "bash-live", name: "bash", args: { command: "npm install" }, status: "running", output: "" },
+    }]} />);
+
+    expect(screen.getByText("Waiting for output…")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Live output (last 4 lines)" })).not.toBeInTheDocument();
   });
 
   it("shows the input command (bash) in a labeled box when a tool card is expanded", () => {
@@ -563,7 +618,7 @@ describe("MessageTimeline", () => {
     expect(card).toHaveTextContent("done");
   });
 
-  it("shows running tool card collapsed without output until expanded", () => {
+  it("shows a running tool card immediately, including its waiting state", () => {
     render(<MessageTimeline messages={[{
       id: "t1",
       role: "tool",
@@ -573,8 +628,9 @@ describe("MessageTimeline", () => {
     const card = screen.getByLabelText("tool read") as HTMLDetailsElement;
     expect(card).toHaveTextContent("Read");
     expect(card).toHaveTextContent("running");
-    expect(card.open).toBe(false);
-    expect(card.querySelector(".tool-input")).toBeNull();
+    expect(card.open).toBe(true);
+    expect(card.querySelector(".tool-input")).not.toBeNull();
+    expect(card).toHaveTextContent("Waiting for output…");
     expect(card.querySelector("pre.tool-output")).toBeNull();
   });
 

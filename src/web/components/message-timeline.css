@@ -558,6 +558,35 @@
   white-space: pre-wrap;
 }
 
+/* Running tools expose only a bounded terminal tail. Keeping horizontal
+   overflow on this local viewport prevents a long progress line from widening
+   the conversation on a narrow phone. */
+.tool-waiting-output {
+  margin: 6px 2px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: italic;
+}
+.tool-live-output {
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 4px;
+}
+.tool-live-output-label {
+  display: block;
+  padding: 0 2px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.tool-live-output .tool-output {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  font-family: var(--font-mono);
+}
+
 /* Rich read-result rendering: images, markdown, and HTML previews shown when
    a read tool card is expanded. */
 .tool-result-images { margin: 4px 0 0; }

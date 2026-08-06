@@ -79,6 +79,19 @@ describe("session dashboard realtime reducer invariants", () => {
     expect(messages[0]!.tool).toMatchObject({ id: "abc", name: "bash", args: { command: "pwd" }, status: "success", output: "done" });
   });
 
+  it("keeps concurrent live tool calls isolated until each reaches its own terminal event", () => {
+    const harness = makeHarness();
+    applyRealtimeEvent("s1", { type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "first" } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent("s1", { type: "tool_execution_start", toolCallId: "bash-2", toolName: "bash", args: { command: "second" } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent("s1", { type: "tool_execution_update", toolCallId: "bash-1", toolName: "bash", partialResult: { content: [{ type: "text", text: "first progress" }] } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent("s1", { type: "tool_execution_update", toolCallId: "bash-2", toolName: "bash", partialResult: { content: [{ type: "text", text: "second progress" }] } }, harness.setMessagesBySession, harness.streamDraftIds);
+    applyRealtimeEvent("s1", { type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash", result: { content: [{ type: "text", text: "first done" }] }, isError: false }, harness.setMessagesBySession, harness.streamDraftIds);
+
+    const byToolId = Object.fromEntries((harness.snapshot().s1 ?? []).map((message) => [message.tool?.id, message.tool]));
+    expect(byToolId["bash-1"]).toMatchObject({ status: "success", args: { command: "first" }, output: "first done" });
+    expect(byToolId["bash-2"]).toMatchObject({ status: "running", args: { command: "second" }, output: "second progress" });
+  });
+
   it("renders a custom artifact message delivered live via message_start/message_end", () => {
     const harness = makeHarness();
     const artifactMessage = {
