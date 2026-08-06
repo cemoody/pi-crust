@@ -660,7 +660,11 @@ function ToolCard({ tool }: { readonly tool: TimelineToolDetails }) {
   // strings alive even though the cards are collapsed. Lazy-mounting the body
   // is the normal pattern here: render the cheap summary rows up front, then
   // hydrate the expensive output only when the user opens a card.
-  const [open, setOpen] = useState(false);
+  // An active invocation is the one moment where the conversation must be
+  // self-explanatory: surface its small live tail without making the reader
+  // open a disclosure. Native <details> remains controlled by this state, so
+  // a deliberate close stays closed across every later SSE update.
+  const [open, setOpen] = useState(() => tool.status === "running");
   return (
     <div className="tool-card-wrapper">
       <details
@@ -681,7 +685,7 @@ function ToolCard({ tool }: { readonly tool: TimelineToolDetails }) {
         {open ? (
           <>
             <ToolInputBlock tool={tool} />
-            <ToolResultBody tool={tool} />
+            {tool.status === "running" ? <LiveToolOutputTail output={tool.output} /> : <ToolResultBody tool={tool} />}
           </>
         ) : null}
       </details>
@@ -779,6 +783,33 @@ function formatToolInput(tool: TimelineToolDetails): string {
  *
  * Everything else falls back to the plain <pre> output.
  */
+const LIVE_TOOL_TAIL_LINES = 4;
+
+/**
+ * Selects terminal output by logical line without normalizing away blank
+ * lines. A trailing newline is itself an empty terminal line, so it remains
+ * meaningful in the live preview.
+ */
+export function tailToolOutput(output: string, lines = LIVE_TOOL_TAIL_LINES): string {
+  return output.split(/\r?\n/).slice(-lines).join("\n");
+}
+
+function LiveToolOutputTail({ output }: { readonly output: string }) {
+  if (!output) return <p className="tool-waiting-output">Waiting for output…</p>;
+  return (
+    <section
+      className="tool-live-output"
+      role="status"
+      aria-label={`Live output (last ${LIVE_TOOL_TAIL_LINES} lines)`}
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <span className="tool-live-output-label">Live output (last {LIVE_TOOL_TAIL_LINES} lines)</span>
+      <pre className="tool-output">{tailToolOutput(output)}</pre>
+    </section>
+  );
+}
+
 function ToolResultBody({ tool }: { readonly tool: TimelineToolDetails }) {
   const images = tool.images ?? [];
   if (images.length > 0) {
